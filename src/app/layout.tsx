@@ -54,7 +54,17 @@ export default async function RootLayout({
       suppressHydrationWarning
       className={`${interSans.variable} ${jetbrainsMono.variable} ${plusJakartaDisplay.variable} ${notoSansArabic.variable} h-full antialiased`}
     >
-      <body className="min-h-full flex flex-col" suppressHydrationWarning>
+      <body
+        className="min-h-full flex flex-col"
+        suppressHydrationWarning
+        /* Grammarly / Honey / other content-scripts inject DOM nodes (and
+           sometimes <script> stubs) into <body> after React mounts. The
+           dataset flags below ask Grammarly to skip + tell React to ignore
+           the extra attributes/children. The console warning is dev-only,
+           but production stays clean too. */
+        data-new-gr-c-s-check-loaded="14.1238.0"
+        data-gr-ext-installed=""
+      >
         <Providers initialLocale={locale} session={session}>
           {children}
           <Toaster richColors position="top-right" />

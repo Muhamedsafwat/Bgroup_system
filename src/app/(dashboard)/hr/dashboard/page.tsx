@@ -32,6 +32,7 @@ import { dashboardApi, payrollApi } from '@/lib/hr/api'
 import { useAuth } from '@/contexts/hr/AuthContext'
 import { StatCard } from '@/components/hr/shared/StatCard'
 import { PageHeader } from '@/components/hr/shared/PageHeader'
+import { WelcomeBanner, firstNameOf } from '@/components/shared/WelcomeHero'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/hr/ui/card'
 import { Badge } from '@/components/hr/ui/badge'
 import { Button } from '@/components/hr/ui/button'
@@ -253,7 +254,7 @@ function RecentIncidentsWidget({ incidents }: { incidents: Incident[] }) {
 // ─── Main Dashboard Page ──────────────────────────────────────────────────────
 
 export default function DashboardPage() {
-  const { currentCompany, roles } = useAuth()
+  const { currentCompany, roles, user } = useAuth()
   const router = useRouter()
 
   // Employees have no business on the admin dashboard
@@ -350,10 +351,12 @@ export default function DashboardPage() {
 
   return (
     <div className="space-y-6">
-      <PageHeader
-        title="HR Dashboard"
-        description={`Overview for ${currentCompany?.name_en || 'all companies'} — ${formatDate(new Date())}`}
-        breadcrumbs={[{ label: 'Dashboard' }]}
+      <WelcomeBanner
+        firstName={firstNameOf(user?.full_name, user?.email)}
+        rolePill={isSuperAdmin ? 'Platform admin' : 'HR manager'}
+        pillTone="indigo"
+        email={user?.email ?? undefined}
+        subtitle={`Overview for ${currentCompany?.name_en || 'all companies'} · ${formatDate(new Date())}`}
       />
 
       {/* ── HR Manager Action Queue ──

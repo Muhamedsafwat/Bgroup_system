@@ -5,8 +5,18 @@ import Link from "next/link";
 import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { Loader2, Search, Users, Briefcase, Handshake, ShieldCheck, Plus } from "lucide-react";
+import { Loader2, Search, Users, Briefcase, Handshake, ShieldCheck, Plus, KeyRound, Copy } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { Button } from "@/components/ui/button";
+import {
+  Dialog,
+  DialogContent,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
+import { Label } from "@/components/ui/label";
+import { toast } from "sonner";
 
 type AdminUser = {
   id: string;
@@ -58,6 +68,7 @@ export function AdminUsersClient() {
   const [loading, setLoading] = useState(true);
   const [filter, setFilter] = useState<FilterKind>("all");
   const [q, setQ] = useState("");
+  const [resetTarget, setResetTarget] = useState<AdminUser | null>(null);
 
   useEffect(() => {
     setLoading(true);
@@ -126,6 +137,7 @@ export function AdminUsersClient() {
                     <th className="text-start py-2 px-3 text-xs font-medium uppercase">CRM</th>
                     <th className="text-start py-2 px-3 text-xs font-medium uppercase">Partner</th>
                     <th className="text-end py-2 px-3 text-xs font-medium uppercase">Created</th>
+                    <th className="text-end py-2 px-3 text-xs font-medium uppercase">Actions</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y">
@@ -200,11 +212,23 @@ export function AdminUsersClient() {
                       <td className="py-2.5 px-3 text-end text-xs text-muted-foreground ltr-nums">
                         {new Date(u.createdAt).toLocaleDateString()}
                       </td>
+                      <td className="py-2.5 px-3 text-end">
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          className="h-7 px-2 text-xs"
+                          onClick={() => setResetTarget(u)}
+                          title="Reset this user's password"
+                        >
+                          <KeyRound className="h-3.5 w-3.5 me-1" />
+                          Reset password
+                        </Button>
+                      </td>
                     </tr>
                   ))}
                   {filtered.length === 0 && (
                     <tr>
-                      <td colSpan={6} className="py-12 text-center text-sm text-muted-foreground">
+                      <td colSpan={7} className="py-12 text-center text-sm text-muted-foreground">
                         No users match.
                       </td>
                     </tr>
@@ -220,7 +244,130 @@ export function AdminUsersClient() {
         Tip: a sales rep is just an employee with a CRM profile. Their commissions, bonuses, incidents, attendance, and
         payroll all live in their HR record — the CRM profile only adds the sales-specific role &amp; quota.
       </p>
+
+      <ResetPasswordDialog
+        user={resetTarget}
+        onClose={() => setResetTarget(null)}
+      />
     </div>
+  );
+}
+
+/**
+ * Admin-only password reset modal. Shows two ways to set a new password:
+ *  - Type it explicitly (admin tells the user out-of-band)
+ *  - Generate a random one (modal then shows it once so the admin can copy
+ *    + share securely; we never persist plaintext anywhere ourselves).
+ *
+ * The "current password" field is intentionally absent — admins overriding
+ * a forgotten password don't have it. Audit logging happens server-side.
+ */
+function ResetPasswordDialog({
+  user,
+  onClose,
+}: {
+  user: AdminUser | null;
+  onClose: () => void;
+}) {
+  const [password, setPassword] = useState("");
+  const [saving, setSaving] = useState(false);
+
+  function genRandom() {
+    // 16-char URL-safe-ish password; avoids ambiguous chars (0/O/I/1).
+    const alphabet = "abcdefghjkmnpqrstuvwxyzABCDEFGHJKLMNPQRSTUVWXYZ23456789!@#$%";
+    const arr = new Uint32Array(16);
+    crypto.getRandomValues(arr);
+    setPassword(Array.from(arr, (n) => alphabet[n % alphabet.length]).join(""));
+  }
+
+  async function submit() {
+    if (!user) return;
+    setSaving(true);
+    try {
+      const res = await fetch(`/api/admin/users/${user.id}/reset-password`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ newPassword: password }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        toast.error(data.error ?? "Failed to reset password");
+        return;
+      }
+      toast.success(`Password reset for ${user.email}`);
+      setPassword("");
+      onClose();
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <Dialog
+      open={!!user}
+      onOpenChange={(open) => {
+        if (!open) {
+          setPassword("");
+          onClose();
+        }
+      }}
+    >
+      <DialogContent className="sm:max-w-md">
+        <DialogHeader>
+          <DialogTitle>Reset password</DialogTitle>
+        </DialogHeader>
+        {user && (
+          <div className="space-y-4">
+            <div className="rounded-md bg-muted/40 p-3 text-sm">
+              <p className="font-medium">{user.name ?? user.email}</p>
+              <p className="text-xs text-muted-foreground">{user.email}</p>
+            </div>
+            <div className="space-y-1.5">
+              <Label htmlFor="reset-pw">New password</Label>
+              <div className="flex gap-2">
+                <Input
+                  id="reset-pw"
+                  value={password}
+                  onChange={(e) => setPassword(e.target.value)}
+                  placeholder="At least 8 characters"
+                  autoComplete="new-password"
+                  className="font-mono"
+                />
+                <Button variant="outline" type="button" onClick={genRandom}>
+                  Generate
+                </Button>
+                {password && (
+                  <Button
+                    variant="outline"
+                    type="button"
+                    title="Copy"
+                    onClick={() => {
+                      navigator.clipboard.writeText(password);
+                      toast.success("Password copied");
+                    }}
+                  >
+                    <Copy className="h-4 w-4" />
+                  </Button>
+                )}
+              </div>
+              <p className="text-xs text-muted-foreground">
+                Share this with the user via a secure channel. Their old password
+                stops working immediately and existing sessions stay valid until
+                they sign out.
+              </p>
+            </div>
+          </div>
+        )}
+        <DialogFooter>
+          <Button variant="outline" onClick={onClose}>
+            Cancel
+          </Button>
+          <Button onClick={submit} disabled={password.length < 8 || saving}>
+            {saving ? "Resetting…" : "Reset password"}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   );
 }
 

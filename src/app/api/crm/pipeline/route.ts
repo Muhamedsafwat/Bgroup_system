@@ -8,7 +8,6 @@ import { CrmOpportunityStage, type Prisma } from "@/generated/prisma";
 function isManager(session: Session) {
   return (
     session.user.crmRole === "MANAGER" ||
-    session.user.crmRole === "CEO" ||
     session.user.crmRole === "ADMIN" ||
     !!session.user.hrRoles?.includes("super_admin")
   );

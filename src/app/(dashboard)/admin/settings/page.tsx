@@ -19,6 +19,8 @@ import {
   ShieldCheck,
   ArrowRight,
   Handshake,
+  Target,
+  Calendar,
 } from "lucide-react";
 
 export const dynamic = "force-dynamic";
@@ -36,12 +38,13 @@ const GROUPS: Array<{
   {
     title: "CRM",
     items: [
-      { href: "/crm/admin/users", label: "CRM users", description: "Reps and their roles", icon: Users, tone: "tile-indigo" },
       { href: "/crm/admin/entities", label: "Entities", description: "Group subsidiaries", icon: Landmark, tone: "tile-violet" },
       { href: "/crm/admin/fx-rates", label: "FX rates", description: "Currency conversions", icon: DollarSign, tone: "tile-emerald" },
       { href: "/crm/admin/stage-config", label: "Pipeline stages", description: "Probabilities + SLAs", icon: Layers, tone: "tile-amber" },
       { href: "/crm/admin/loss-reasons", label: "Loss reasons", description: "Why deals are lost", icon: AlertCircle, tone: "tile-rose" },
       { href: "/crm/admin/lead-sources", label: "Lead sources", description: "Where leads come from", icon: Tag, tone: "tile-sky" },
+      { href: "/crm/admin/customer-needs", label: "Customer needs", description: "Dropdown reps pick from for meetings + opps", icon: Target, tone: "tile-emerald" },
+      { href: "/crm/admin/meeting-types", label: "Meeting types", description: "Rename + reorder meeting type labels", icon: Calendar, tone: "tile-amber" },
       { href: "/crm/products", label: "Products & services", description: "Single source of catalogue (Partner services use this list)", icon: Package, tone: "tile-violet" },
       { href: "/crm/group/health", label: "Pipeline health", description: "Stale opps + missing next-actions", icon: HeartPulse, tone: "tile-rose" },
     ],
@@ -55,7 +58,6 @@ const GROUPS: Array<{
       { href: "/hr/settings/bonuses", label: "Bonus rules", description: "Categories + amounts", icon: Wallet, tone: "tile-emerald" },
       { href: "/hr/settings/overtime-policy", label: "Overtime policy", description: "Rates + caps", icon: Clock, tone: "tile-amber" },
       { href: "/hr/settings/leave-policy", label: "Leave policy", description: "Types + entitlements", icon: Clock, tone: "tile-sky" },
-      { href: "/hr/settings/users", label: "HR users", description: "Employees + roles", icon: Users, tone: "tile-indigo" },
       { href: "/hr/settings/app-settings", label: "App settings", description: "Currency, locale, branding", icon: Settings, tone: "tile-violet" },
     ],
   },
@@ -63,8 +65,15 @@ const GROUPS: Array<{
     title: "Partners",
     items: [
       { href: "/admin/partners", label: "Partners", description: "Add / edit / deactivate partners", icon: Handshake, tone: "tile-amber" },
-      { href: "/partners/services", label: "Partner services", description: "Service catalogue (will sync with CRM products)", icon: Briefcase, tone: "tile-emerald" },
+      { href: "/partners/services", label: "Partner services", description: "Service catalogue (synced with CRM products)", icon: Briefcase, tone: "tile-emerald" },
       { href: "/partners/admin/audit-logs", label: "Audit logs", description: "Every partner-side action", icon: ShieldCheck, tone: "tile-rose" },
+    ],
+  },
+  {
+    title: "Users",
+    items: [
+      { href: "/admin/users", label: "All users (unified)", description: "Every account across HR, CRM, and Partners in one tab", icon: Users, tone: "tile-indigo" },
+      { href: "/admin/users/new", label: "Add new user", description: "One form, pick the modules they participate in", icon: Users, tone: "tile-sky" },
     ],
   },
 ];
@@ -72,17 +81,23 @@ const GROUPS: Array<{
 export default async function AdminSettingsPage() {
   const session = await auth();
   if (!session?.user) redirect("/login");
-  const isAdmin =
-    !!session.user.hrRoles?.includes("super_admin") ||
+  // Unified Settings page is open to any module-admin so HR managers / CRM
+  // admins / partner admins all land HERE instead of their old per-module
+  // settings — the welcome page steers them via the "Settings" tile.
+  const hrRoles = session.user.hrRoles ?? [];
+  const crmRole = session.user.crmRole;
+  const canEnter =
+    hrRoles.includes("super_admin") ||
+    hrRoles.includes("hr_manager") ||
+    crmRole === "ADMIN" ||
     (!!session.user.modules?.includes("partners") && !session.user.partnerId);
-  if (!isAdmin) redirect("/");
+  if (!canEnter) redirect("/");
   return (
     <div className="space-y-6">
       <div>
         <h1 className="text-2xl font-bold text-foreground">All settings</h1>
         <p className="text-sm text-muted-foreground mt-1">
-          Every admin-configurable surface across CRM, HR, and Partners. Each entry can be edited or deleted —
-          full control sits here.
+          Every admin-configurable surface across CRM, HR, and Partners — consolidated. Per-module settings tabs were removed; this is the single home for taxonomy, users, and policy.
         </p>
       </div>
       {GROUPS.map((g) => (

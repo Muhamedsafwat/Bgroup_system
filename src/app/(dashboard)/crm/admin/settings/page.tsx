@@ -12,6 +12,8 @@ import {
   Package,
   HeartPulse,
   ArrowRight,
+  Target,
+  Calendar,
 } from "lucide-react";
 
 export const dynamic = "force-dynamic";
@@ -23,16 +25,20 @@ const SETTINGS_LINKS = [
   { href: "/crm/admin/stage-config", label: "Pipeline stages", description: "Stage probabilities and SLAs", icon: Layers, tone: "tile-amber" },
   { href: "/crm/admin/loss-reasons", label: "Loss reasons", description: "Why deals are marked lost", icon: AlertCircle, tone: "tile-rose" },
   { href: "/crm/admin/lead-sources", label: "Lead sources", description: "Where leads come from", icon: Tag, tone: "tile-sky" },
+  { href: "/crm/admin/customer-needs", label: "Customer needs", description: "The dropdown reps pick from when booking meetings & tagging opps", icon: Target, tone: "tile-emerald" },
+  { href: "/crm/admin/meeting-types", label: "Meeting types", description: "Rename & reorder meeting type labels", icon: Calendar, tone: "tile-amber" },
   { href: "/crm/products", label: "Products & services", description: "The catalogue of what reps sell", icon: Package, tone: "tile-violet" },
   { href: "/crm/group/health", label: "Pipeline health", description: "Stale opps + missing next-actions", icon: HeartPulse, tone: "tile-rose" },
 ];
 
 export default async function CrmAdminSettingsPage() {
+  // CRM settings have been consolidated under /admin/settings — that page
+  // groups CRM, HR, Partners, and Users in one place. This route stays
+  // alive only as a redirect so old bookmarks and sidebar entries don't 404.
   const session = await auth();
   if (!session?.user) redirect("/login");
-  if (session.user.crmRole !== "CEO" && session.user.crmRole !== "ADMIN" && !session.user.hrRoles?.includes("super_admin")) {
-    redirect("/");
-  }
+  redirect("/admin/settings");
+  // unreachable, satisfies the type checker for the unused JSX below:
   return (
     <div className="space-y-4">
       <div>

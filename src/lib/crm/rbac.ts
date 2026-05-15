@@ -9,19 +9,15 @@ export function scopeOpportunityByRole(session: SessionUser) {
     case "REP":
       return { ownerId: session.id };
     case "MANAGER":
+      // Manager sees opps owned by their direct reports (or, falling back,
+      // the whole entity if their manager scope isn't pinned to specific reps).
       return session.entityId ? { entityId: session.entityId } : {};
-    case "TECH_DIRECTOR":
-      return {
-        OR: [
-          { techSupportId: session.id },
-          { deliveryOwnerId: session.id },
-        ],
-      };
+    case "ASSISTANT":
+      // Assistant gets read access to the whole entity for meeting + tech
+      // coordination context, similar to the old TECH_DIRECTOR role.
+      return session.entityId ? { entityId: session.entityId } : {};
     case "ACCOUNT_MGR":
       return { deliveryOwnerId: session.id, stage: "WON" as const };
-    case "FINANCE":
-      return { stage: "WON" as const };
-    case "CEO":
     case "ADMIN":
       return {};
     default:
@@ -37,10 +33,10 @@ export function scopeCompanyByRole(session: SessionUser) {
     case "REP":
       return { assignedToId: session.id };
     case "MANAGER":
+    case "ASSISTANT":
       return session.entityId
         ? { assignedTo: { entityId: session.entityId } }
         : {};
-    case "CEO":
     case "ADMIN":
       return {};
     default:
@@ -56,10 +52,10 @@ export function scopeCallByRole(session: SessionUser) {
     case "REP":
       return { callerId: session.id };
     case "MANAGER":
+    case "ASSISTANT":
       return session.entityId
         ? { caller: { entityId: session.entityId } }
         : {};
-    case "CEO":
     case "ADMIN":
       return {};
     default:
@@ -76,11 +72,11 @@ export function canAccessRoute(
 ): boolean {
   // Admin routes
   if (pathname.startsWith("/admin")) {
-    return role === "CEO" || role === "ADMIN";
+    return role === "ADMIN";
   }
   // Group dashboard
   if (pathname.startsWith("/group")) {
-    return role === "CEO" || role === "ADMIN" || role === "MANAGER";
+    return role === "ADMIN" || role === "MANAGER";
   }
   // All other dashboard routes are accessible to authenticated users
   return true;
@@ -91,12 +87,12 @@ export function canAccessRoute(
  */
 export function getDefaultRoute(role: SessionUser["role"]): string {
   switch (role) {
-    case "CEO":
     case "ADMIN":
     case "MANAGER":
       return "/crm/group";
-    case "FINANCE":
-      return "/crm/opportunities";
+    case "ASSISTANT":
+      // Assistant defaults to the meeting approval queue.
+      return "/crm/meetings";
     default:
       return "/crm/my";
   }

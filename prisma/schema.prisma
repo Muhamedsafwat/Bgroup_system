@@ -1755,11 +1755,19 @@ model HrEmployee {
   incidents        HrIncident[]
   overtimeRequests HrOvertimeRequest[]
   monthlySalaries  HrMonthlySalary[]
+  crmProfile       CrmUserProfile?    @relation("CrmProfileToHrEmployee")
+
+  /// Soft-delete marker — see CrmOpportunity for rationale. Active queries
+  /// must filter `deletedAt: null`; admins can restore until the retention
+  /// window expires.
+  deletedAt        DateTime?
+  deletedById      String?
 
   @@index([shiftId])
   @@index([directManagerId])
   @@index([departmentId])
   @@index([companyId])
+  @@index([deletedAt])
   @@map("hr_employees")
 }
 
@@ -2183,13 +2191,25 @@ model HrAuditLog {
 // CRM MODULE — Enums
 // ============================================================================
 
+/**
+ * CRM role taxonomy (consolidated per the latest spec):
+ *   - ADMIN       — platform-level owner of CRM (used to be CEO + ADMIN +
+ *                   FINANCE; all collapsed into one "admin" identity).
+ *   - MANAGER     — sales manager. Responsible for a SUBSET of reps (not the
+ *                   whole team). Manager-rep assignment is via
+ *                   CrmUserProfile.managerId — set from CRM settings or by
+ *                   placing the user on the org chart.
+ *   - ASSISTANT   — coordinates technical meetings: checks with the tech
+ *                   team, approves/denies, unblocks the rep to confirm
+ *                   with the client. Replaces the legacy TECH_DIRECTOR.
+ *   - REP         — sales rep.
+ *   - ACCOUNT_MGR — post-sale account manager.
+ */
 enum CrmRole {
   REP
   MANAGER
-  TECH_DIRECTOR
+  ASSISTANT
   ACCOUNT_MGR
-  FINANCE
-  CEO
   ADMIN
 }
 
@@ -2306,6 +2326,22 @@ model CrmUserProfile {
   monthlyTargetEGP Decimal?     @db.Decimal(12, 2)
   active           Boolean      @default(true)
 
+  /// The sales manager this rep reports to. A MANAGER is responsible for
+  /// only the reps explicitly assigned to them (not the whole team) — the
+  /// admin makes the assignment from the CRM settings or the org chart.
+  /// Null for managers themselves, admins, assistants, account managers.
+  managerId        String?
+  manager          CrmUserProfile? @relation("CrmManagerReports", fields: [managerId], references: [id])
+  reports          CrmUserProfile[] @relation("CrmManagerReports")
+
+  /// Optional explicit link to the user's HR employee record. When set,
+  /// commission liability rolls into payroll automatically and the
+  /// org-chart-derived team-lead authority on the HR side picks up the rep
+  /// without relying on email-coincidence matching. Set by the unified
+  /// user-creation form when both HR + CRM modules are selected.
+  hrEmployeeId     String?     @unique
+  hrEmployee       HrEmployee? @relation("CrmProfileToHrEmployee", fields: [hrEmployeeId], references: [id])
+
   // CRM relations
   ownedOpportunities    CrmOpportunity[] @relation("CrmOpportunityOwner")
   deliveryOpportunities CrmOpportunity[] @relation("CrmDeliveryOwner")
@@ -2313,6 +2349,7 @@ model CrmUserProfile {
   assignedCompanies     CrmCompany[]
   calls                 CrmCall[]
   meetings              CrmMeeting[]     @relation("CrmMeetingScheduler")
+  approvedMeetings      CrmMeeting[]     @relation("CrmMeetingApprover")
   dailyReports          CrmDailyReport[] @relation("CrmDailyReportRep")
   activityLogs          CrmActivityLog[]
   notes                 CrmNote[]
@@ -2478,6 +2515,13 @@ model CrmOpportunity {
   activityLogs CrmActivityLog[]
   attachments  CrmAttachment[]
 
+  /// Soft-delete marker. When non-null, the opportunity is hidden from every
+  /// list but its audit trail (CrmStageHistory, CrmActivityLog, CrmAttachment)
+  /// is preserved. Restorable by an admin until it's purged after the
+  /// retention window. Every findMany query must filter `deletedAt: null`.
+  deletedAt   DateTime?
+  deletedById String?
+
   @@index([companyId])
   @@index([ownerId])
   @@index([entityId])
@@ -2485,6 +2529,7 @@ model CrmOpportunity {
   @@index([priority])
   @@index([expectedCloseDate])
   @@index([nextActionDate])
+  @@index([deletedAt])
   @@map("crm_opportunities")
 }
 
@@ -2583,7 +2628,17 @@ enum CrmMeetingType {
 }
 
 enum CrmMeetingStatus {
+  /// The sales rep has booked the slot but the meeting is not yet approved.
+  /// Lives in the assistant's queue until they confirm with the tech team.
+  PENDING_APPROVAL
+  /// Legacy alias for PENDING_APPROVAL — kept for existing data; new rows
+  /// should use PENDING_APPROVAL going forward.
   WAITING
+  /// Assistant has approved the booking; sales rep can now confirm with client.
+  APPROVED
+  /// Assistant has denied the booking (tech team unavailable, conflict, etc.).
+  DENIED
+  /// Final state — meeting confirmed with client and held.
   CONFIRMED
   DONE
   CANCELLED
@@ -2609,7 +2664,18 @@ model CrmMeeting {
   meetingType     CrmMeetingType   @default(DEMO)
   customerNeed    String?
   notes           String?
-  status          CrmMeetingStatus @default(WAITING)
+  status          CrmMeetingStatus @default(PENDING_APPROVAL)
+
+  /// Assistant approval workflow — a booked meeting starts PENDING_APPROVAL.
+  /// The assistant checks with the tech team and approves/denies. Sales reps
+  /// can't confirm with the client until approvedAt is set.
+  approvedById    String?
+  approvedBy      CrmUserProfile?  @relation("CrmMeetingApprover", fields: [approvedById], references: [id])
+  approvedAt      DateTime?
+  /// On denial, the assistant leaves a reason so the rep knows what to fix
+  /// (tech-team conflict, no engineer with X skill, room booked, etc.).
+  deniedReason    String?
+  deniedAt        DateTime?
 
   createdAt       DateTime         @default(now())
   updatedAt       DateTime         @updatedAt
@@ -2617,6 +2683,7 @@ model CrmMeeting {
   @@index([scheduledById, startAt])
   @@index([startAt])
   @@index([status])
+  @@index([approvedById])
   @@map("crm_meetings")
 }
 
@@ -2704,12 +2771,64 @@ model CrmStageConfig {
   entityId       String?
   entity         CrmEntity?          @relation(fields: [entityId], references: [id])
   stage          CrmOpportunityStage
+  /// Soft-delete flag: admins can hide a stage from the pipeline without
+  /// dropping the underlying enum value (which would break historical data).
+  /// Stages with isActive=false don't appear in the dropdown / kanban.
+  isActive       Boolean             @default(true)
+  /// Optional override of the enum's default label, per locale. Lets the
+  /// admin rename "TECH_MEETING" to "Discovery call", etc., without code
+  /// changes. Null falls back to the static stage-labels translation file.
+  customLabelEn  String?
+  customLabelAr  String?
   probabilityPct Int
   slaHours       Int?
   displayOrder   Int
 
   @@unique([entityId, stage])
   @@map("crm_stage_configs")
+}
+
+/**
+ * Customer-need taxonomy for meeting bookings & opportunity tagging.
+ * The meeting form's "What does the customer need?" dropdown used to be a
+ * hardcoded list (`["B-Clinics", "B-Optical", ...]`); admins now manage it
+ * here so they can add/remove offerings without code changes.
+ */
+model CrmCustomerNeed {
+  id        String   @id @default(cuid())
+  labelEn   String
+  labelAr   String   @default("")
+  /// Optional grouping (e.g. "Healthcare" / "Tech"). Display-only.
+  category  String   @default("")
+  /// Inactive needs are hidden from the picker but preserved for historical
+  /// rows that already reference them by label string.
+  active    Boolean  @default(true)
+  /// Lower = shown earlier in the dropdown.
+  sortOrder Int      @default(0)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([labelEn])
+  @@map("crm_customer_needs")
+}
+
+/**
+ * Per-meeting-type display config. The underlying `CrmMeetingType` enum
+ * doesn't change, but admins can rename labels (per locale), hide types
+ * they don't run, and reorder them.
+ */
+model CrmMeetingTypeConfig {
+  id        String   @id @default(cuid())
+  /// Matches a CrmMeetingType enum value: DEMO / OFFICE_VISIT / FOLLOWUP /
+  /// PROPOSAL / ONBOARDING. Stored as String so adding a new enum doesn't
+  /// require a migration.
+  code      String   @unique
+  labelEn   String
+  labelAr   String   @default("")
+  active    Boolean  @default(true)
+  sortOrder Int      @default(0)
+
+  @@map("crm_meeting_type_configs")
 }
 
 model CrmLossReason {
@@ -2846,10 +2965,15 @@ model PartnerLead {
   convertedToClient   PartnerClient?    @relation("PartnerLeadConversion", fields: [convertedToClientId], references: [id])
   createdAt           DateTime          @default(now())
   updatedAt           DateTime          @updatedAt
+  /// Soft-delete marker. Hides the lead from default queries; preserves
+  /// the audit trail of who-owned-it-when. Restorable.
+  deletedAt           DateTime?
+  deletedById         String?
 
   @@index([partnerId])
   @@index([status])
   @@index([partnerId, status])
+  @@index([deletedAt])
   @@map("partner_leads")
 }
 
@@ -2863,11 +2987,15 @@ model PartnerClient {
   company   String?
   createdAt DateTime       @default(now())
   updatedAt DateTime       @updatedAt
+  /// Soft-delete marker — same semantics as PartnerLead.
+  deletedAt DateTime?
+  deletedById String?
 
   convertedFromLead PartnerLead? @relation("PartnerLeadConversion")
   deals             PartnerDeal[]
 
   @@index([partnerId])
+  @@index([deletedAt])
   @@map("partner_clients")
 }
 
@@ -2908,11 +3036,17 @@ model PartnerDeal {
   invoices   PartnerInvoice[]
   commission PartnerCommission?
 
+  /// Soft-delete marker. Hides the deal from default lists; commission +
+  /// contracts + invoices stay intact for audit + finance reconciliation.
+  deletedAt DateTime?
+  deletedById String?
+
   @@index([partnerId])
   @@index([clientId])
   @@index([serviceId])
   @@index([status])
   @@index([partnerId, status])
+  @@index([deletedAt])
   @@map("partner_deals")
 }
 

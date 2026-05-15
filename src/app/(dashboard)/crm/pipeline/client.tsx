@@ -170,7 +170,11 @@ export function PipelineClient({ isManager }: { isManager: boolean }) {
               </TabsList>
             </Tabs>
             <Select value={filterRep} onValueChange={(v) => setFilterRep(v ?? "ALL")}>
-              <SelectTrigger className="h-9 w-40"><SelectValue placeholder="Rep" /></SelectTrigger>
+              <SelectTrigger className="h-9 w-40">
+                <SelectValue placeholder="Rep">
+                  {(v) => (v === "ALL" || !v) ? "All reps" : (options.reps.find((r) => r.id === v)?.fullName ?? "Rep")}
+                </SelectValue>
+              </SelectTrigger>
               <SelectContent>
                 <SelectItem value="ALL">All reps</SelectItem>
                 {options.reps.map((r) => (
@@ -181,7 +185,11 @@ export function PipelineClient({ isManager }: { isManager: boolean }) {
           </>
         )}
         <Select value={filterCompany} onValueChange={(v) => setFilterCompany(v ?? "ALL")}>
-          <SelectTrigger className="h-9 w-44"><SelectValue placeholder="Company" /></SelectTrigger>
+          <SelectTrigger className="h-9 w-44">
+            <SelectValue placeholder="Company">
+              {(v) => (v === "ALL" || !v) ? "All companies" : (options.companies.find((c) => c.id === v)?.nameEn ?? "Company")}
+            </SelectValue>
+          </SelectTrigger>
           <SelectContent>
             <SelectItem value="ALL">All companies</SelectItem>
             {options.companies.map((c) => (
@@ -190,7 +198,11 @@ export function PipelineClient({ isManager }: { isManager: boolean }) {
           </SelectContent>
         </Select>
         <Select value={filterProduct} onValueChange={(v) => setFilterProduct(v ?? "ALL")}>
-          <SelectTrigger className="h-9 w-44"><SelectValue placeholder="Product" /></SelectTrigger>
+          <SelectTrigger className="h-9 w-44">
+            <SelectValue placeholder="Product">
+              {(v) => (v === "ALL" || !v) ? "All products" : (options.products.find((p) => p.id === v)?.nameEn ?? "Product")}
+            </SelectValue>
+          </SelectTrigger>
           <SelectContent>
             <SelectItem value="ALL">All products</SelectItem>
             {options.products.map((p) => (

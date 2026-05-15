@@ -9,6 +9,7 @@ import { Badge } from '@/components/partners/ui/badge';
 import { DashboardSkeleton } from '@/components/partners/ui/skeleton';
 import { Users, Handshake, DollarSign, TrendingUp, ArrowRight } from 'lucide-react';
 import Link from 'next/link';
+import { WelcomeBanner, firstNameOf } from '@/components/shared/WelcomeHero';
 import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
   PieChart, Pie, Cell,
@@ -69,13 +70,13 @@ export default function DashboardPage() {
 
   return (
     <div className="space-y-8">
-      {/* Header */}
-      <div>
-        <h1 className="text-2xl font-bold text-foreground">
-          Welcome back, {user?.name?.split(' ')[0]}
-        </h1>
-        <p className="mt-1 text-muted-foreground">Here&apos;s what&apos;s happening with your business today.</p>
-      </div>
+      <WelcomeBanner
+        firstName={firstNameOf(user?.name, user?.email)}
+        rolePill="Partner"
+        pillTone="emerald"
+        email={user?.email}
+        subtitle="Here’s what’s happening with your business today"
+      />
 
       {/* Stat Cards */}
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">

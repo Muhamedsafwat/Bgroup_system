@@ -119,11 +119,11 @@ async function main() {
         where: { userId: user.id },
         create: {
           userId: user.id,
-          role: "CEO",
+          role: "ADMIN",
           fullName,
         },
         update: {
-          role: "CEO",
+          role: "ADMIN",
           fullName,
         },
       });

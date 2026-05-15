@@ -12,8 +12,8 @@ export async function GET(
   if (error) return error;
 
   const { id } = await params;
-  const client = await db.partnerClient.findUnique({
-    where: { id },
+  const client = await db.partnerClient.findFirst({
+    where: { id, deletedAt: null },
     include: { convertedFromLead: { select: { id: true, name: true } } },
   });
   if (!client || !assertAccess(user, client.partnerId)) {
@@ -32,7 +32,7 @@ export async function PATCH(
   if (error) return error;
 
   const { id } = await params;
-  const existing = await db.partnerClient.findUnique({ where: { id } });
+  const existing = await db.partnerClient.findFirst({ where: { id, deletedAt: null } });
   if (!existing || !assertAccess(user, existing.partnerId)) {
     return jsonError("Client not found", 404);
   }
@@ -51,7 +51,7 @@ export async function PATCH(
   return jsonSuccess(updated);
 }
 
-// DELETE /api/partners/clients/[id]
+// DELETE /api/partners/clients/[id] — soft-delete.
 export async function DELETE(
   _request: NextRequest,
   { params }: { params: Promise<{ id: string }> }
@@ -60,11 +60,14 @@ export async function DELETE(
   if (error) return error;
 
   const { id } = await params;
-  const existing = await db.partnerClient.findUnique({ where: { id } });
+  const existing = await db.partnerClient.findFirst({ where: { id, deletedAt: null } });
   if (!existing || !assertAccess(user, existing.partnerId)) {
     return jsonError("Client not found", 404);
   }
 
-  await db.partnerClient.delete({ where: { id } });
+  await db.partnerClient.update({
+    where: { id },
+    data: { deletedAt: new Date(), deletedById: user.userId },
+  });
   return jsonSuccess({ message: "Client deleted" });
 }

@@ -4,7 +4,8 @@ import React from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { useRouter } from 'next/navigation'
 import { Eye, AlertTriangle, Clock, Loader2, CheckSquare, CalendarOff, Users as UsersIcon, TrendingUp } from 'lucide-react'
-import { PageHeader } from '@/components/hr/shared/PageHeader'
+import { useSession } from 'next-auth/react'
+import { WelcomeBanner, firstNameOf } from '@/components/shared/WelcomeHero'
 import { Button } from '@/components/hr/ui/button'
 import { Avatar, AvatarFallback } from '@/components/hr/ui/avatar'
 import { Badge } from '@/components/hr/ui/badge'
@@ -56,6 +57,7 @@ const STATUS_VARIANT: Record<string, 'success' | 'warning' | 'danger' | 'info' |
 
 export default function TeamPage() {
   const router = useRouter()
+  const { data: session } = useSession()
 
   const { data: teamData, isLoading } = useQuery<{ subordinates: Subordinate[]; total: number }>({
     queryKey: ['my-team'],
@@ -99,23 +101,23 @@ export default function TeamPage() {
 
   return (
     <div className="space-y-6">
-      <PageHeader
-        title="My Team"
-        description={`${teamMembers.length} ${teamMembers.length === 1 ? 'person reports' : 'people report'} to you (org-chart derived)`}
-        breadcrumbs={[{ label: 'Team' }]}
-        actions={
-          totalReports > 0 ? (
-            <div className="flex items-center gap-2">
-              <Button size="sm" variant="outline" onClick={() => router.push('/hr/team/attendance')}>
-                <Clock className="h-3.5 w-3.5 me-1" /> Today's attendance
-              </Button>
-              <Button size="sm" onClick={() => router.push('/hr/overtime/pending')}>
-                <CheckSquare className="h-3.5 w-3.5 me-1" /> Pending approvals
-              </Button>
-            </div>
-          ) : null
-        }
+      <WelcomeBanner
+        firstName={firstNameOf(session?.user?.name, session?.user?.email)}
+        rolePill="Team lead"
+        pillTone="violet"
+        email={session?.user?.email}
+        subtitle={`${teamMembers.length} ${teamMembers.length === 1 ? 'person reports' : 'people report'} to you`}
       />
+      {totalReports > 0 && (
+        <div className="flex items-center gap-2">
+          <Button size="sm" variant="outline" onClick={() => router.push('/hr/team/attendance')}>
+            <Clock className="h-3.5 w-3.5 me-1" /> Today&apos;s attendance
+          </Button>
+          <Button size="sm" onClick={() => router.push('/hr/overtime/pending')}>
+            <CheckSquare className="h-3.5 w-3.5 me-1" /> Pending approvals
+          </Button>
+        </div>
+      )}
 
       {/* Team-lead roll-up: instant read of how the reports are doing today. */}
       {totalReports > 0 && (

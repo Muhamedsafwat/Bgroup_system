@@ -14,6 +14,7 @@ type Meeting = {
   meetingType: string;
   status: string;
   contactName: string | null;
+  customerNeed: string | null;
   scheduledBy: { id: string; fullName: string };
 };
 
@@ -43,11 +44,30 @@ function ymd(d: Date): string {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
 }
 
+/**
+ * Approval-cycle palette — at-a-glance, every CRM member can see which slots
+ * are taken and what state the booking is in.
+ *
+ *   Yellow  → PENDING_APPROVAL (or legacy WAITING): assistant hasn't decided
+ *   Green   → APPROVED / CONFIRMED / DONE: the slot is locked
+ *   Red     → DENIED: assistant blocked it (slot is FREE again for others)
+ *   Grey    → CANCELLED: the rep called it off (slot is FREE again)
+ */
 const STATUS_BG: Record<string, string> = {
-  WAITING: "bg-amber-500/20 hover:bg-amber-500/30 text-amber-900 dark:text-amber-200 border-amber-500/40",
-  CONFIRMED: "bg-emerald-500/20 hover:bg-emerald-500/30 text-emerald-900 dark:text-emerald-200 border-emerald-500/40",
-  DONE: "bg-sky-500/20 hover:bg-sky-500/30 text-sky-900 dark:text-sky-200 border-sky-500/40",
-  CANCELLED: "bg-rose-500/20 hover:bg-rose-500/30 text-rose-900 dark:text-rose-200 border-rose-500/40 line-through",
+  PENDING_APPROVAL:
+    "bg-amber-500/20 hover:bg-amber-500/30 text-amber-900 dark:text-amber-200 border-amber-500/50",
+  WAITING:
+    "bg-amber-500/20 hover:bg-amber-500/30 text-amber-900 dark:text-amber-200 border-amber-500/50",
+  APPROVED:
+    "bg-emerald-500/20 hover:bg-emerald-500/30 text-emerald-900 dark:text-emerald-200 border-emerald-500/50",
+  CONFIRMED:
+    "bg-emerald-500/20 hover:bg-emerald-500/30 text-emerald-900 dark:text-emerald-200 border-emerald-500/50",
+  DONE:
+    "bg-emerald-600/25 hover:bg-emerald-600/35 text-emerald-900 dark:text-emerald-200 border-emerald-600/50",
+  DENIED:
+    "bg-rose-500/20 hover:bg-rose-500/30 text-rose-900 dark:text-rose-200 border-rose-500/50 line-through",
+  CANCELLED:
+    "bg-muted hover:bg-muted/80 text-muted-foreground border-border line-through",
 };
 
 export function WeeklyCalendarClient() {
@@ -72,10 +92,12 @@ export function WeeklyCalendarClient() {
   useEffect(() => {
     let cancelled = false;
     setLoading(true);
+    // scope=all so every CRM member sees the org-wide booked grid — needed
+    // for product-slot conflict awareness before booking a new meeting.
     const params = new URLSearchParams({
       from: weekStart.toISOString(),
       to: weekEnd.toISOString(),
-      scope: "mine",
+      scope: "all",
     });
     fetch(`/api/crm/meetings?${params.toString()}`)
       .then((r) => (r.ok ? r.json() : { meetings: [] }))
@@ -144,12 +166,26 @@ export function WeeklyCalendarClient() {
             {new Date(weekEnd.getTime() - 1).toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" })}
           </span>
         </div>
-        {loading && (
-          <span className="text-xs text-muted-foreground flex items-center gap-1">
-            <Loader2 className="h-3 w-3 animate-spin" />
-            Loading...
+        <div className="flex items-center gap-3 text-[10px] text-muted-foreground">
+          <span className="inline-flex items-center gap-1">
+            <span className="inline-block h-2.5 w-2.5 rounded-sm bg-amber-500/40 border border-amber-500/60" />
+            Pending
           </span>
-        )}
+          <span className="inline-flex items-center gap-1">
+            <span className="inline-block h-2.5 w-2.5 rounded-sm bg-emerald-500/40 border border-emerald-500/60" />
+            Approved
+          </span>
+          <span className="inline-flex items-center gap-1">
+            <span className="inline-block h-2.5 w-2.5 rounded-sm bg-rose-500/40 border border-rose-500/60" />
+            Denied
+          </span>
+          {loading && (
+            <span className="flex items-center gap-1 ms-2">
+              <Loader2 className="h-3 w-3 animate-spin" />
+              Loading…
+            </span>
+          )}
+        </div>
       </div>
 
       <div className="rounded-2xl border bg-card overflow-x-auto">
@@ -196,11 +232,13 @@ export function WeeklyCalendarClient() {
                               key={m.id}
                               className={cn(
                                 "rounded-md border px-1.5 py-1 text-[10px] truncate",
-                                STATUS_BG[m.status]
+                                STATUS_BG[m.status] ?? "bg-muted border-border"
                               )}
-                              title={`${m.code} · ${m.contactName ?? ""} · ${m.scheduledBy.fullName}`}
+                              title={`${m.code} · ${m.contactName ?? ""} · ${m.customerNeed ?? ""} · ${m.scheduledBy.fullName} · ${m.status}`}
                             >
-                              <div className="truncate font-medium">{m.contactName ?? m.code}</div>
+                              <div className="truncate font-medium">
+                                {m.customerNeed ?? m.contactName ?? m.code}
+                              </div>
                               <div className="truncate opacity-80">{m.scheduledBy.fullName}</div>
                             </div>
                           ))}

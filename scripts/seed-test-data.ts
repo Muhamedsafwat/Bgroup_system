@@ -319,7 +319,7 @@ async function main() {
     create: {
       userId: admin.id,
       fullName: "Super Admin",
-      role: "CEO",
+      role: "ADMIN",
       entityId: crmEntity.id,
     },
     update: { entityId: crmEntity.id },
@@ -395,14 +395,17 @@ async function main() {
   // Stage configs — 8 stages per CRM Req. spec, mapped to existing enum values.
   // probabilityPct chosen to reflect realistic conversion expectations.
   const SPEC_STAGE_CONFIGS = [
-    { stage: "NEW",          order: 1, probability: 5,  sla: 24 },
-    { stage: "CONTACTED",    order: 2, probability: 15, sla: 48 },
-    { stage: "DISCOVERY",    order: 3, probability: 30, sla: 72 },
-    { stage: "TECH_MEETING", order: 4, probability: 50, sla: 168 },
-    { stage: "QUALIFIED",    order: 5, probability: 70, sla: 168 },
-    { stage: "WON",          order: 6, probability: 100 },
-    { stage: "LOST",         order: 7, probability: 0  },
-    { stage: "POSTPONED",    order: 8, probability: 0  },
+    { stage: "NEW",           order: 1,  probability: 5,   sla: 24 },
+    { stage: "CONTACTED",     order: 2,  probability: 15,  sla: 48 },
+    { stage: "DISCOVERY",     order: 3,  probability: 30,  sla: 72 },
+    { stage: "QUALIFIED",     order: 4,  probability: 50,  sla: 168 },
+    { stage: "TECH_MEETING",  order: 5,  probability: 60,  sla: 168 },
+    { stage: "PROPOSAL_SENT", order: 6,  probability: 75,  sla: 168 },
+    { stage: "NEGOTIATION",   order: 7,  probability: 85,  sla: 168 },
+    { stage: "VERBAL_YES",    order: 8,  probability: 95,  sla: 72  },
+    { stage: "WON",           order: 9,  probability: 100 },
+    { stage: "LOST",          order: 10, probability: 0   },
+    { stage: "POSTPONED",     order: 11, probability: 0   },
   ] as const;
   for (const cfg of SPEC_STAGE_CONFIGS) {
     await db.crmStageConfig.upsert({

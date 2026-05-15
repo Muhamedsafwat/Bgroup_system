@@ -63,6 +63,11 @@ export const updateOpportunitySchema = z.object({
   techSupportId: z.string().optional(),
   deliveryOwnerId: z.string().optional(),
   primaryContactId: z.string().optional(),
+  /// When present, REPLACES the current product line-up. The action diffs
+  /// against the existing rows so unchanged products are preserved and any
+  /// removed ones are deleted (cascade-safe — quote/commission FK references
+  /// the opportunity, not these line rows).
+  productIds: z.array(z.string()).optional(),
 });
 
 export const stageChangeSchema = z.object({

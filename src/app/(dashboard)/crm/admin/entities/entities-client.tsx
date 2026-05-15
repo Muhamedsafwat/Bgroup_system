@@ -1,6 +1,9 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useTransition } from "react";
+import { useRouter } from "next/navigation";
+import { toast } from "sonner";
+import { Plus, Trash2 } from "lucide-react";
 import { useLocale } from "@/lib/i18n";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -12,7 +15,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
-import { updateEntity } from "../actions";
+import { createEntity, deleteEntity, updateEntity } from "../actions";
 
 type EntityItem = {
   id: string;
@@ -23,18 +26,36 @@ type EntityItem = {
   active: boolean;
 };
 
+type Mode = "create" | "edit";
+
 export function EntitiesClient({ entities }: { entities: EntityItem[] }) {
   const { t, locale } = useLocale();
-  const [open, setOpen] = useState(false);
-  const [editing, setEditing] = useState<EntityItem | null>(null);
-  const [saving, setSaving] = useState(false);
+  const router = useRouter();
+  const [pending, startTransition] = useTransition();
 
+  const [open, setOpen] = useState(false);
+  const [mode, setMode] = useState<Mode>("create");
+  const [editingId, setEditingId] = useState<string | null>(null);
+
+  const [code, setCode] = useState("");
   const [nameEn, setNameEn] = useState("");
   const [nameAr, setNameAr] = useState("");
   const [color, setColor] = useState("#3b82f6");
 
+  function openCreate() {
+    setMode("create");
+    setEditingId(null);
+    setCode("");
+    setNameEn("");
+    setNameAr("");
+    setColor("#3b82f6");
+    setOpen(true);
+  }
+
   function openEdit(entity: EntityItem) {
-    setEditing(entity);
+    setMode("edit");
+    setEditingId(entity.id);
+    setCode(entity.code);
     setNameEn(entity.nameEn);
     setNameAr(entity.nameAr);
     setColor(entity.color);
@@ -42,25 +63,66 @@ export function EntitiesClient({ entities }: { entities: EntityItem[] }) {
   }
 
   async function handleSave() {
-    if (!editing) return;
-    setSaving(true);
-    try {
-      await updateEntity(editing.id, { nameEn, nameAr, color });
-      setOpen(false);
-    } catch (err) {
-      console.error(err);
-    } finally {
-      setSaving(false);
-    }
+    startTransition(async () => {
+      try {
+        if (mode === "create") {
+          await createEntity({ code, nameEn, nameAr, color });
+          toast.success(`Entity "${nameEn}" created`);
+        } else if (editingId) {
+          await updateEntity(editingId, { nameEn, nameAr, color });
+          toast.success(`Entity "${nameEn}" updated`);
+        }
+        setOpen(false);
+        router.refresh();
+      } catch (err) {
+        toast.error(err instanceof Error ? err.message : "Save failed");
+      }
+    });
   }
 
   async function toggleActive(entity: EntityItem) {
-    await updateEntity(entity.id, { active: !entity.active });
+    startTransition(async () => {
+      try {
+        await updateEntity(entity.id, { active: !entity.active });
+        toast.success(`Entity "${entity.nameEn}" ${!entity.active ? "activated" : "deactivated"}`);
+        router.refresh();
+      } catch (err) {
+        toast.error(err instanceof Error ? err.message : "Update failed");
+      }
+    });
   }
+
+  async function handleDelete(entity: EntityItem) {
+    const ok = window.confirm(
+      `Permanently delete entity "${entity.nameEn}" (${entity.code})? This cannot be undone.`
+    );
+    if (!ok) return;
+    startTransition(async () => {
+      try {
+        await deleteEntity(entity.id);
+        toast.success(`Entity "${entity.nameEn}" deleted`);
+        router.refresh();
+      } catch (err) {
+        toast.error(err instanceof Error ? err.message : "Delete failed");
+      }
+    });
+  }
+
+  const canSave =
+    !!nameEn.trim() &&
+    !!nameAr.trim() &&
+    /^#([0-9a-fA-F]{3}|[0-9a-fA-F]{6})$/.test(color) &&
+    (mode === "edit" || /^[A-Za-z0-9_-]+$/.test(code));
 
   return (
     <div className="space-y-6">
-      <h1 className="text-2xl font-bold">{t.nav.entities}</h1>
+      <div className="flex items-center justify-between">
+        <h1 className="text-2xl font-bold">{t.nav.entities}</h1>
+        <Button onClick={openCreate} disabled={pending}>
+          <Plus className="me-1 h-4 w-4" />
+          {locale === "ar" ? "إضافة كيان" : "New entity"}
+        </Button>
+      </div>
 
       <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
         {entities.map((entity) => (
@@ -100,11 +162,12 @@ export function EntitiesClient({ entities }: { entities: EntityItem[] }) {
                 ) : (
                   <Badge variant="secondary">{t.common.inactive}</Badge>
                 )}
-                <div className="flex gap-2">
+                <div className="flex gap-1">
                   <Button
                     variant="ghost"
                     size="sm"
                     onClick={() => openEdit(entity)}
+                    disabled={pending}
                   >
                     {t.common.edit}
                   </Button>
@@ -112,8 +175,19 @@ export function EntitiesClient({ entities }: { entities: EntityItem[] }) {
                     variant="ghost"
                     size="sm"
                     onClick={() => toggleActive(entity)}
+                    disabled={pending}
                   >
                     {entity.active ? t.common.inactive : t.common.active}
+                  </Button>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    onClick={() => handleDelete(entity)}
+                    disabled={pending}
+                    className="text-destructive hover:text-destructive"
+                    title={locale === "ar" ? "حذف" : "Delete"}
+                  >
+                    <Trash2 className="h-4 w-4" />
                   </Button>
                 </div>
               </div>
@@ -126,10 +200,33 @@ export function EntitiesClient({ entities }: { entities: EntityItem[] }) {
         <DialogContent className="sm:max-w-md">
           <DialogHeader>
             <DialogTitle>
-              {t.common.edit} {t.nav.entities}
+              {mode === "create"
+                ? locale === "ar"
+                  ? "إضافة كيان"
+                  : "New entity"
+                : `${t.common.edit} ${t.nav.entities}`}
             </DialogTitle>
           </DialogHeader>
           <div className="space-y-4">
+            {mode === "create" && (
+              <div>
+                <label className="text-sm font-medium">
+                  {locale === "ar" ? "الرمز" : "Code"}
+                </label>
+                <Input
+                  value={code}
+                  onChange={(e) => setCode(e.target.value.toUpperCase())}
+                  placeholder="BG"
+                  maxLength={20}
+                  className="font-mono"
+                />
+                <p className="mt-1 text-xs text-muted-foreground">
+                  {locale === "ar"
+                    ? "أحرف وأرقام و _ - فقط"
+                    : "Letters, numbers, _ and - only"}
+                </p>
+              </div>
+            )}
             <div>
               <label className="text-sm font-medium">
                 {t.common.name} (EN)
@@ -171,10 +268,10 @@ export function EntitiesClient({ entities }: { entities: EntityItem[] }) {
               </div>
             </div>
             <div className="flex justify-end gap-2 pt-2">
-              <Button variant="outline" onClick={() => setOpen(false)}>
+              <Button variant="outline" onClick={() => setOpen(false)} disabled={pending}>
                 {t.common.cancel}
               </Button>
-              <Button onClick={handleSave} disabled={saving || !nameEn || !nameAr}>
+              <Button onClick={handleSave} disabled={pending || !canSave}>
                 {t.common.save}
               </Button>
             </div>

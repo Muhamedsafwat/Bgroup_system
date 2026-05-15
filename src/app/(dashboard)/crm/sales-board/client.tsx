@@ -98,21 +98,33 @@ export function SalesBoardClient() {
       {/* Filter bar — drives every widget below */}
       <div className="flex flex-wrap items-center gap-2">
         <Select value={filterCompany} onValueChange={(v) => setFilterCompany(v ?? "ALL")}>
-          <SelectTrigger className="h-9 w-44"><SelectValue placeholder="Company" /></SelectTrigger>
+          <SelectTrigger className="h-9 w-44">
+            <SelectValue placeholder="Company">
+              {(v) => (v === "ALL" || !v) ? "All companies" : (options.companies.find((c) => c.id === v)?.nameEn ?? "Company")}
+            </SelectValue>
+          </SelectTrigger>
           <SelectContent>
             <SelectItem value="ALL">All companies</SelectItem>
             {options.companies.map((c) => <SelectItem key={c.id} value={c.id}>{c.nameEn}</SelectItem>)}
           </SelectContent>
         </Select>
         <Select value={filterRep} onValueChange={(v) => setFilterRep(v ?? "ALL")}>
-          <SelectTrigger className="h-9 w-44"><SelectValue placeholder="Rep" /></SelectTrigger>
+          <SelectTrigger className="h-9 w-44">
+            <SelectValue placeholder="Rep">
+              {(v) => (v === "ALL" || !v) ? "All reps" : (options.reps.find((r) => r.id === v)?.fullName ?? "Rep")}
+            </SelectValue>
+          </SelectTrigger>
           <SelectContent>
             <SelectItem value="ALL">All reps</SelectItem>
             {options.reps.map((r) => <SelectItem key={r.id} value={r.id}>{r.fullName}</SelectItem>)}
           </SelectContent>
         </Select>
         <Select value={filterProduct} onValueChange={(v) => setFilterProduct(v ?? "ALL")}>
-          <SelectTrigger className="h-9 w-44"><SelectValue placeholder="Product" /></SelectTrigger>
+          <SelectTrigger className="h-9 w-44">
+            <SelectValue placeholder="Product">
+              {(v) => (v === "ALL" || !v) ? "All products" : (options.products.find((p) => p.id === v)?.nameEn ?? "Product")}
+            </SelectValue>
+          </SelectTrigger>
           <SelectContent>
             <SelectItem value="ALL">All products</SelectItem>
             {options.products.map((p) => <SelectItem key={p.id} value={p.id}>{p.nameEn}</SelectItem>)}

@@ -7,7 +7,7 @@ export default async function ProductsPage({
 }: {
   searchParams: Promise<{ entityId?: string; category?: string; active?: string }>;
 }) {
-  await getRequiredSession();
+  const session = await getRequiredSession();
   const params = await searchParams;
 
   const products = await getProducts({
@@ -16,5 +16,9 @@ export default async function ProductsPage({
     active: params.active !== undefined ? params.active === "true" : undefined,
   });
 
-  return <ProductsClient products={products} />;
+  // Admins (CEO / ADMIN) get the Add / Edit / Delete controls; everyone else
+  // sees the read-only catalogue.
+  const canEdit = session.role === "ADMIN";
+
+  return <ProductsClient products={products} canEdit={canEdit} />;
 }

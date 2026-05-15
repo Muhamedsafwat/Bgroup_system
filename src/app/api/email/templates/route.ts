@@ -31,7 +31,7 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
   // Only CRM admins / platform admins can create templates.
-  const isCrmAdmin = session.user.crmRole === "ADMIN" || session.user.crmRole === "CEO";
+  const isCrmAdmin = session.user.crmRole === "ADMIN";
   const isPlatformAdmin =
     !!session.user.hrRoles?.includes("super_admin") ||
     (!!session.user.modules?.includes("partners") && !session.user.partnerId);

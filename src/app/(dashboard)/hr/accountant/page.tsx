@@ -25,7 +25,7 @@ import {
 import api, { payrollApi } from '@/lib/hr/api'
 import { toast } from '@/components/hr/ui/toast'
 import { useAuth } from '@/contexts/hr/AuthContext'
-import { PageHeader } from '@/components/hr/shared/PageHeader'
+import { WelcomeBanner, firstNameOf } from '@/components/shared/WelcomeHero'
 import { ExportButton } from '@/components/hr/shared/ExportButton'
 import { StatCard } from '@/components/hr/shared/StatCard'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/hr/ui/card'
@@ -66,7 +66,7 @@ const statusConfig: Record<string, { label: string; variant: 'default' | 'info' 
 }
 
 export default function AccountantPage() {
-  const { companies } = useAuth()
+  const { companies, user } = useAuth()
   const queryClient = useQueryClient()
   const now = new Date()
   const [month, setMonth] = useState(String(now.getMonth() + 1))
@@ -184,19 +184,21 @@ export default function AccountantPage() {
 
   return (
     <div className="space-y-6">
-      <PageHeader
-        title="Financial Dashboard"
-        description={`Payroll overview for ${periodLabel}`}
-        breadcrumbs={[{ label: 'Accountant' }]}
-        actions={
-          <ExportButton
-            onExportExcel={() => handleExportExcel()}
-            onExportPdf={() => handleExportPdf()}
-            filename={`payroll-${year}-${month.padStart(2, '0')}`}
-            label="Export All"
-          />
-        }
+      <WelcomeBanner
+        firstName={firstNameOf(user?.full_name, user?.email)}
+        rolePill="Accountant"
+        pillTone="emerald"
+        email={user?.email}
+        subtitle={`Payroll overview for ${periodLabel}`}
       />
+      <div className="flex justify-end">
+        <ExportButton
+          onExportExcel={() => handleExportExcel()}
+          onExportPdf={() => handleExportPdf()}
+          filename={`payroll-${year}-${month.padStart(2, '0')}`}
+          label="Export All"
+        />
+      </div>
 
       {/* Period Selector */}
       <div className="flex items-center gap-3 bg-card p-4 rounded-lg border border-border">

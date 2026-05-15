@@ -105,7 +105,7 @@ export async function GET() {
  *     roles?: string[]   // HR role names: super_admin, hr_manager, ceo, accountant, employee
  *   },
  *   crm?: {
- *     fullName, role: "REP"|"MANAGER"|"ACCOUNT_MGR"|"TECH_DIRECTOR"|"FINANCE"|"CEO"|"ADMIN",
+ *     fullName, role: "REP"|"MANAGER"|"ASSISTANT"|"ACCOUNT_MGR"|"ADMIN",
  *     entityId?, monthlyTargetEGP?
  *   },
  *   partner?: {

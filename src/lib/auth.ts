@@ -117,10 +117,16 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
       from: process.env.EMAIL_FROM || "B Group <noreply@bgroup.com>",
     }),
 
-    // HR: Email + password (with Django password re-hashing)
+    // Unified email + password credentials. Accepts any user with a password
+    // AND at least one active module (HR, CRM, or Partners). The provider ID
+    // stays "hr-credentials" for backwards compatibility with the login form
+    // and the test scripts, but it now authenticates CRM-only and
+    // CRM+HR users too — which fixes the case where an admin creates a user
+    // in /crm/admin/users (crmAccess: true, hrAccess: false) and that user
+    // hits "Invalid email or password" on every login attempt.
     Credentials({
       id: "hr-credentials",
-      name: "HR Login",
+      name: "Login",
       credentials: {
         email: { label: "Email", type: "email" },
         password: { label: "Password", type: "password" },
@@ -132,10 +138,23 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
 
         const user = await db.user.findUnique({
           where: { email },
-          include: { hrProfile: true },
+          include: {
+            hrProfile: true,
+            crmProfile: true,
+            partnerProfile: true,
+          },
         });
-        if (!user || !user.hrAccess || !user.password) return null;
-        if (!user.hrProfile?.isActive) return null;
+        if (!user || !user.password) return null;
+
+        // The user needs at least one active module-attachment to log in.
+        // For HR, the profile must be active. For CRM, the profile must be
+        // active. For Partners, the profile (if present) must be active.
+        const hasHr = !!user.hrAccess && user.hrProfile?.isActive !== false;
+        const hasCrm = !!user.crmAccess && (user.crmProfile?.active ?? true) !== false;
+        const hasPartner =
+          !!user.partnersAccess &&
+          (user.partnerProfile == null || user.partnerProfile.isActive);
+        if (!hasHr && !hasCrm && !hasPartner) return null;
 
         const valid = await verifyPassword(password, user.password);
         if (!valid) return null;

@@ -49,7 +49,6 @@ export async function POST(req: Request) {
   // Only allow sharing if user is admin in any module — defensive.
   const isAdmin =
     session.user.crmRole === "ADMIN" ||
-    session.user.crmRole === "CEO" ||
     session.user.hrRoles?.includes("super_admin") ||
     (session.user.modules?.includes("partners") && !session.user.partnerId);
 

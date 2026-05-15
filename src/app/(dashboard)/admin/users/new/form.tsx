@@ -16,7 +16,7 @@ type Dept = { id: string; nameEn: string; companyId: string };
 type Manager = { id: string; fullNameEn: string; positionEn: string; companyId: string };
 type Entity = { id: string; nameEn: string };
 
-const CRM_ROLES = ["REP", "MANAGER", "TECH_DIRECTOR", "ACCOUNT_MGR", "FINANCE", "CEO", "ADMIN"];
+const CRM_ROLES = ["REP", "MANAGER", "ASSISTANT", "ACCOUNT_MGR", "ADMIN"];
 
 export function NewUserForm({
   companies,
@@ -259,7 +259,11 @@ export function NewUserForm({
             <div>
               <Label>Company *</Label>
               <Select value={companyId} onValueChange={(v) => { setCompanyId(v ?? ""); setDepartmentId(""); setDirectManagerId("NONE"); }}>
-                <SelectTrigger><SelectValue placeholder="Select company" /></SelectTrigger>
+                <SelectTrigger>
+                  <SelectValue placeholder="Select company">
+                    {(v) => companies.find((c) => c.id === v)?.nameEn ?? "Select company"}
+                  </SelectValue>
+                </SelectTrigger>
                 <SelectContent>
                   {companies.map((c) => <SelectItem key={c.id} value={c.id}>{c.nameEn}</SelectItem>)}
                 </SelectContent>
@@ -268,7 +272,11 @@ export function NewUserForm({
             <div>
               <Label>Department</Label>
               <Select value={departmentId} onValueChange={(v) => setDepartmentId(v ?? "")} disabled={!companyId}>
-                <SelectTrigger><SelectValue placeholder={companyId ? "Select department" : "Pick company first"} /></SelectTrigger>
+                <SelectTrigger>
+                  <SelectValue placeholder={companyId ? "Select department" : "Pick company first"}>
+                    {(v) => filteredDepartments.find((d) => d.id === v)?.nameEn ?? (companyId ? "Select department" : "Pick company first")}
+                  </SelectValue>
+                </SelectTrigger>
                 <SelectContent>
                   {filteredDepartments.map((d) => <SelectItem key={d.id} value={d.id}>{d.nameEn}</SelectItem>)}
                 </SelectContent>
@@ -277,7 +285,15 @@ export function NewUserForm({
             <div>
               <Label>Direct manager <span className="text-xs text-muted-foreground">(org-chart auth)</span></Label>
               <Select value={directManagerId} onValueChange={(v) => setDirectManagerId(v ?? "NONE")} disabled={!companyId}>
-                <SelectTrigger><SelectValue placeholder="Optional" /></SelectTrigger>
+                <SelectTrigger>
+                  <SelectValue placeholder="Optional">
+                    {(v) => {
+                      if (v === "NONE" || !v) return "— No manager —";
+                      const m = filteredManagers.find((x) => x.id === v);
+                      return m ? `${m.fullNameEn}${m.positionEn ? ` · ${m.positionEn}` : ""}` : "Optional";
+                    }}
+                  </SelectValue>
+                </SelectTrigger>
                 <SelectContent>
                   <SelectItem value="NONE">— No manager (top of tree) —</SelectItem>
                   {filteredManagers.map((m) => (

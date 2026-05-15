@@ -12,7 +12,7 @@ export async function GET(
   if (error) return error;
 
   const { id } = await params;
-  const lead = await db.partnerLead.findUnique({ where: { id } });
+  const lead = await db.partnerLead.findFirst({ where: { id, deletedAt: null } });
   if (!lead || !assertAccess(user, lead.partnerId)) {
     return jsonError("Lead not found", 404);
   }
@@ -29,7 +29,7 @@ export async function PATCH(
   if (error) return error;
 
   const { id } = await params;
-  const existing = await db.partnerLead.findUnique({ where: { id } });
+  const existing = await db.partnerLead.findFirst({ where: { id, deletedAt: null } });
   if (!existing || !assertAccess(user, existing.partnerId)) {
     return jsonError("Lead not found", 404);
   }
@@ -48,7 +48,7 @@ export async function PATCH(
   return jsonSuccess(updated);
 }
 
-// DELETE /api/partners/leads/[id]
+// DELETE /api/partners/leads/[id] — soft-delete.
 export async function DELETE(
   _request: NextRequest,
   { params }: { params: Promise<{ id: string }> }
@@ -57,11 +57,14 @@ export async function DELETE(
   if (error) return error;
 
   const { id } = await params;
-  const existing = await db.partnerLead.findUnique({ where: { id } });
+  const existing = await db.partnerLead.findFirst({ where: { id, deletedAt: null } });
   if (!existing || !assertAccess(user, existing.partnerId)) {
     return jsonError("Lead not found", 404);
   }
 
-  await db.partnerLead.delete({ where: { id } });
+  await db.partnerLead.update({
+    where: { id },
+    data: { deletedAt: new Date(), deletedById: user.userId },
+  });
   return jsonSuccess({ message: "Lead deleted" });
 }

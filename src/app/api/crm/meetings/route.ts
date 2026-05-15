@@ -51,7 +51,10 @@ export async function GET(req: Request) {
   const from = url.searchParams.get("from");
   const to = url.searchParams.get("to");
   const status = url.searchParams.get("status");
-  const scope = url.searchParams.get("scope") ?? "mine";
+  // Default to "all" so the calendar shows every booked slot org-wide. Reps
+  // need to see colleagues' meetings to avoid double-booking the same product
+  // in the same time-slot. Pass `?scope=mine` to filter to just the caller.
+  const scope = url.searchParams.get("scope") ?? "all";
 
   const where: Prisma.CrmMeetingWhereInput = {};
   const startFilter: { gte?: Date; lt?: Date } = {};
@@ -61,13 +64,7 @@ export async function GET(req: Request) {
   if (status && (Object.values(CrmMeetingStatus) as string[]).includes(status)) {
     where.status = status as CrmMeetingStatus;
   }
-  // Scope: reps see only their own meetings; managers + admins see all in their org.
-  const isManager =
-    session.user.crmRole === "MANAGER" ||
-    session.user.crmRole === "CEO" ||
-    session.user.crmRole === "ADMIN" ||
-    isPlatformAdmin(session);
-  if (scope === "mine" || !isManager) {
+  if (scope === "mine") {
     where.scheduledById = crmProfileId;
   }
 
@@ -104,7 +101,6 @@ export async function POST(req: Request) {
   // Resolve scheduledById — non-managers can only book for themselves.
   const isManager =
     session.user.crmRole === "MANAGER" ||
-    session.user.crmRole === "CEO" ||
     session.user.crmRole === "ADMIN" ||
     isPlatformAdmin(session);
   let scheduledById = callerCrmProfileId;
@@ -128,31 +124,60 @@ export async function POST(req: Request) {
   const startAt = new Date(data.startAt);
   const endAt = new Date(startAt.getTime() + data.durationMinutes * 60_000);
 
-  // Conflict detection — block if this rep already has an active meeting that
-  // overlaps with the new window. Cancelled meetings don't count.
-  const conflict = await db.crmMeeting.findFirst({
-    where: {
-      scheduledById,
-      status: { not: "CANCELLED" },
-      startAt: { lt: endAt },
-      endAt: { gt: startAt },
-    },
-    select: {
-      id: true,
-      code: true,
-      startAt: true,
-      endAt: true,
-      contactName: true,
-    },
+  // Two-layer conflict detection:
+  // 1. The same rep can't double-book themselves at the same time (any product).
+  // 2. Org-wide: no two meetings for the SAME product can overlap, even when
+  //    booked by different reps — the underlying tech-team / demo resource
+  //    is shared. Different products in the same slot are fine; they go to
+  //    different teams. DENIED + CANCELLED rows free the slot up again.
+  const overlapWindow: Prisma.CrmMeetingWhereInput = {
+    startAt: { lt: endAt },
+    endAt: { gt: startAt },
+  };
+  const activeStatuses: Prisma.CrmMeetingWhereInput = {
+    status: { notIn: [CrmMeetingStatus.CANCELLED, CrmMeetingStatus.DENIED] },
+  };
+
+  const selfConflict = await db.crmMeeting.findFirst({
+    where: { scheduledById, ...activeStatuses, ...overlapWindow },
+    select: { id: true, code: true, startAt: true, endAt: true, contactName: true, customerNeed: true },
   });
-  if (conflict) {
+  if (selfConflict) {
     return NextResponse.json(
       {
-        error: `Time slot conflicts with meeting ${conflict.code} (${conflict.contactName ?? "—"}) from ${conflict.startAt.toISOString()} to ${conflict.endAt.toISOString()}`,
-        conflict,
+        error: `You already have meeting ${selfConflict.code} (${selfConflict.contactName ?? "—"}) at ${selfConflict.startAt.toISOString()}.`,
+        conflict: selfConflict,
       },
       { status: 409 }
     );
+  }
+
+  if (data.customerNeed) {
+    const productConflict = await db.crmMeeting.findFirst({
+      where: {
+        customerNeed: data.customerNeed,
+        ...activeStatuses,
+        ...overlapWindow,
+      },
+      select: {
+        id: true,
+        code: true,
+        startAt: true,
+        endAt: true,
+        contactName: true,
+        customerNeed: true,
+        scheduledBy: { select: { fullName: true } },
+      },
+    });
+    if (productConflict) {
+      return NextResponse.json(
+        {
+          error: `${productConflict.customerNeed} is already booked in this slot by ${productConflict.scheduledBy.fullName} (meeting ${productConflict.code}). Pick a different time or a different product.`,
+          conflict: productConflict,
+        },
+        { status: 409 }
+      );
+    }
   }
 
   const code = await generateCode();
@@ -170,7 +195,10 @@ export async function POST(req: Request) {
       contactPhone: data.contactPhone ?? null,
       customerNeed: data.customerNeed ?? null,
       notes: data.notes ?? null,
-      status: data.status ?? "WAITING",
+      // Every newly-booked meeting is a REQUEST until the assistant signs
+      // off. Manager-or-above bookings could conceivably skip the queue but
+      // we keep the rule uniform: any meeting starts in the approval queue.
+      status: data.status ?? "PENDING_APPROVAL",
     },
     include: {
       scheduledBy: { select: { id: true, fullName: true } },

@@ -14,6 +14,8 @@ import {
   TrendingUp,
   ArrowRight,
 } from "lucide-react";
+import { WelcomeBanner } from "@/components/shared/WelcomeHero";
+import { firstNameOf } from "@/lib/welcome";
 
 export const dynamic = "force-dynamic";
 
@@ -40,13 +42,13 @@ export default async function AdminHomePage() {
 
   return (
     <div className="space-y-4">
-      <div>
-        <h1 className="text-2xl font-bold text-foreground">Admin</h1>
-        <p className="text-sm text-muted-foreground mt-1">
-          Everything an org admin manages — users across all modules, partners, the catalogue, settings,
-          workflows, and cross-module dashboards.
-        </p>
-      </div>
+      <WelcomeBanner
+        firstName={firstNameOf(session.user.name, session.user.email)}
+        rolePill="Platform admin"
+        pillTone="indigo"
+        email={session.user.email}
+        subtitle="Users, partners, catalogue, settings, workflows, and cross-module dashboards"
+      />
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
         {TILES.map((t) => (
           <Link key={t.href} href={t.href} className="block group">

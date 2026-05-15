@@ -9,7 +9,9 @@ export async function GET(request: NextRequest) {
   if (error) return error;
 
   const pagination = getPaginationParams(request.nextUrl.searchParams);
-  const where = user.isAdmin ? {} : { partnerId: user.partnerId! };
+  const where = user.isAdmin
+    ? { deletedAt: null }
+    : { partnerId: user.partnerId!, deletedAt: null };
 
   const [data, total] = await Promise.all([
     db.partnerClient.findMany({

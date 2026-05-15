@@ -12,8 +12,8 @@ export async function GET(
   if (error) return error;
 
   const { id } = await params;
-  const deal = await db.partnerDeal.findUnique({
-    where: { id },
+  const deal = await db.partnerDeal.findFirst({
+    where: { id, deletedAt: null },
     include: {
       client: { select: { id: true, name: true, email: true } },
       service: { select: { id: true, name: true, basePrice: true } },
@@ -35,7 +35,7 @@ export async function PATCH(
   if (error) return error;
 
   const { id } = await params;
-  const existing = await db.partnerDeal.findUnique({ where: { id } });
+  const existing = await db.partnerDeal.findFirst({ where: { id, deletedAt: null } });
   if (!existing || !assertAccess(user, existing.partnerId)) {
     return jsonError("Deal not found", 404);
   }
@@ -98,7 +98,8 @@ export async function PATCH(
   return jsonSuccess(updated);
 }
 
-// DELETE /api/partners/deals/[id] — Only PENDING deals can be deleted
+// DELETE /api/partners/deals/[id] — soft-delete. Only PENDING deals can be deleted
+// (WON deals already have a commission row that would leave dangling FK).
 export async function DELETE(
   _request: NextRequest,
   { params }: { params: Promise<{ id: string }> }
@@ -107,7 +108,7 @@ export async function DELETE(
   if (error) return error;
 
   const { id } = await params;
-  const existing = await db.partnerDeal.findUnique({ where: { id } });
+  const existing = await db.partnerDeal.findFirst({ where: { id, deletedAt: null } });
   if (!existing || !assertAccess(user, existing.partnerId)) {
     return jsonError("Deal not found", 404);
   }
@@ -116,6 +117,9 @@ export async function DELETE(
     return jsonError("Only pending deals can be deleted", 400);
   }
 
-  await db.partnerDeal.delete({ where: { id } });
+  await db.partnerDeal.update({
+    where: { id },
+    data: { deletedAt: new Date(), deletedById: user.userId },
+  });
   return jsonSuccess({ message: "Deal deleted" });
 }

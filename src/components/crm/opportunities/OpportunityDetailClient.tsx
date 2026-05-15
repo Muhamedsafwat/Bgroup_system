@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect, useCallback } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useLocale } from "@/lib/i18n";
@@ -10,6 +10,20 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Textarea } from "@/components/ui/textarea";
+import {
+  Dialog,
+  DialogContent,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { StageBadge } from "@/components/crm/shared/StageBadge";
 import { PriorityBadge } from "@/components/crm/shared/PriorityBadge";
 import { EntityBadge } from "@/components/crm/shared/EntityBadge";
@@ -29,21 +43,142 @@ import {
   User,
   FileText,
   Edit,
+  Upload,
+  Workflow,
+  Loader2,
 } from "lucide-react";
 import type { Locale } from "@/lib/i18n";
+
+type WorkflowSummary = {
+  id: string;
+  name: string;
+  description: string | null;
+  module: string;
+  kind: string;
+};
+
+type Attachment = {
+  id: string;
+  filename: string;
+  url: string;
+  sizeBytes: number;
+  mimeType: string;
+  kind: string;
+  createdAt: string;
+};
 
 export function OpportunityDetailClient({
   opportunity: opp,
   locale,
+  canStartWorkflow = false,
+  workflows = [],
 }: {
   opportunity: Record<string, unknown>;
   locale: Locale;
+  canStartWorkflow?: boolean;
+  workflows?: WorkflowSummary[];
 }) {
   const { t } = useLocale();
   const router = useRouter();
   const [stageModalOpen, setStageModalOpen] = useState(false);
   const [noteText, setNoteText] = useState("");
   const [addingNote, setAddingNote] = useState(false);
+
+  // Real attachments (CrmAttachment rows) — fetched on mount, refreshed after
+  // an upload. Note: opp.proposalUrl / opp.contractUrl are legacy single-URL
+  // fields kept for backwards compatibility, but the attachments table is
+  // the new home for documents uploaded against the opportunity.
+  const [attachments, setAttachments] = useState<Attachment[]>([]);
+  const [uploading, setUploading] = useState(false);
+
+  // Workflow trigger dialog state — only the sales manager (or CEO) sees
+  // this UI; the API enforces the same role.
+  const [workflowDialogOpen, setWorkflowDialogOpen] = useState(false);
+  const [workflowChoice, setWorkflowChoice] = useState("");
+  const [workflowComment, setWorkflowComment] = useState("");
+  const [triggeringWorkflow, setTriggeringWorkflow] = useState(false);
+
+  const refreshAttachments = useCallback(async () => {
+    const res = await fetch(`/api/crm/opportunities/${opp.id}/attachments`);
+    if (res.ok) {
+      const data = await res.json();
+      setAttachments(data.attachments ?? []);
+    }
+  }, [opp.id]);
+  useEffect(() => {
+    refreshAttachments();
+  }, [refreshAttachments]);
+
+  async function handleUpload(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0];
+    e.target.value = "";
+    if (!file) return;
+    if (file.size > 25 * 1024 * 1024) {
+      toast.error("File exceeds 25 MB cap");
+      return;
+    }
+    setUploading(true);
+    try {
+      const contentBase64 = await new Promise<string>((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => {
+          const r = reader.result as string;
+          resolve(r.includes(",") ? r.split(",", 2)[1] : r);
+        };
+        reader.onerror = () => reject(reader.error);
+        reader.readAsDataURL(file);
+      });
+      const res = await fetch(`/api/crm/opportunities/${opp.id}/attachments`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          filename: file.name,
+          mimeType: file.type || "application/octet-stream",
+          sizeBytes: file.size,
+          contentBase64,
+        }),
+      });
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        toast.error(data.error ?? "Upload failed");
+        return;
+      }
+      toast.success(`Attached ${file.name}`);
+      await refreshAttachments();
+    } finally {
+      setUploading(false);
+    }
+  }
+
+  async function handleTriggerWorkflow() {
+    if (!workflowChoice) return;
+    setTriggeringWorkflow(true);
+    try {
+      const res = await fetch(`/api/crm/opportunities/${opp.id}/trigger-workflow`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          workflowId: workflowChoice,
+          comment: workflowComment.trim() || undefined,
+        }),
+      });
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        toast.error(data.error ?? "Workflow trigger failed");
+        return;
+      }
+      const data = await res.json();
+      toast.success(
+        `Workflow started — ${data.cascaded?.notes ?? 0} notes & ${data.cascaded?.attachments ?? 0} files carried over`
+      );
+      setWorkflowDialogOpen(false);
+      setWorkflowChoice("");
+      setWorkflowComment("");
+      router.refresh();
+    } finally {
+      setTriggeringWorkflow(false);
+    }
+  }
 
   const entity = opp.entity as { code: string; nameEn: string; nameAr: string; color: string };
   const company = opp.company as { nameEn: string; nameAr: string | null; phone: string | null };
@@ -88,8 +223,8 @@ export function OpportunityDetailClient({
             <span>{t.dealTypes[opp.dealType as keyof typeof t.dealTypes]}</span>
           </div>
         </div>
-        <div className="flex gap-2">
-          <Link href={`/opportunities/${opp.id}/edit`}>
+        <div className="flex gap-2 flex-wrap">
+          <Link href={`/crm/opportunities/${opp.id}/edit`}>
             <Button variant="outline">
               <Edit className="h-4 w-4 me-2" />
               {t.common.edit}
@@ -98,6 +233,25 @@ export function OpportunityDetailClient({
           <Button onClick={() => setStageModalOpen(true)}>
             {t.forms.selectStage}
           </Button>
+          {/* Start-workflow is a sales-manager-only action — it kicks off
+              the team workflow once the opp is ready for delivery. Notes +
+              attachments from the opp are carried over to the first task. */}
+          {canStartWorkflow && (
+            <Button
+              variant="default"
+              className="bg-emerald-600 hover:bg-emerald-700"
+              onClick={() => setWorkflowDialogOpen(true)}
+              disabled={workflows.length === 0}
+              title={
+                workflows.length === 0
+                  ? "No active workflows configured"
+                  : "Start a workflow for the team"
+              }
+            >
+              <Workflow className="h-4 w-4 me-2" />
+              Start workflow
+            </Button>
+          )}
         </div>
       </div>
 
@@ -338,31 +492,100 @@ export function OpportunityDetailClient({
           </Card>
         </TabsContent>
 
-        {/* Documents Tab */}
+        {/* Documents Tab — real CrmAttachment list + uploader. The legacy
+            proposalUrl / contractUrl single-link fields are shown below if
+            they exist, but new docs go through the upload flow. */}
         <TabsContent value="documents">
           <Card>
-            <CardContent className="p-4">
-              <div className="space-y-3">
-                {Boolean(opp.proposalUrl) && (
-                  <div className="flex items-center gap-3">
-                    <FileText className="h-5 w-5 text-muted-foreground" />
-                    <a href={opp.proposalUrl as string} target="_blank" rel="noopener noreferrer" className="text-primary hover:underline">
-                      {t.attachmentKinds.PROPOSAL}
-                    </a>
-                  </div>
-                )}
-                {Boolean(opp.contractUrl) && (
-                  <div className="flex items-center gap-3">
-                    <FileText className="h-5 w-5 text-muted-foreground" />
-                    <a href={opp.contractUrl as string} target="_blank" rel="noopener noreferrer" className="text-primary hover:underline">
-                      {t.attachmentKinds.CONTRACT}
-                    </a>
-                  </div>
-                )}
-                {!opp.proposalUrl && !opp.contractUrl && (
-                  <p className="text-sm text-muted-foreground text-center py-8">{t.common.noResults}</p>
-                )}
+            <CardContent className="p-4 space-y-4">
+              <div className="flex items-center justify-between">
+                <p className="text-sm font-semibold text-foreground">
+                  {locale === "ar" ? "المستندات" : "Documents"}
+                  <span className="text-xs text-muted-foreground ms-2">
+                    ({attachments.length})
+                  </span>
+                </p>
+                <label className="cursor-pointer">
+                  <input
+                    type="file"
+                    className="hidden"
+                    onChange={handleUpload}
+                    disabled={uploading}
+                  />
+                  <span className="inline-flex items-center gap-1.5 rounded-md border border-border bg-background px-3 h-9 text-sm hover:bg-muted/50">
+                    {uploading ? (
+                      <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                    ) : (
+                      <Upload className="h-3.5 w-3.5" />
+                    )}
+                    {uploading
+                      ? locale === "ar"
+                        ? "جارٍ الرفع..."
+                        : "Uploading..."
+                      : locale === "ar"
+                        ? "رفع ملف"
+                        : "Upload file"}
+                  </span>
+                </label>
               </div>
+
+              {attachments.length === 0 && !opp.proposalUrl && !opp.contractUrl ? (
+                <p className="text-sm text-muted-foreground text-center py-8">
+                  {locale === "ar"
+                    ? "لا توجد مستندات بعد. ارفع أول ملف لتبدأ."
+                    : "No documents yet. Upload the first one to get started."}
+                </p>
+              ) : (
+                <div className="space-y-2">
+                  {attachments.map((a) => (
+                    <a
+                      key={a.id}
+                      href={a.url}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="flex items-center justify-between gap-3 rounded-md border border-border px-3 py-2 hover:bg-muted/30 text-sm"
+                    >
+                      <div className="flex items-center gap-3 min-w-0 flex-1">
+                        <FileText className="h-4 w-4 text-muted-foreground shrink-0" />
+                        <div className="min-w-0">
+                          <p className="font-medium truncate">{a.filename}</p>
+                          <p className="text-[11px] text-muted-foreground">
+                            {(a.sizeBytes / 1024).toFixed(1)} KB ·{" "}
+                            {new Date(a.createdAt).toLocaleString()}
+                          </p>
+                        </div>
+                      </div>
+                      <span className="text-[10px] uppercase tracking-wider text-muted-foreground shrink-0">
+                        {a.kind}
+                      </span>
+                    </a>
+                  ))}
+
+                  {/* Legacy single-URL fields, shown at the bottom for continuity */}
+                  {Boolean(opp.proposalUrl) && (
+                    <a
+                      href={opp.proposalUrl as string}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="flex items-center gap-3 rounded-md border border-dashed border-border px-3 py-2 hover:bg-muted/30 text-sm"
+                    >
+                      <FileText className="h-4 w-4 text-muted-foreground shrink-0" />
+                      <span>{t.attachmentKinds.PROPOSAL} (legacy URL)</span>
+                    </a>
+                  )}
+                  {Boolean(opp.contractUrl) && (
+                    <a
+                      href={opp.contractUrl as string}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="flex items-center gap-3 rounded-md border border-dashed border-border px-3 py-2 hover:bg-muted/30 text-sm"
+                    >
+                      <FileText className="h-4 w-4 text-muted-foreground shrink-0" />
+                      <span>{t.attachmentKinds.CONTRACT} (legacy URL)</span>
+                    </a>
+                  )}
+                </div>
+              )}
             </CardContent>
           </Card>
         </TabsContent>
@@ -423,6 +646,85 @@ export function OpportunityDetailClient({
         currentStage={opp.stage as string}
         locale={locale}
       />
+
+      {/* Start-workflow dialog — manager picks a workflow + leaves an optional
+          kickoff comment; the API copies opp notes/attachments into the
+          first task so the team picks up where the rep left off. */}
+      {canStartWorkflow && (
+        <Dialog open={workflowDialogOpen} onOpenChange={setWorkflowDialogOpen}>
+          <DialogContent>
+            <DialogHeader>
+              <DialogTitle>Start workflow from this opportunity</DialogTitle>
+            </DialogHeader>
+            <div className="space-y-3">
+              <p className="text-sm text-muted-foreground">
+                All notes and attachments on this opportunity will be carried over
+                to the first task of the workflow so the team starts with the
+                full context.
+              </p>
+              <div>
+                <label className="text-sm font-medium mb-1.5 block">Workflow</label>
+                <Select
+                  value={workflowChoice || undefined}
+                  onValueChange={(v) => setWorkflowChoice(v ?? "")}
+                >
+                  <SelectTrigger>
+                    <SelectValue placeholder="Pick a workflow">
+                      {(() => {
+                        const w = workflows.find((x) => x.id === workflowChoice);
+                        return w
+                          ? `${w.name}${w.kind === "CUSTOM" ? " · one-shot" : ""}`
+                          : "Pick a workflow";
+                      })()}
+                    </SelectValue>
+                  </SelectTrigger>
+                  <SelectContent>
+                    {workflows.map((w) => (
+                      <SelectItem key={w.id} value={w.id}>
+                        {w.name} {w.kind === "CUSTOM" ? "· one-shot" : ""}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+              <div>
+                <label className="text-sm font-medium mb-1.5 block">
+                  Kickoff comment (optional)
+                </label>
+                <Textarea
+                  rows={3}
+                  value={workflowComment}
+                  onChange={(e) => setWorkflowComment(e.target.value)}
+                  placeholder="Context for the team picking this up..."
+                />
+              </div>
+            </div>
+            <DialogFooter>
+              <Button
+                variant="outline"
+                onClick={() => setWorkflowDialogOpen(false)}
+                disabled={triggeringWorkflow}
+              >
+                Cancel
+              </Button>
+              <Button
+                onClick={handleTriggerWorkflow}
+                disabled={!workflowChoice || triggeringWorkflow}
+              >
+                {triggeringWorkflow ? (
+                  <>
+                    <Loader2 className="h-4 w-4 me-2 animate-spin" /> Starting...
+                  </>
+                ) : (
+                  <>
+                    <Workflow className="h-4 w-4 me-2" /> Start workflow
+                  </>
+                )}
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
+      )}
     </div>
   );
 }

@@ -30,11 +30,32 @@ async function getFxRates(): Promise<FxRateMap> {
   return map;
 }
 
+/**
+ * Resolve the win-probability for a stage. Prefers a global config row
+ * (entityId: null) when set, falls back to ANY per-entity config, and only
+ * then to the stage's hard-coded default. The fallback chain matters because
+ * the seed installs per-entity configs, not globals — without this we'd
+ * always return 5% and weighted-value calculations would be useless.
+ */
+const STAGE_DEFAULT_PROBABILITY: Record<CrmOpportunityStage, number> = {
+  NEW: 5,
+  CONTACTED: 15,
+  DISCOVERY: 30,
+  QUALIFIED: 70,
+  TECH_MEETING: 50,
+  PROPOSAL_SENT: 75,
+  NEGOTIATION: 85,
+  VERBAL_YES: 95,
+  WON: 100,
+  LOST: 0,
+  POSTPONED: 0,
+};
+
 async function getStageProbability(stage: CrmOpportunityStage): Promise<number> {
-  const config = await db.crmStageConfig.findFirst({
-    where: { stage, entityId: null },
-  });
-  return config?.probabilityPct ?? 5;
+  const config =
+    (await db.crmStageConfig.findFirst({ where: { stage, entityId: null } })) ??
+    (await db.crmStageConfig.findFirst({ where: { stage } }));
+  return config?.probabilityPct ?? STAGE_DEFAULT_PROBABILITY[stage];
 }
 
 export async function getOpportunities(filters?: {
@@ -51,7 +72,7 @@ export async function getOpportunities(filters?: {
   const page = filters?.page || 1;
   const pageSize = filters?.pageSize || 50;
 
-  const where: Record<string, unknown> = { ...scope };
+  const where: Record<string, unknown> = { ...scope, deletedAt: null };
 
   if (filters?.stage && filters.stage.length > 0) {
     where.stage = { in: filters.stage };
@@ -100,7 +121,7 @@ export async function getOpportunity(id: string) {
   const scope = scopeOpportunityByRole(session);
 
   const result = await db.crmOpportunity.findFirst({
-    where: { id, ...scope },
+    where: { id, ...scope, deletedAt: null },
     include: {
       company: { select: { id: true, nameEn: true, nameAr: true, phone: true } },
       primaryContact: { select: { id: true, fullName: true, phone: true, email: true, whatsapp: true } },
@@ -210,6 +231,31 @@ export async function createOpportunity(input: CreateOpportunityInput) {
       },
     });
 
+    // Attach products / services the customer is interested in. Default
+    // qty = 1, unitPriceEGP from the product's basePrice (converted if it's
+    // priced in a non-EGP currency), discountPct = 0. Users can refine
+    // line-item math in the edit view later.
+    if (parsed.productIds && parsed.productIds.length) {
+      const uniqueIds = Array.from(new Set(parsed.productIds));
+      const products = await tx.crmProduct.findMany({
+        where: { id: { in: uniqueIds }, active: true },
+        select: { id: true, basePrice: true, currency: true },
+      });
+      for (const p of products) {
+        const fx = fxRates[p.currency] ?? 1;
+        const unitPriceEGP = Number(p.basePrice) * fx;
+        await tx.crmOpportunityProduct.create({
+          data: {
+            opportunityId: created.id,
+            productId: p.id,
+            quantity: 1,
+            unitPriceEGP,
+            discountPct: 0,
+          },
+        });
+      }
+    }
+
     return created;
   });
 
@@ -223,20 +269,21 @@ export async function updateOpportunity(id: string, input: UpdateOpportunityInpu
   const parsed = updateOpportunitySchema.parse(input);
 
   const existing = await db.crmOpportunity.findFirst({
-    where: { id, ...scopeOpportunityByRole(session) },
+    where: { id, ...scopeOpportunityByRole(session), deletedAt: null },
   });
   if (!existing) throw new Error("Opportunity not found");
 
   const updateData: Record<string, unknown> = {};
 
-  // Map parsed fields to update data
+  // productIds is handled separately (joins through CrmOpportunityProduct) —
+  // don't push it onto the CrmOpportunity update payload or Prisma will reject.
   for (const [key, value] of Object.entries(parsed)) {
-    if (value !== undefined) {
-      if (key === "expectedCloseDate" || key === "nextActionDate") {
-        updateData[key] = value ? new Date(value as string) : null;
-      } else {
-        updateData[key] = value;
-      }
+    if (value === undefined) continue;
+    if (key === "productIds") continue;
+    if (key === "expectedCloseDate" || key === "nextActionDate") {
+      updateData[key] = value ? new Date(value as string) : null;
+    } else {
+      updateData[key] = value;
     }
   }
 
@@ -261,6 +308,44 @@ export async function updateOpportunity(id: string, input: UpdateOpportunityInpu
       data: updateData,
     });
 
+    // Sync product line-up: insert new picks, remove ones the user cleared.
+    // Existing rows that stay are left untouched so any manual qty/unit-price
+    // overrides aren't wiped on a routine save.
+    if (parsed.productIds) {
+      const desired = new Set(parsed.productIds);
+      const currentRows = await tx.crmOpportunityProduct.findMany({
+        where: { opportunityId: id },
+        select: { id: true, productId: true },
+      });
+      const current = new Set(currentRows.map((r) => r.productId));
+      const toRemove = currentRows.filter((r) => !desired.has(r.productId));
+      const toAdd = parsed.productIds.filter((pid) => !current.has(pid));
+      if (toRemove.length) {
+        await tx.crmOpportunityProduct.deleteMany({
+          where: { id: { in: toRemove.map((r) => r.id) } },
+        });
+      }
+      if (toAdd.length) {
+        const fxRates = await getFxRates();
+        const products = await tx.crmProduct.findMany({
+          where: { id: { in: toAdd }, active: true },
+          select: { id: true, basePrice: true, currency: true },
+        });
+        for (const p of products) {
+          const fx = fxRates[p.currency] ?? 1;
+          await tx.crmOpportunityProduct.create({
+            data: {
+              opportunityId: id,
+              productId: p.id,
+              quantity: 1,
+              unitPriceEGP: Number(p.basePrice) * fx,
+              discountPct: 0,
+            },
+          });
+        }
+      }
+    }
+
     await tx.crmActivityLog.create({
       data: {
         opportunityId: id,
@@ -279,12 +364,50 @@ export async function updateOpportunity(id: string, input: UpdateOpportunityInpu
   return JSON.parse(JSON.stringify(updated));
 }
 
+/**
+ * Soft-delete an opportunity. Row stays in the DB (marked `deletedAt`) so
+ * downstream commission / forecast history doesn't get broken. List queries
+ * must filter `deletedAt: null` to keep deleted opps out of the UI.
+ *
+ * Only the opportunity owner or an ADMIN can delete.
+ */
+export async function deleteOpportunity(id: string) {
+  const session = await getRequiredSession();
+  const existing = await db.crmOpportunity.findFirst({
+    where: { id, ...scopeOpportunityByRole(session) },
+    select: { id: true, ownerId: true, deletedAt: true },
+  });
+  if (!existing || existing.deletedAt) throw new Error("Opportunity not found");
+  if (existing.ownerId !== session.id && session.role !== "ADMIN") {
+    throw new Error("Only the owner or an admin can delete this opportunity");
+  }
+
+  await db.$transaction(async (tx) => {
+    await tx.crmOpportunity.update({
+      where: { id },
+      data: { deletedAt: new Date(), deletedById: session.id },
+    });
+    await tx.crmActivityLog.create({
+      data: {
+        opportunityId: id,
+        actorId: session.id,
+        action: "deleted",
+        metadata: {},
+      },
+    });
+  });
+
+  revalidatePath("/crm/opportunities");
+  revalidatePath("/my");
+  return { ok: true };
+}
+
 export async function changeStage(opportunityId: string, input: StageChangeInput) {
   const session = await getRequiredSession();
   const parsed = stageChangeSchema.parse(input);
 
   const opp = await db.crmOpportunity.findFirst({
-    where: { id: opportunityId, ...scopeOpportunityByRole(session) },
+    where: { id: opportunityId, ...scopeOpportunityByRole(session), deletedAt: null },
   });
   if (!opp) throw new Error("Opportunity not found");
 

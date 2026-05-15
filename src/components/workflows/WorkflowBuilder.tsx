@@ -54,7 +54,7 @@ type Member = { id: string; name: string | null; email: string };
 
 const TYPES = ["GENERAL", "CALL", "EMAIL", "MEETING", "FOLLOW_UP", "ADMIN", "ONBOARDING", "REVIEW", "APPROVAL"];
 const PRIORITIES = ["LOW", "MEDIUM", "HIGH", "URGENT"];
-const ROLES = ["creator", "trigger_user", "REP", "MANAGER", "ACCOUNT_MGR", "TECH_DIRECTOR", "FINANCE", "CEO", "ADMIN", "HR"];
+const ROLES = ["creator", "trigger_user", "REP", "MANAGER", "ASSISTANT", "ACCOUNT_MGR", "ADMIN", "HR"];
 
 function uid() {
   return Math.random().toString(36).slice(2, 10);

@@ -9,7 +9,7 @@ export default async function UsersPage() {
     getServerT(),
   ]);
 
-  if (session.role !== "CEO" && session.role !== "ADMIN") {
+  if (session.role !== "ADMIN") {
     return <div className="p-6 text-destructive">Unauthorized</div>;
   }
 

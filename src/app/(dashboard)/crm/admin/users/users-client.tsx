@@ -38,6 +38,8 @@ type UserItem = {
   role: CrmRole;
   entityId: string | null;
   monthlyTargetEGP: unknown;
+  managerId?: string | null;
+  manager?: { id: string; fullName: string } | null;
   active: boolean;
   entity: {
     id: string;
@@ -57,7 +59,7 @@ type EntityItem = {
   active: boolean;
 };
 
-const ROLES: CrmRole[] = ["CEO", "ADMIN", "MANAGER", "REP", "TECH_DIRECTOR", "FINANCE"];
+const ROLES: CrmRole[] = ["ADMIN", "MANAGER", "ASSISTANT", "REP", "ACCOUNT_MGR"];
 
 export function UsersClient({
   users,
@@ -74,9 +76,11 @@ export function UsersClient({
   const [fullName, setFullName] = useState("");
   const [fullNameAr, setFullNameAr] = useState("");
   const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
   const [role, setRole] = useState<CrmRole>("REP");
   const [entityId, setEntityId] = useState("");
   const [monthlyTarget, setMonthlyTarget] = useState("");
+  const [managerId, setManagerId] = useState("");
 
   const roleLabels = t.roles as Record<string, string>;
 
@@ -85,9 +89,11 @@ export function UsersClient({
     setFullName("");
     setFullNameAr("");
     setEmail("");
+    setPassword("");
     setRole("REP");
     setEntityId("");
     setMonthlyTarget("");
+    setManagerId("");
     setOpen(true);
   }
 
@@ -96,9 +102,11 @@ export function UsersClient({
     setFullName(user.fullName);
     setFullNameAr(user.fullNameAr ?? "");
     setEmail(user.email);
+    setPassword(""); // never prefill — leaving it blank means "don't change"
     setRole(user.role);
     setEntityId(user.entityId ?? "");
     setMonthlyTarget(user.monthlyTargetEGP ? String(Number(user.monthlyTargetEGP)) : "");
+    setManagerId(user.managerId ?? "");
     setOpen(true);
   }
 
@@ -110,18 +118,25 @@ export function UsersClient({
           fullName,
           fullNameAr: fullNameAr || undefined,
           email,
+          // Only send password if the admin entered one — empty means
+          // "don't change it" so we don't accidentally wipe their login.
+          ...(password ? { password } : {}),
           role,
           entityId: entityId || null,
           monthlyTargetEGP: monthlyTarget ? Number(monthlyTarget) : null,
+          managerId: managerId || null,
         });
       } else {
         await createUser({
           fullName,
           fullNameAr: fullNameAr || undefined,
           email,
+          // For new users, password is required so they can actually sign in.
+          password: password || "password123",
           role,
           entityId: entityId || undefined,
           monthlyTargetEGP: monthlyTarget ? Number(monthlyTarget) : undefined,
+          managerId: managerId || undefined,
         });
       }
       setOpen(false);
@@ -270,6 +285,27 @@ export function UsersClient({
             </div>
             <div>
               <label className="text-sm font-medium">
+                {locale === "ar" ? "كلمة المرور" : "Password"}{" "}
+                <span className="text-xs text-muted-foreground font-normal">
+                  {editing
+                    ? locale === "ar"
+                      ? "(اتركه فارغًا للإبقاء عليه)"
+                      : "(leave blank to keep current)"
+                    : locale === "ar"
+                      ? "(افتراضي: password123)"
+                      : "(default: password123)"}
+                </span>
+              </label>
+              <Input
+                type="password"
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+                placeholder={editing ? "•••••••• (unchanged)" : "password123"}
+                autoComplete="new-password"
+              />
+            </div>
+            <div>
+              <label className="text-sm font-medium">
                 {locale === "ar" ? "الدور" : "CrmRole"}
               </label>
               <Select value={role} onValueChange={(v) => setRole(v as CrmRole)}>
@@ -287,12 +323,28 @@ export function UsersClient({
             </div>
             <div>
               <label className="text-sm font-medium">{t.forms.entity}</label>
-              <Select value={entityId} onValueChange={(v) => setEntityId(v ?? "")}>
+              {/* Radix Select can't use empty-string as a value, and its
+                  SelectValue falls back to the raw `value` (a cuid here) when
+                  no matching item has been rendered. We use "NONE" as the
+                  empty sentinel and render the resolved entity label
+                  explicitly in SelectValue so the trigger always shows the
+                  display name instead of the id. */}
+              <Select
+                value={entityId || "NONE"}
+                onValueChange={(v) => setEntityId(v === "NONE" ? "" : (v ?? ""))}
+              >
                 <SelectTrigger>
-                  <SelectValue placeholder={t.forms.selectEntity} />
+                  <SelectValue placeholder={t.forms.selectEntity}>
+                    {(() => {
+                      if (!entityId) return locale === "ar" ? "— لا يوجد —" : "— None —";
+                      const e = entities.find((x) => x.id === entityId);
+                      if (!e) return locale === "ar" ? "— لا يوجد —" : "— None —";
+                      return `${locale === "ar" ? e.nameAr : e.nameEn} (${e.code})`;
+                    })()}
+                  </SelectValue>
                 </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="">-</SelectItem>
+                  <SelectItem value="NONE">{locale === "ar" ? "— لا يوجد —" : "— None —"}</SelectItem>
                   {entities
                     .filter((e) => e.active)
                     .map((entity) => (
@@ -314,6 +366,52 @@ export function UsersClient({
                 placeholder="0"
               />
             </div>
+
+            {/* Manager picker — only meaningful for REP and ACCOUNT_MGR. The
+                "Manager" CRM role itself reports up, and ADMIN / ASSISTANT
+                don't have a sales-manager in this hierarchy. */}
+            {(role === "REP" || role === "ACCOUNT_MGR") && (
+              <div>
+                <label className="text-sm font-medium">
+                  {locale === "ar" ? "المدير المسؤول" : "Reports to (Sales Manager)"}
+                  <span className="text-xs text-muted-foreground font-normal ms-1">
+                    {locale === "ar" ? "اختياري" : "(optional)"}
+                  </span>
+                </label>
+                <Select
+                  value={managerId || "NONE"}
+                  onValueChange={(v) => setManagerId(v === "NONE" ? "" : (v ?? ""))}
+                >
+                  <SelectTrigger>
+                    <SelectValue placeholder={locale === "ar" ? "اختر المدير" : "Pick a manager"}>
+                      {(() => {
+                        if (!managerId) return locale === "ar" ? "— لا يوجد —" : "— None —";
+                        const m = users.find((u) => u.id === managerId);
+                        return m ? m.fullName : locale === "ar" ? "— لا يوجد —" : "— None —";
+                      })()}
+                    </SelectValue>
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="NONE">
+                      {locale === "ar" ? "— لا يوجد —" : "— None —"}
+                    </SelectItem>
+                    {users
+                      .filter(
+                        (u) =>
+                          u.active &&
+                          u.id !== editing?.id && // can't be their own manager
+                          (u.role === "MANAGER" || u.role === "ADMIN")
+                      )
+                      .map((u) => (
+                        <SelectItem key={u.id} value={u.id}>
+                          {u.fullName} <span className="text-xs text-muted-foreground">· {u.role}</span>
+                        </SelectItem>
+                      ))}
+                  </SelectContent>
+                </Select>
+              </div>
+            )}
+
             <div className="flex justify-end gap-2 pt-2">
               <Button variant="outline" onClick={() => setOpen(false)}>
                 {t.common.cancel}

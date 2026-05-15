@@ -176,10 +176,8 @@ const ar = {
   roles: {
     REP: "مندوب مبيعات",
     MANAGER: "مدير مبيعات",
-    TECH_DIRECTOR: "مدير تقني",
+    ASSISTANT: "المساعد",
     ACCOUNT_MGR: "مدير حسابات",
-    FINANCE: "مالية",
-    CEO: "الرئيس التنفيذي",
     ADMIN: "مدير النظام",
   },
 
@@ -532,10 +530,8 @@ const en: Dictionary = {
   roles: {
     REP: "Sales Rep",
     MANAGER: "Sales Manager",
-    TECH_DIRECTOR: "Technical Director",
+    ASSISTANT: "Assistant",
     ACCOUNT_MGR: "Account Manager",
-    FINANCE: "Finance",
-    CEO: "CEO",
     ADMIN: "Admin",
   },
 

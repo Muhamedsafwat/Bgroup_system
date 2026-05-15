@@ -78,9 +78,12 @@ function getHrNav(roles: string[]): NavSection[] {
   const sections: NavSection[] = [];
 
   if (isAdmin) {
+    // HR module entries only — anything under /admin/* belongs in the Admin
+    // module and is reached by switching modules. Keeping admin links here
+    // duplicates them, blurs the module boundary, and trips the proxy when
+    // a non-admin HR manager lands on them via the sidebar.
     sections.push({
       items: [
-        { href: "/admin/board", label: "Group board", icon: BarChart3 },
         { href: "/hr/dashboard", label: "Dashboard", icon: LayoutDashboard },
         { href: "/hr/employees", label: "Employees", icon: Users },
         { href: "/hr/org-chart", label: "Org chart", icon: Users },
@@ -102,9 +105,10 @@ function getHrNav(roles: string[]): NavSection[] {
       title: "Reports",
       items: [
         { href: "/hr/reports/excel", label: "Reports", icon: FileBarChart },
-        { href: "/admin/onboarding-templates", label: "Onboarding templates", icon: ClipboardList },
-        { href: "/admin/workflows-sequential", label: "Workflows", icon: Layers },
-        { href: "/hr/settings", label: "Settings", icon: Settings },
+        // Settings consolidated under /admin/settings — the per-module
+        // settings entry was a duplicate. Switching modules to "Admin" gets
+        // you everything (HR + CRM + Partners + Users) in one place.
+        { href: "/admin/settings", label: "Settings", icon: Settings },
       ],
     });
   }
@@ -156,7 +160,7 @@ function getHrNav(roles: string[]): NavSection[] {
 
 function getCrmNav(crmRole?: string): NavSection[] {
   const sections: NavSection[] = [];
-  const isManager = crmRole === "MANAGER" || crmRole === "CEO" || crmRole === "ADMIN";
+  const isManager = crmRole === "MANAGER" || crmRole === "ADMIN";
 
   sections.push({
     title: "Work",
@@ -171,11 +175,12 @@ function getCrmNav(crmRole?: string): NavSection[] {
     ],
   });
 
-  if (crmRole === "CEO" || crmRole === "ADMIN") {
+  if (crmRole === "ADMIN") {
+    // Single Settings entry → /admin/settings (consolidated landing).
     sections.push({
       title: "Admin",
       items: [
-        { href: "/crm/admin/settings", label: "Settings", icon: Settings },
+        { href: "/admin/settings", label: "Settings", icon: Settings },
       ],
     });
   }

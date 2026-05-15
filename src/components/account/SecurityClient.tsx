@@ -5,7 +5,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { ShieldCheck, ShieldOff, KeyRound, Copy, AlertTriangle } from "lucide-react";
+import { ShieldCheck, ShieldOff, KeyRound, Copy, AlertTriangle, Lock, Eye, EyeOff } from "lucide-react";
 import { toast } from "sonner";
 
 type EnrollState =
@@ -91,7 +91,9 @@ export function SecurityClient({
   }
 
   return (
-    <Card>
+    <div className="space-y-4">
+      <ChangePasswordCard />
+      <Card>
       <CardHeader className="flex flex-row items-start justify-between gap-4">
         <div>
           <CardTitle className="flex items-center gap-2">
@@ -199,6 +201,133 @@ export function SecurityClient({
             </div>
           </div>
         )}
+      </CardContent>
+    </Card>
+    </div>
+  );
+}
+
+/**
+ * Self-service password change. Requires the user to confirm their CURRENT
+ * password so a hijacked session cookie alone can't take over the account.
+ * The new password is validated client-side (length match) AND server-side
+ * (the API enforces ≥ 8 chars + "must be different from current"). 8-char
+ * minimum chosen to match the admin reset endpoint — keep them in sync.
+ */
+function ChangePasswordCard() {
+  const [current, setCurrent] = useState("");
+  const [next, setNext] = useState("");
+  const [confirm, setConfirm] = useState("");
+  const [showCurrent, setShowCurrent] = useState(false);
+  const [showNext, setShowNext] = useState(false);
+  const [saving, setSaving] = useState(false);
+
+  const tooShort = next.length > 0 && next.length < 8;
+  const mismatch = confirm.length > 0 && next !== confirm;
+  const canSubmit =
+    current.length > 0 && next.length >= 8 && next === confirm && next !== current && !saving;
+
+  async function submit() {
+    setSaving(true);
+    try {
+      const res = await fetch("/api/account/change-password", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ currentPassword: current, newPassword: next }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        toast.error(data.error ?? "Failed to update password");
+        return;
+      }
+      toast.success("Password updated");
+      setCurrent("");
+      setNext("");
+      setConfirm("");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle className="flex items-center gap-2">
+          <Lock className="h-5 w-5 text-muted-foreground" />
+          Change password
+        </CardTitle>
+        <p className="text-sm text-muted-foreground mt-1">
+          Updates the password you use to sign in. You&apos;ll stay signed in on this device.
+        </p>
+      </CardHeader>
+      <CardContent className="space-y-3">
+        <div className="space-y-1.5">
+          <Label htmlFor="cur-pw">Current password</Label>
+          <div className="relative">
+            <Input
+              id="cur-pw"
+              type={showCurrent ? "text" : "password"}
+              value={current}
+              onChange={(e) => setCurrent(e.target.value)}
+              autoComplete="current-password"
+              className="pe-10"
+            />
+            <button
+              type="button"
+              onClick={() => setShowCurrent((s) => !s)}
+              className="absolute end-2 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
+              aria-label={showCurrent ? "Hide" : "Show"}
+              tabIndex={-1}
+            >
+              {showCurrent ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+            </button>
+          </div>
+        </div>
+        <div className="space-y-1.5">
+          <Label htmlFor="new-pw">New password</Label>
+          <div className="relative">
+            <Input
+              id="new-pw"
+              type={showNext ? "text" : "password"}
+              value={next}
+              onChange={(e) => setNext(e.target.value)}
+              autoComplete="new-password"
+              className="pe-10"
+              aria-invalid={tooShort}
+            />
+            <button
+              type="button"
+              onClick={() => setShowNext((s) => !s)}
+              className="absolute end-2 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
+              aria-label={showNext ? "Hide" : "Show"}
+              tabIndex={-1}
+            >
+              {showNext ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+            </button>
+          </div>
+          {tooShort && (
+            <p className="text-xs text-destructive">At least 8 characters.</p>
+          )}
+        </div>
+        <div className="space-y-1.5">
+          <Label htmlFor="confirm-pw">Confirm new password</Label>
+          <Input
+            id="confirm-pw"
+            type={showNext ? "text" : "password"}
+            value={confirm}
+            onChange={(e) => setConfirm(e.target.value)}
+            autoComplete="new-password"
+            aria-invalid={mismatch}
+          />
+          {mismatch && (
+            <p className="text-xs text-destructive">The two passwords don&apos;t match.</p>
+          )}
+        </div>
+        <div className="flex justify-end pt-1">
+          <Button onClick={submit} disabled={!canSubmit}>
+            {saving ? "Updating…" : "Update password"}
+          </Button>
+        </div>
       </CardContent>
     </Card>
   );

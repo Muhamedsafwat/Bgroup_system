@@ -18,6 +18,7 @@ import {
   Briefcase,
 } from 'lucide-react'
 import { PageHeader } from '@/components/hr/shared/PageHeader'
+import { WelcomeBanner, firstNameOf } from '@/components/shared/WelcomeHero'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/hr/ui/card'
 import { Badge } from '@/components/hr/ui/badge'
 import { Button } from '@/components/hr/ui/button'
@@ -214,10 +215,15 @@ export default function EmployeeHomePage() {
 
   return (
     <div className="space-y-6">
-      <PageHeader
-        title={`Welcome back${user?.full_name ? `, ${user.full_name.split(' ')[0]}` : ''}`}
-        description={formatDate(now.toISOString())}
-        breadcrumbs={[{ label: 'My Dashboard' }]}
+      {/* Unified welcome banner — matches the look on /, /hr/dashboard,
+          /crm/my, /partners/dashboard, /admin so the user always lands on
+          the same calm greeting no matter which module they enter. */}
+      <WelcomeBanner
+        firstName={firstNameOf(user?.full_name, user?.email)}
+        rolePill={isSalesRep ? `Sales rep${crmRole ? ` · ${crmRole}` : ''}` : 'Employee'}
+        pillTone={isSalesRep ? 'sky' : 'rose'}
+        email={user?.email ?? undefined}
+        subtitle={formatDate(now.toISOString())}
       />
 
       {/* ── Today's Status Banner ── */}

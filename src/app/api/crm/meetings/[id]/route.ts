@@ -19,7 +19,6 @@ const patchSchema = z.object({
 function isManager(session: Session) {
   return (
     session.user.crmRole === "MANAGER" ||
-    session.user.crmRole === "CEO" ||
     session.user.crmRole === "ADMIN" ||
     !!session.user.hrRoles?.includes("super_admin")
   );

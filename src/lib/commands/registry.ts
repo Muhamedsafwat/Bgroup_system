@@ -54,7 +54,7 @@ const hasHrRole = (session: Session | null, ...roles: string[]) =>
   !!session?.user?.hrRoles?.some((r) => roles.includes(r));
 
 const isCrmAdmin = (session: Session | null) =>
-  session?.user?.crmRole === "CEO" || session?.user?.crmRole === "ADMIN";
+  session?.user?.crmRole === "ADMIN";
 
 const isPartnersAdmin = (session: Session | null) =>
   !!session?.user?.modules?.includes("partners") && !session.user.partnerId;
