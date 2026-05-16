@@ -1,5 +1,7 @@
 'use client'
 
+import { describeError } from "@/lib/zod-errors";
+
 import React, { useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import {
@@ -124,7 +126,7 @@ export default function AccountantPage() {
       queryClient.invalidateQueries({ queryKey: ['payroll-summary', month, year] })
       toast.success('Payroll marked as paid')
     },
-    onError: () => toast.error('Failed to mark as paid'),
+    onError: (__err: unknown) => toast.error(describeError(__err) || 'Failed to mark as paid'),
   })
 
   const calculateMutation = useMutation({
@@ -134,7 +136,7 @@ export default function AccountantPage() {
       queryClient.invalidateQueries({ queryKey: ['payroll-summary', month, year] })
       toast.success('Payroll calculated')
     },
-    onError: () => toast.error('Failed to calculate payroll'),
+    onError: (__err: unknown) => toast.error(describeError(__err) || 'Failed to calculate payroll'),
   })
 
   // Group totals

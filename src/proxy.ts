@@ -235,6 +235,67 @@ export async function proxy(request: NextRequest) {
     return NextResponse.redirect(new URL("/", request.url));
   }
 
+  // CRM ASSISTANT lock-down. The assistant role only books / approves meetings
+  // and writes minutes against the opportunity that meeting is tied to — they
+  // should NOT browse the pipeline, the sales board, the cold-lead pool, the
+  // companies list, or arbitrary opportunities. Hard-block at the proxy so
+  // an assistant can't type the URL to get there. The allowed surfaces:
+  //   /crm/meetings/**, /crm/my (their dashboard widget), /tasks/**,
+  //   /crm/opportunities/[id] when the page-level scope check finds a
+  //   meeting connecting the assistant to that opp (the page enforces it).
+  if (
+    session.user.crmRole === "ASSISTANT" &&
+    pathname.startsWith("/crm") &&
+    !pathname.startsWith("/api/")
+  ) {
+    const assistantBlocked =
+      pathname === "/crm/sales-board" ||
+      pathname.startsWith("/crm/sales-board/") ||
+      pathname === "/crm/pipeline" ||
+      pathname.startsWith("/crm/pipeline/") ||
+      pathname === "/crm/companies" ||
+      pathname.startsWith("/crm/companies/") ||
+      // REP-also: see the rule block below this one
+      false ||
+      pathname === "/crm/contacts" ||
+      pathname.startsWith("/crm/contacts/") ||
+      pathname === "/crm/reports" ||
+      pathname.startsWith("/crm/reports/") ||
+      pathname === "/crm/cold-leads" ||
+      pathname.startsWith("/crm/cold-leads/") ||
+      pathname === "/crm/calls" ||
+      pathname.startsWith("/crm/calls/") ||
+      pathname === "/crm/group" ||
+      pathname.startsWith("/crm/group/") ||
+      pathname === "/crm/opportunities" ||
+      pathname === "/crm/opportunities/new" ||
+      // Opportunity edit pages — strictly forbidden, only the rep + manager
+      // own those. The detail view ([id]) is allowed because the page itself
+      // verifies the meeting-link constraint before rendering.
+      /^\/crm\/opportunities\/[^/]+\/edit$/.test(pathname);
+    if (assistantBlocked) {
+      const home = new URL("/crm/meetings", request.url);
+      home.searchParams.set("denied", "assistant-scope");
+      return NextResponse.redirect(home);
+    }
+  }
+
+  // /crm/companies is a curated directory of vendor / principal companies
+  // we sell on behalf of — admin + sales manager curate this list, reps
+  // don't browse it. A rep's "customer company" lives as free text on the
+  // opportunity itself, not as a clickable record.
+  if (
+    pathname.startsWith("/crm/companies") &&
+    !pathname.startsWith("/api/") &&
+    session.user.crmRole !== "ADMIN" &&
+    session.user.crmRole !== "MANAGER" &&
+    !session.user.hrRoles?.includes("super_admin")
+  ) {
+    const home = new URL("/crm/my", request.url);
+    home.searchParams.set("denied", "companies-admin-only");
+    return NextResponse.redirect(home);
+  }
+
   // Module access enforcement — API routes
   if (pathname.startsWith("/api/hr") && !modules.includes("hr")) {
     return NextResponse.json({ error: "Forbidden" }, { status: 403 });

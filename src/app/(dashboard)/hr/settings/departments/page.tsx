@@ -1,5 +1,7 @@
 'use client'
 
+import { describeError } from "@/lib/zod-errors";
+
 import React, { useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { Plus, Pencil, Trash2 } from 'lucide-react'
@@ -73,7 +75,7 @@ export default function DepartmentsSettingsPage() {
       setDialogOpen(false)
       toast({ title: 'Department created' })
     },
-    onError: () => toast({ title: 'Error', description: 'Failed to create department.', variant: 'destructive' }),
+    onError: (__err: unknown) => toast({ title: 'Error', description: describeError(__err) || 'Failed to create department.', variant: 'destructive' }),
   })
 
   const updateMutation = useMutation({
@@ -84,7 +86,7 @@ export default function DepartmentsSettingsPage() {
       setDialogOpen(false)
       toast({ title: 'Department updated' })
     },
-    onError: () => toast({ title: 'Error', description: 'Failed to update department.', variant: 'destructive' }),
+    onError: (__err: unknown) => toast({ title: 'Error', description: describeError(__err) || 'Failed to update department.', variant: 'destructive' }),
   })
 
   const deleteMutation = useMutation({
@@ -94,7 +96,7 @@ export default function DepartmentsSettingsPage() {
       setDeleteTarget(null)
       toast({ title: 'Department deleted' })
     },
-    onError: () => toast({ title: 'Error', description: 'Failed to delete department.', variant: 'destructive' }),
+    onError: (__err: unknown) => toast({ title: 'Error', description: describeError(__err) || 'Failed to delete department.', variant: 'destructive' }),
   })
 
   function openAdd() {

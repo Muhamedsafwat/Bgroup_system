@@ -1,5 +1,7 @@
 'use client'
 
+import { describeError } from "@/lib/zod-errors";
+
 import React, { useState, useEffect } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { Clock, LogIn, LogOut, CheckCircle2, AlertCircle } from 'lucide-react'
@@ -218,7 +220,7 @@ export default function CheckInOut({ className }: CheckInOutProps) {
       setOtDialogOpen(false)
       setOtNotes('')
     },
-    onError: () => toast.error('Failed to submit OT request'),
+    onError: (__err: unknown) => toast.error(describeError(__err) || 'Failed to submit OT request'),
   })
 
   const hasCheckedIn = todayStatus?.has_checked_in ?? false

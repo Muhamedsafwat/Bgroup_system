@@ -8,6 +8,7 @@ import { Button } from '@/components/hr/ui/button'
 import { useToast } from '@/components/hr/ui/toast'
 import api from '@/lib/hr/api'
 import { cn } from '@/lib/hr/utils'
+import { describeError } from "@/lib/zod-errors";
 
 interface AppSetting {
   key: string
@@ -84,7 +85,7 @@ export default function AppSettingsPage() {
       setIsDirty(false)
       toast({ title: 'Settings saved', description: 'All settings have been updated successfully.' })
     },
-    onError: () => toast({ title: 'Error', variant: 'destructive', description: 'Failed to save settings.' }),
+    onError: (__err: unknown) => toast({ title: 'Error', variant: 'destructive', description: describeError(__err) || 'Failed to save settings.' }),
   })
 
   function handleChange(key: string, value: string) {

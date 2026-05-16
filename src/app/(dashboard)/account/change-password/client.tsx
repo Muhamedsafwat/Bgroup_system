@@ -1,8 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { useRouter } from "next/navigation";
-import { useSession, signOut } from "next-auth/react";
+import { signOut } from "next-auth/react";
 import { AlertTriangle, Eye, EyeOff, KeyRound } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
@@ -24,8 +23,6 @@ export function ChangePasswordClient({
   email: string;
   nextHref: string;
 }) {
-  const router = useRouter();
-  const { update } = useSession();
   const [current, setCurrent] = useState("");
   const [next, setNext] = useState("");
   const [confirm, setConfirm] = useState("");
@@ -51,11 +48,27 @@ export function ChangePasswordClient({
         toast.error(data.error ?? "Failed to update password");
         return;
       }
-      toast.success("Password updated");
-      // Pull the fresh JWT so the proxy gate falls away on the next nav.
-      await update?.();
-      router.push(nextHref);
-      router.refresh();
+      toast.success(
+        forced
+          ? "Password set. Please sign in with your new password."
+          : "Password updated. Signing you in fresh."
+      );
+      // Sign-out + redirect to /login. We do this instead of trying to
+      // refresh the JWT in-place because:
+      //   1. The proxy reads `mustChangePassword` from the cached JWT —
+      //      relying on `useSession().update()` to swap the cookie before
+      //      the next request was racy and sometimes left the user stuck
+      //      in a redirect loop here.
+      //   2. Forcing re-auth after a password change is the standard
+      //      security posture — the new password's hash + a brand-new JWT
+      //      replace the stale ones with no intermediate state.
+      // Pre-fill the email so they don't have to type it again, and pass
+      // `next` as callbackUrl so they land where they were trying to go.
+      const callbackUrl =
+        nextHref && nextHref.startsWith("/") ? nextHref : "/";
+      await signOut({
+        callbackUrl: `/login?email=${encodeURIComponent(email)}&callbackUrl=${encodeURIComponent(callbackUrl)}`,
+      });
     } finally {
       setSaving(false);
     }

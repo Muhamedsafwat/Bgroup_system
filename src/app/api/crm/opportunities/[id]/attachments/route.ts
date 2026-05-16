@@ -7,6 +7,7 @@ import crypto from "node:crypto";
 import { auth } from "@/lib/auth";
 import { db } from "@/lib/db";
 import { CrmAttachmentKind } from "@/generated/prisma";
+import { describeZodError } from "@/lib/zod-errors";
 
 /**
  * GET  /api/crm/opportunities/[id]/attachments  → list
@@ -70,7 +71,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
   const body = await req.json();
   const parsed = uploadSchema.safeParse(body);
   if (!parsed.success) {
-    return NextResponse.json({ error: parsed.error.issues[0].message }, { status: 400 });
+    { const __z = describeZodError(parsed.error); return NextResponse.json({ error: __z.message, fieldErrors: __z.fieldErrors }, { status: 400 }); }
   }
   const { filename, mimeType, sizeBytes, kind, contentBase64 } = parsed.data;
 

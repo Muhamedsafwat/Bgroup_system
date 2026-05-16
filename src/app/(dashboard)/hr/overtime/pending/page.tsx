@@ -1,5 +1,7 @@
 'use client'
 
+import { describeError } from "@/lib/zod-errors";
+
 import React, { useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { Check, X, Clock, DollarSign, ThumbsUp, ThumbsDown } from 'lucide-react'
@@ -94,7 +96,7 @@ export default function OvertimePendingPage() {
       qc.invalidateQueries({ queryKey: ['overtime'] })
       setSelectedIds([])
     },
-    onError: () => toast.error('Failed to approve request'),
+    onError: (__err: unknown) => toast.error(describeError(__err) || 'Failed to approve request'),
   })
 
   const denyMutation = useMutation({
@@ -107,7 +109,7 @@ export default function OvertimePendingPage() {
       setDenyReason('')
       setSelectedIds([])
     },
-    onError: () => toast.error('Failed to deny request'),
+    onError: (__err: unknown) => toast.error(describeError(__err) || 'Failed to deny request'),
   })
 
   const bulkApproveMutation = useMutation({
@@ -117,7 +119,7 @@ export default function OvertimePendingPage() {
       qc.invalidateQueries({ queryKey: ['overtime'] })
       setSelectedIds([])
     },
-    onError: () => toast.error('Failed to approve requests'),
+    onError: (__err: unknown) => toast.error(describeError(__err) || 'Failed to approve requests'),
   })
 
   const bulkDenyMutation = useMutation({
@@ -129,7 +131,7 @@ export default function OvertimePendingPage() {
       setDenyReason('')
       setSelectedIds([])
     },
-    onError: () => toast.error('Failed to deny requests'),
+    onError: (__err: unknown) => toast.error(describeError(__err) || 'Failed to deny requests'),
   })
 
   const requests: OTRequest[] = Array.isArray(data) ? data : data?.results ?? []

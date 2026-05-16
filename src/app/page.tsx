@@ -69,14 +69,18 @@ function personaFor(args: {
       };
     }
     if (crmRole === "ASSISTANT") {
+      // Lean ASSISTANT persona: meetings + tasks + their day-overview. They
+      // get to a specific opportunity ONLY via a meeting they're tied to;
+      // pipeline-style tiles were misleading because the proxy now blocks
+      // those routes for this role.
       return {
         pillLabel: "Assistant",
         pillTone: "amber",
         question: "What needs your sign-off today?",
         actions: [
           { href: "/crm/meetings", label: "Approval queue", description: "Pending meeting requests", icon: "Calendar", tone: "amber" },
-          { href: "/crm/opportunities", label: "Opportunities", description: "Browse the pipeline", icon: "Briefcase", tone: "indigo" },
-          { href: "/crm/companies", label: "Companies", description: "Customer accounts", icon: "Building2", tone: "emerald" },
+          { href: "/crm/meetings", label: "Meetings & calendar", description: "Today's schedule", icon: "CalendarCheck", tone: "emerald" },
+          { href: "/crm/my", label: "My day", description: "What's happening with your meetings", icon: "LayoutDashboard", tone: "indigo" },
           { href: "/tasks", label: "My tasks", description: "Things assigned to me", icon: "ListTodo", tone: "rose" },
         ],
         shortcuts: COMMON_TOURS,

@@ -6,6 +6,7 @@ import { auth } from "@/lib/auth";
 import { db } from "@/lib/db";
 import { CrmRole } from "@/generated/prisma";
 import { uniqueViolationMessage } from "@/lib/prisma-errors";
+import { describeZodError, describeError } from "@/lib/zod-errors";
 
 function isPlatformAdmin(session: Session) {
   return (
@@ -170,7 +171,8 @@ export async function POST(req: Request) {
   const body = await req.json();
   const parsed = createSchema.safeParse(body);
   if (!parsed.success) {
-    return NextResponse.json({ error: parsed.error.issues[0].message }, { status: 400 });
+    const { message, fieldErrors } = describeZodError(parsed.error);
+    return NextResponse.json({ error: message, fieldErrors }, { status: 400 });
   }
   const data = parsed.data;
 
@@ -300,6 +302,13 @@ export async function POST(req: Request) {
     const dup = uniqueViolationMessage(e, "value");
     if (dup) return NextResponse.json({ error: dup }, { status: 409 });
     console.error("[admin/users POST]", e);
-    return NextResponse.json({ error: "Failed to create user" }, { status: 500 });
+    // Surface the actual cause to the admin — they're the only consumers of
+    // this endpoint and a "Failed to create user" toast just sends them on
+    // a goose chase. describeError handles Prisma codes (P2002/P2003/P2025)
+    // and falls back to the Error.message.
+    return NextResponse.json(
+      { error: `Couldn't create user: ${describeError(e)}` },
+      { status: 500 }
+    );
   }
 }

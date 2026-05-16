@@ -1,5 +1,7 @@
 'use client'
 
+import { describeError } from "@/lib/zod-errors";
+
 import React, { useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { Plus, Pencil, Trash2, Calculator } from 'lucide-react'
@@ -80,17 +82,17 @@ export default function OvertimePolicyPage() {
   const createMutation = useMutation({
     mutationFn: (payload: Record<string, unknown>) => api.post('/overtime/policies/', payload),
     onSuccess: () => { queryClient.invalidateQueries({ queryKey: ['overtime-policies'] }); setDialogOpen(false); toast.success('Policy created') },
-    onError: () => toast.error('Failed to create policy'),
+    onError: (__err: unknown) => toast.error(describeError(__err) || 'Failed to create policy'),
   })
   const updateMutation = useMutation({
     mutationFn: ({ id, payload }: { id: number; payload: Record<string, unknown> }) => api.patch(`/overtime/policies/${id}/`, payload),
     onSuccess: () => { queryClient.invalidateQueries({ queryKey: ['overtime-policies'] }); setDialogOpen(false); toast.success('Policy updated') },
-    onError: () => toast.error('Failed to update policy'),
+    onError: (__err: unknown) => toast.error(describeError(__err) || 'Failed to update policy'),
   })
   const deleteMutation = useMutation({
     mutationFn: (id: number) => api.delete(`/overtime/policies/${id}/`),
     onSuccess: () => { queryClient.invalidateQueries({ queryKey: ['overtime-policies'] }); setDeleteTarget(null); toast.success('Policy deleted') },
-    onError: () => toast.error('Failed to delete policy'),
+    onError: (__err: unknown) => toast.error(describeError(__err) || 'Failed to delete policy'),
   })
 
   function openAdd() { setEditPolicy(null); setForm(EMPTY_FORM); setDialogOpen(true) }

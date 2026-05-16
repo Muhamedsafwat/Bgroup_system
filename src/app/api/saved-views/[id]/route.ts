@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
 import { db } from "@/lib/db";
 import { z } from "zod";
+import { describeZodError } from "@/lib/zod-errors";
 
 const patchSchema = z.object({
   name: z.string().trim().min(1).max(60).optional(),
@@ -30,7 +31,7 @@ export async function PATCH(
   const body = await req.json();
   const parsed = patchSchema.safeParse(body);
   if (!parsed.success) {
-    return NextResponse.json({ error: parsed.error.issues[0].message }, { status: 400 });
+    { const __z = describeZodError(parsed.error); return NextResponse.json({ error: __z.message, fieldErrors: __z.fieldErrors }, { status: 400 }); }
   }
 
   const updated = await db.savedView.update({

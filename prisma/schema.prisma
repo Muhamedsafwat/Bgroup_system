@@ -2257,10 +2257,13 @@ model CrmColdLead {
   /// Optional fields surfaced by the admin's customizable Excel template:
   /// website (https://...), contactPerson (a primary contact's name when
   /// it differs from `name`), contactPosition (their title — "CEO",
-  /// "Procurement Manager", etc). All free text and optional.
+  /// "Procurement Manager", etc), socialMedia (LinkedIn / Facebook /
+  /// Instagram URL or handle — single field so reps can paste whatever
+  /// they found without picking a platform). All free text and optional.
   website         String?
   contactPerson   String?
   contactPosition String?
+  socialMedia     String?
   industry    String?
   category    String?
   location    String?
@@ -2576,8 +2579,14 @@ model CrmContact {
 model CrmOpportunity {
   id               String              @id @default(cuid())
   code             String              @unique
-  companyId        String
-  company          CrmCompany          @relation(fields: [companyId], references: [id])
+  /// Customer company name as free text. The "company" on a sales opp is
+  /// the prospect's company — we don't manage a directory of prospects.
+  /// Reps type the name when they create the opp; managers can search /
+  /// group by it later. Kept alongside the legacy `companyId` for now so
+  /// historical rows continue to render through the existing relation.
+  customerCompanyName String?
+  companyId        String?
+  company          CrmCompany?         @relation(fields: [companyId], references: [id])
   primaryContactId String?
   primaryContact   CrmContact?         @relation("CrmPrimaryContact", fields: [primaryContactId], references: [id])
   ownerId          String

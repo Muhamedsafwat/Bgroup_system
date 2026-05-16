@@ -1,5 +1,7 @@
 'use client'
 
+import { describeError } from "@/lib/zod-errors";
+
 import React, { useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import api from '@/lib/hr/api'
@@ -140,7 +142,7 @@ export default function AllIncidentsPage() {
       qc.invalidateQueries({ queryKey: ['incidents'] })
       setDetailOpen(false)
     },
-    onError: () => toast.error('Failed to approve incident'),
+    onError: (__err: unknown) => toast.error(describeError(__err) || 'Failed to approve incident'),
   })
 
   const dismissMutation = useMutation({
@@ -153,7 +155,7 @@ export default function AllIncidentsPage() {
       setDismissMode(false)
       setDismissReason('')
     },
-    onError: () => toast.error('Failed to dismiss incident'),
+    onError: (__err: unknown) => toast.error(describeError(__err) || 'Failed to dismiss incident'),
   })
 
   const companies = Array.isArray(companiesData) ? companiesData : companiesData?.results ?? []

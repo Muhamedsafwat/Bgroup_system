@@ -33,7 +33,14 @@ export async function getMyDashboardData(session: SessionUser) {
     }),
   ]);
 
-  const monthlyTarget = Number(user?.monthlyTargetEGP || 50000);
+  // A null / 0 `monthlyTargetEGP` means "no target set for this rep". We
+  // surface that as `targetSet: false` rather than silently using a 50k
+  // fallback — the previous behaviour made attainment look like 500%+ for
+  // anyone (e.g. admin) without a target, which the user perceived as a
+  // bug in the percentages display. The UI now shows "—" instead.
+  const rawTarget = user?.monthlyTargetEGP ? Number(user.monthlyTargetEGP) : 0;
+  const targetSet = rawTarget > 0;
+  const monthlyTarget = targetSet ? rawTarget : 0;
   const wonValueMTD = wonOpps.reduce((sum, o) => sum + Number(o.estimatedValueEGP), 0);
   const weightedPipeline = openOpps.reduce((sum, o) => sum + Number(o.weightedValueEGP), 0);
 
@@ -103,7 +110,7 @@ export async function getMyDashboardData(session: SessionUser) {
     nextActionDate: o.nextActionDate,
     dateProposalSent: o.dateProposalSent,
     createdAt: o.createdAt,
-    company: { nameEn: o.company.nameEn },
+    company: { nameEn: o.customerCompanyName ?? o.company?.nameEn ?? "—" },
   }));
 
   const alerts = {
@@ -121,8 +128,9 @@ export async function getMyDashboardData(session: SessionUser) {
       weightedPipeline: Math.round(weightedPipeline),
       wonCountMTD: wonOpps.length,
       wonValueMTD: Math.round(wonValueMTD),
-      targetAttainment: monthlyTarget > 0 ? Math.round((wonValueMTD / monthlyTarget) * 100) : 0,
+      targetAttainment: targetSet ? Math.round((wonValueMTD / monthlyTarget) * 100) : null,
       monthlyTarget,
+      targetSet,
     },
     todayActivity: {
       callsToday,
@@ -139,7 +147,7 @@ export async function getMyDashboardData(session: SessionUser) {
     topHotOpportunities: topHot.map((o) => ({
       id: o.id,
       code: o.code,
-      company: o.company.nameEn,
+      company: o.customerCompanyName ?? o.company?.nameEn ?? "—",
       entity: o.entity,
       stage: o.stage,
       priority: o.priority,

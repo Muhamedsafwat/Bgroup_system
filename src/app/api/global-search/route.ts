@@ -124,6 +124,7 @@ export async function GET(req: NextRequest) {
               OR: [
                 { code: contains },
                 { title: contains },
+                { customerCompanyName: contains },
                 { company: { nameEn: contains } },
               ],
             },
@@ -131,6 +132,7 @@ export async function GET(req: NextRequest) {
               id: true,
               code: true,
               title: true,
+              customerCompanyName: true,
               company: { select: { nameEn: true } },
             },
             take: PER_TYPE_LIMIT,
@@ -140,7 +142,7 @@ export async function GET(req: NextRequest) {
               type: "opportunity" as const,
               module: "crm" as const,
               id: o.id,
-              label: `${o.code} — ${o.company.nameEn}`,
+              label: `${o.code} — ${o.customerCompanyName ?? o.company?.nameEn ?? ""}`,
               sublabel: o.title || undefined,
               href: `/crm/opportunities/${o.id}`,
             }))

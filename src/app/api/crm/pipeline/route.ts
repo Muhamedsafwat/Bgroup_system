@@ -4,6 +4,7 @@ import { z } from "zod";
 import { auth } from "@/lib/auth";
 import { db } from "@/lib/db";
 import { CrmOpportunityStage, type Prisma } from "@/generated/prisma";
+import { describeZodError } from "@/lib/zod-errors";
 
 function isManager(session: Session) {
   return (
@@ -70,6 +71,7 @@ export async function GET(req: Request) {
       expectedCloseDate: true,
       nextActionText: true,
       nextActionDate: true,
+      customerCompanyName: true,
       owner: { select: { id: true, fullName: true } },
       company: { select: { id: true, nameEn: true } },
     },
@@ -92,7 +94,7 @@ export async function PATCH(req: Request) {
   const body = await req.json();
   const parsed = stageSchema.safeParse(body);
   if (!parsed.success) {
-    return NextResponse.json({ error: parsed.error.issues[0].message }, { status: 400 });
+    { const __z = describeZodError(parsed.error); return NextResponse.json({ error: __z.message, fieldErrors: __z.fieldErrors }, { status: 400 }); }
   }
 
   const opp = await db.crmOpportunity.findUnique({

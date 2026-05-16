@@ -25,7 +25,21 @@ export function scopeOpportunityByRole(session: SessionUser) {
         ],
       };
     case "ASSISTANT":
-      return session.entityId ? { entityId: session.entityId } : {};
+      // Assistants no longer see the whole entity's pipeline. They only see
+      // opportunities tied to a meeting they scheduled OR approved/denied —
+      // i.e. the deals they're already in the loop on. The opp detail page
+      // ties this to the post-meeting "write minutes / update what happened"
+      // workflow without exposing the rest of the pipeline.
+      return {
+        meetings: {
+          some: {
+            OR: [
+              { scheduledById: session.id },
+              { approvedById: session.id },
+            ],
+          },
+        },
+      };
     case "ACCOUNT_MGR":
       return { deliveryOwnerId: session.id, stage: "WON" as const };
     case "ADMIN":
@@ -51,9 +65,10 @@ export function scopeCompanyByRole(session: SessionUser) {
         ],
       };
     case "ASSISTANT":
-      return session.entityId
-        ? { assignedTo: { entityId: session.entityId } }
-        : {};
+      // Assistants don't browse companies. Return a clause that matches
+      // nothing — they get to companies via the meeting-linked opportunity
+      // detail page, which has its own access check.
+      return { id: "__none__" };
     case "ADMIN":
       return {};
     default:
@@ -77,9 +92,8 @@ export function scopeCallByRole(session: SessionUser) {
         ],
       };
     case "ASSISTANT":
-      return session.entityId
-        ? { caller: { entityId: session.entityId } }
-        : {};
+      // Assistants don't see other reps' call logs.
+      return { id: "__none__" };
     case "ADMIN":
       return {};
     default:

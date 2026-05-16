@@ -20,7 +20,8 @@ type Opportunity = {
   probabilityPct: number;
   nextAction: string | null;
   nextActionDate: string | null;
-  company: { id: string; nameEn: string; nameAr: string | null };
+  customerCompanyName: string | null;
+  company: { id: string; nameEn: string; nameAr: string | null } | null;
   owner: { id: string; fullName: string; fullNameAr: string | null };
 };
 
@@ -126,9 +127,10 @@ export function OpportunityKanban({
           >
             <div className="flex items-start justify-between gap-2 mb-1">
               <div className="font-medium text-sm leading-snug">
-                {locale === "ar"
-                  ? item.company.nameAr || item.company.nameEn
-                  : item.company.nameEn}
+                {item.customerCompanyName ??
+                  (locale === "ar"
+                    ? item.company?.nameAr || item.company?.nameEn || "—"
+                    : item.company?.nameEn ?? "—")}
               </div>
               <PriorityBadge priority={item.priority as CrmPriority} />
             </div>

@@ -17,6 +17,7 @@ import { useToast } from '@/components/hr/ui/toast'
 import api from '@/lib/hr/api'
 import { formatDate, formatCurrency, capitalize } from '@/lib/hr/utils'
 import type { OvertimeRequest } from '@/lib/hr/types'
+import { describeError } from "@/lib/zod-errors";
 
 interface OvertimePolicy {
   id: number
@@ -129,7 +130,7 @@ export default function MyOvertimePage() {
       setEvidenceFile(null)
       toast({ title: 'OT Request submitted', description: 'Your overtime request is pending approval.' })
     },
-    onError: () => toast({ title: 'Error', variant: 'destructive', description: 'Failed to submit OT request.' }),
+    onError: (__err: unknown) => toast({ title: 'Error', variant: 'destructive', description: describeError(__err) || 'Failed to submit OT request.' }),
   })
 
   function onSubmit(values: FormValues) {

@@ -1,5 +1,7 @@
 'use client'
 
+import { describeError } from "@/lib/zod-errors";
+
 import React, { useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { Plus, Pencil, Trash2, ShieldCheck } from 'lucide-react'
@@ -155,7 +157,7 @@ export default function UsersSettingsPage() {
       setDialogOpen(false)
       toast({ title: 'User updated successfully' })
     },
-    onError: () => toast({ title: 'Error', variant: 'destructive', description: 'Failed to update user.' }),
+    onError: (__err: unknown) => toast({ title: 'Error', variant: 'destructive', description: describeError(__err) || 'Failed to update user.' }),
   })
 
   const deleteUser = useMutation({
@@ -165,7 +167,7 @@ export default function UsersSettingsPage() {
       setDeleteTarget(null)
       toast({ title: 'User deleted' })
     },
-    onError: () => toast({ title: 'Error', variant: 'destructive', description: 'Failed to delete user.' }),
+    onError: (__err: unknown) => toast({ title: 'Error', variant: 'destructive', description: describeError(__err) || 'Failed to delete user.' }),
   })
 
   // ─── Dialog Helpers ─────────────────────────────────────────────────────────

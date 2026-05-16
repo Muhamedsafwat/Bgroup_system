@@ -41,6 +41,7 @@ const FIELD_SYNONYMS: Record<string, string[]> = {
   website: ["website", "url", "site", "web"],
   contactPerson: ["contact person", "contact", "contact name", "primary contact", "decision maker"],
   contactPosition: ["contact position", "position", "title", "role", "job title", "designation"],
+  socialMedia: ["social media", "social", "linkedin", "facebook", "instagram", "twitter", "x", "social handle"],
   industry: ["industry", "sector", "vertical"],
   category: ["category", "segment", "tier", "type"],
   location: ["location", "city", "region", "country", "address", "area"],
@@ -107,6 +108,13 @@ export async function POST(request: Request) {
   if (!(file instanceof File)) {
     return NextResponse.json({ error: "No file in the request" }, { status: 400 });
   }
+  // Append vs. dedupe. By default every uploaded row is inserted as a fresh
+  // lead — the cold-lead pool is a *directory* the admin re-uploads into
+  // hundreds of times, and silently dropping rows that look like dupes was
+  // making it feel like new uploads "overwrote" earlier ones. Pass
+  // `skipDuplicates=true` to bring the old behavior back when re-uploading
+  // a near-identical batch.
+  const skipDuplicates = form.get("skipDuplicates") === "true";
 
   const arrayBuf = await file.arrayBuffer();
   const buf = Buffer.from(arrayBuf);
@@ -143,8 +151,7 @@ export async function POST(request: Request) {
     );
   }
 
-  const totalRows = Math.min(sheet.rowCount - 1, MAX_ROWS);
-  const records: Array<{
+  type Record = {
     name: string;
     companyName: string | null;
     phone: string | null;
@@ -152,79 +159,140 @@ export async function POST(request: Request) {
     website: string | null;
     contactPerson: string | null;
     contactPosition: string | null;
+    socialMedia: string | null;
     industry: string | null;
     category: string | null;
     location: string | null;
     source: string | null;
     notes: string | null;
-  }> = [];
+  };
+  const records: Record[] = [];
 
-  for (let i = 2; i <= sheet.rowCount && records.length < MAX_ROWS; i++) {
-    const row = sheet.getRow(i);
-    const get = (key: string) =>
-      columnIndex[key] != null ? cellString(row.getCell(columnIndex[key])) : "";
-    const name = get("name");
-    const companyName = get("companyName");
-    if (!name && !companyName) continue; // empty row
+  // Use `actualRowCount` (the number of rows that contain data) instead of
+  // `rowCount` — `rowCount` is the max row index ExcelJS saw, which can
+  // include trailing empty rows AND can stop short on certain xlsx variants.
+  // `eachRow({ includeEmpty: false })` walks every row that actually has
+  // content, even ones past `rowCount`, and skips blank-middle rows so we
+  // don't silently drop data the user can see in their spreadsheet.
+  const get = (row: ExcelJS.Row, key: string) =>
+    columnIndex[key] != null ? cellString(row.getCell(columnIndex[key])) : "";
+
+  let rowIdx = 0;
+  sheet.eachRow({ includeEmpty: false }, (row, rowNumber) => {
+    if (rowNumber === 1) return; // header
+    if (records.length >= MAX_ROWS) return;
+    rowIdx++;
+    const name = get(row, "name");
+    const companyName = get(row, "companyName");
+    // Accept the row even if `name` is blank but `phone` or `email` is
+    // present — a phone-only row is still actionable for a rep. Only
+    // truly empty rows (no name, no company, no phone, no email) are
+    // skipped. This was the silent-drop bug: rows with only a phone +
+    // notes were being thrown away because `name` was empty.
+    const phone = get(row, "phone");
+    const email = get(row, "email");
+    if (!name && !companyName && !phone && !email) return;
     records.push({
-      name: name || companyName,
+      name: name || companyName || phone || email || "(no name)",
       companyName: companyName || null,
-      phone: get("phone") || null,
-      email: get("email") || null,
-      website: get("website") || null,
-      contactPerson: get("contactPerson") || null,
-      contactPosition: get("contactPosition") || null,
-      industry: get("industry") || null,
-      category: get("category") || null,
-      location: get("location") || null,
-      source: get("source") || null,
-      notes: get("notes") || null,
+      phone: phone || null,
+      email: email || null,
+      website: get(row, "website") || null,
+      contactPerson: get(row, "contactPerson") || null,
+      contactPosition: get(row, "contactPosition") || null,
+      socialMedia: get(row, "socialMedia") || null,
+      industry: get(row, "industry") || null,
+      category: get(row, "category") || null,
+      location: get(row, "location") || null,
+      source: get(row, "source") || null,
+      notes: get(row, "notes") || null,
     });
-  }
+  });
 
   if (records.length === 0) {
-    return NextResponse.json({ error: "No data rows found" }, { status: 400 });
+    return NextResponse.json(
+      { error: "No data rows found. Check that your file has a header row plus at least one row of data." },
+      { status: 400 }
+    );
   }
 
-  // Duplicate detection — match against the existing directory by phone, then
-  // email. Keeps Big Directory clean so the manager isn't redistributing the
-  // same prospect twice from two different uploads.
-  const phones = Array.from(new Set(records.map((r) => r.phone).filter(Boolean))) as string[];
-  const emails = Array.from(new Set(records.map((r) => r.email).filter(Boolean))) as string[];
-  const dupes = await db.crmColdLead.findMany({
-    where: {
-      OR: [
-        phones.length ? { phone: { in: phones } } : { id: "__none__" },
-        emails.length ? { email: { in: emails } } : { id: "__none__" },
-      ],
-    },
-    select: { phone: true, email: true },
-  });
-  const dupPhones = new Set(
-    dupes.map((d: { phone: string | null }) => d.phone).filter(Boolean) as string[]
-  );
-  const dupEmails = new Set(
-    dupes.map((d: { email: string | null }) => d.email).filter(Boolean) as string[]
-  );
+  // Two duplicate counters reported back to the UI:
+  //   - duplicatesAgainstExisting: rows whose phone/email already exists in
+  //     the directory (only filtered out when skipDuplicates is true).
+  //   - duplicatesInFile: rows that match another row in the SAME file.
+  // The default behavior is APPEND EVERYTHING — both classes are inserted —
+  // because the user wants this pool to grow without surprises.
+  let toInsert: Record[] = records;
+  let duplicatesAgainstExisting = 0;
+  let duplicatesInFile = 0;
 
-  const fresh = records.filter(
-    (r) => (!r.phone || !dupPhones.has(r.phone)) && (!r.email || !dupEmails.has(r.email))
-  );
+  if (skipDuplicates) {
+    const phones = Array.from(
+      new Set(records.map((r) => r.phone).filter(Boolean))
+    ) as string[];
+    const emails = Array.from(
+      new Set(records.map((r) => r.email).filter(Boolean))
+    ) as string[];
+    const dupes = phones.length || emails.length
+      ? await db.crmColdLead.findMany({
+          where: {
+            OR: [
+              phones.length ? { phone: { in: phones } } : { id: "__none__" },
+              emails.length ? { email: { in: emails } } : { id: "__none__" },
+            ],
+          },
+          select: { phone: true, email: true },
+        })
+      : [];
+    const dupPhones = new Set(
+      dupes
+        .map((d: { phone: string | null }) => d.phone)
+        .filter(Boolean) as string[]
+    );
+    const dupEmails = new Set(
+      dupes
+        .map((d: { email: string | null }) => d.email)
+        .filter(Boolean) as string[]
+    );
+
+    const seenPhones = new Set<string>();
+    const seenEmails = new Set<string>();
+    toInsert = [];
+    for (const r of records) {
+      const phoneHit = r.phone && dupPhones.has(r.phone);
+      const emailHit = r.email && dupEmails.has(r.email);
+      if (phoneHit || emailHit) {
+        duplicatesAgainstExisting++;
+        continue;
+      }
+      if (r.phone && seenPhones.has(r.phone)) {
+        duplicatesInFile++;
+        continue;
+      }
+      if (r.email && seenEmails.has(r.email)) {
+        duplicatesInFile++;
+        continue;
+      }
+      if (r.phone) seenPhones.add(r.phone);
+      if (r.email) seenEmails.add(r.email);
+      toInsert.push(r);
+    }
+  }
 
   const batch = await db.crmColdLeadImport.create({
     data: {
       importedById: crmProfileId,
       fileName: file.name.slice(0, 200),
-      rowCount: fresh.length,
-      duplicateCount: records.length - fresh.length,
+      rowCount: toInsert.length,
+      duplicateCount: duplicatesAgainstExisting + duplicatesInFile,
     },
   });
 
   // createMany in batches of 1000 to keep individual INSERTs from blowing
   // past the wire/transaction limits on huge files.
   const CHUNK = 1000;
-  for (let i = 0; i < fresh.length; i += CHUNK) {
-    const slice = fresh.slice(i, i + CHUNK).map((r) => ({
+  for (let i = 0; i < toInsert.length; i += CHUNK) {
+    const slice = toInsert.slice(i, i + CHUNK).map((r) => ({
       ...r,
       importBatchId: batch.id,
     }));
@@ -234,9 +302,12 @@ export async function POST(request: Request) {
   return NextResponse.json({
     ok: true,
     batchId: batch.id,
-    totalRowsRead: records.length,
-    truncatedToMax: sheet.rowCount - 1 > MAX_ROWS,
-    inserted: fresh.length,
-    duplicates: records.length - fresh.length,
+    totalRowsRead: rowIdx,
+    truncatedToMax: rowIdx > MAX_ROWS,
+    inserted: toInsert.length,
+    duplicates: duplicatesAgainstExisting + duplicatesInFile,
+    duplicatesAgainstExisting,
+    duplicatesInFile,
+    appendMode: !skipDuplicates,
   });
 }

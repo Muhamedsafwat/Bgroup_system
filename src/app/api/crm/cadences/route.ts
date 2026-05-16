@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { db } from "@/lib/db";
 import { z } from "zod";
 import { auth } from "@/lib/auth";
+import { describeZodError } from "@/lib/zod-errors";
 
 const stepSchema = z.object({
   position: z.number().int().positive(),
@@ -42,7 +43,7 @@ export async function POST(req: Request) {
   const body = await req.json();
   const parsed = createSchema.safeParse(body);
   if (!parsed.success) {
-    return NextResponse.json({ error: parsed.error.issues[0].message }, { status: 400 });
+    { const __z = describeZodError(parsed.error); return NextResponse.json({ error: __z.message, fieldErrors: __z.fieldErrors }, { status: 400 }); }
   }
   const cadence = await db.cadence.create({
     data: {

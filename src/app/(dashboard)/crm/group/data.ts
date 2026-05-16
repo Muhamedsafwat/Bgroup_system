@@ -114,7 +114,9 @@ export async function getGroupDashboardData(
         weightedPipeline: 0,
         wonCount: 0,
         wonValue: 0,
-        target: Number(opp.owner.monthlyTargetEGP || 50000),
+        // 0 = "no target set" — the leaderboard shows "—" in that case
+        // instead of the misleading "wonValue / 50k = 500%" we used to render.
+        target: opp.owner.monthlyTargetEGP ? Number(opp.owner.monthlyTargetEGP) : 0,
       });
     }
     const rep = repMap.get(key)!;
@@ -134,7 +136,9 @@ export async function getGroupDashboardData(
         weightedPipeline: 0,
         wonCount: 0,
         wonValue: 0,
-        target: Number(opp.owner.monthlyTargetEGP || 50000),
+        // 0 = "no target set" — the leaderboard shows "—" in that case
+        // instead of the misleading "wonValue / 50k = 500%" we used to render.
+        target: opp.owner.monthlyTargetEGP ? Number(opp.owner.monthlyTargetEGP) : 0,
       });
     }
     const rep = repMap.get(key)!;
@@ -145,7 +149,11 @@ export async function getGroupDashboardData(
   const leaderboard = Array.from(repMap.values())
     .map((rep) => ({
       ...rep,
-      attainment: rep.target > 0 ? Math.round((rep.wonValue / rep.target) * 100) : 0,
+      // Cap at 9999% so a missing-target rep can't blow out the column width.
+      attainment:
+        rep.target > 0
+          ? Math.min(9999, Math.round((rep.wonValue / rep.target) * 100))
+          : null,
       weightedPipeline: Math.round(rep.weightedPipeline),
       wonValue: Math.round(rep.wonValue),
     }))
@@ -159,7 +167,7 @@ export async function getGroupDashboardData(
     .map((o) => ({
       id: o.id,
       code: o.code,
-      company: o.company.nameEn,
+      company: o.customerCompanyName ?? o.company?.nameEn ?? "—",
       owner: o.owner.fullName,
       entity: o.entity,
       stage: o.stage,
@@ -188,7 +196,7 @@ export async function getGroupDashboardData(
     nextActionDate: o.nextActionDate,
     dateProposalSent: o.dateProposalSent,
     createdAt: o.createdAt,
-    company: { nameEn: o.company.nameEn },
+    company: { nameEn: o.customerCompanyName ?? o.company?.nameEn ?? "—" },
   }));
 
   const totalAlerts =

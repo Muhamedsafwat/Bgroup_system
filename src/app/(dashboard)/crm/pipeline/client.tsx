@@ -35,8 +35,13 @@ type Opp = {
   nextActionText: string | null;
   nextActionDate: string | null;
   owner: { id: string; fullName: string };
-  company: { id: string; nameEn: string };
+  customerCompanyName: string | null;
+  company: { id: string; nameEn: string } | null;
 };
+
+function customerLabel(opp: Pick<Opp, "customerCompanyName" | "company">): string {
+  return opp.customerCompanyName ?? opp.company?.nameEn ?? "—";
+}
 
 type FilterOptions = {
   companies: Array<{ id: string; nameEn: string }>;
@@ -344,7 +349,7 @@ function OppCard({ opp, active }: { opp: Opp; active: boolean }) {
               {opp.title}
             </Link>
           </div>
-          <p className="text-[11px] text-muted-foreground truncate">{opp.company.nameEn}</p>
+          <p className="text-[11px] text-muted-foreground truncate">{customerLabel(opp)}</p>
           <div className="flex items-center justify-between mt-1.5 text-[11px]">
             <span className="text-muted-foreground ltr-nums">{formatEGP(opp.estimatedValueEGP)} EGP</span>
             <span className="text-muted-foreground">{opp.probabilityPct}%</span>
@@ -383,7 +388,7 @@ function ListView({ opps }: { opps: Opp[] }) {
                     <Link href={`/crm/opportunities/${o.id}`} className="hover:underline">{o.code}</Link>
                   </td>
                   <td className="py-2 px-3">{o.title}</td>
-                  <td className="py-2 px-3 text-muted-foreground">{o.company.nameEn}</td>
+                  <td className="py-2 px-3 text-muted-foreground">{customerLabel(o)}</td>
                   <td className="py-2 px-3 text-muted-foreground">{o.owner.fullName}</td>
                   <td className="py-2 px-3">
                     <span className="text-[10px] uppercase rounded px-1.5 py-0.5 bg-muted">

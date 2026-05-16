@@ -3,6 +3,7 @@ import type { Session } from "next-auth";
 import { z } from "zod";
 import { auth } from "@/lib/auth";
 import { triggerWorkflow } from "@/lib/sequential-workflows/engine";
+import { describeZodError } from "@/lib/zod-errors";
 
 const bodySchema = z.object({
   entityType: z.string().nullable().optional(),
@@ -29,7 +30,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
   const body = await req.json().catch(() => ({}));
   const parsed = bodySchema.safeParse(body);
   if (!parsed.success) {
-    return NextResponse.json({ error: parsed.error.issues[0].message }, { status: 400 });
+    { const __z = describeZodError(parsed.error); return NextResponse.json({ error: __z.message, fieldErrors: __z.fieldErrors }, { status: 400 }); }
   }
 
   const result = await triggerWorkflow(id, {

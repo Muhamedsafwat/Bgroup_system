@@ -2,8 +2,10 @@
 
 import { useEffect, useRef, useState, useCallback } from "react";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import {
   Upload,
+  FileDown,
   Search,
   X,
   ChevronLeft,
@@ -48,6 +50,7 @@ type Lead = {
   website: string | null;
   contactPerson: string | null;
   contactPosition: string | null;
+  socialMedia: string | null;
   industry: string | null;
   category: string | null;
   location: string | null;
@@ -164,25 +167,69 @@ export function ColdLeadsClient({
     }
   }
 
-  async function handleImport(file: File) {
+  async function handleImport(file: File, skipDuplicates: boolean) {
     setImporting(true);
     try {
       const fd = new FormData();
       fd.append("file", file);
+      // The default is APPEND — every row in the uploaded file is inserted
+      // even if its phone/email already exists. Pass skipDuplicates=true to
+      // get the old "merge into directory" behaviour back when re-uploading
+      // a near-identical batch.
+      if (skipDuplicates) fd.append("skipDuplicates", "true");
       const res = await fetch("/api/crm/cold-leads/import", { method: "POST", body: fd });
       const data = await res.json().catch(() => ({}));
       if (!res.ok) {
         toast.error(data.error ?? "Import failed");
         return;
       }
-      toast.success(
-        `Imported ${data.inserted} leads${data.duplicates ? ` (${data.duplicates} duplicates skipped)` : ""}`
-      );
+      // Build a precise summary so the user knows nothing was silently
+      // dropped. Append-mode says "added all N"; skip-mode says "added X,
+      // skipped Y duplicates" and breaks that down.
+      const summary = skipDuplicates
+        ? `Added ${data.inserted} leads. Skipped ${data.duplicates ?? 0} duplicate${data.duplicates === 1 ? "" : "s"}${
+            data.duplicatesAgainstExisting && data.duplicatesInFile
+              ? ` (${data.duplicatesAgainstExisting} already in directory, ${data.duplicatesInFile} repeated in file)`
+              : ""
+          }`
+        : `Added ${data.inserted} leads. Append mode — every row from the file was kept.`;
+      toast.success(summary);
       setImportOpen(false);
       setPage(1);
       fetchRows();
     } finally {
       setImporting(false);
+    }
+  }
+
+  async function handleExport() {
+    setPendingAction(true);
+    try {
+      // Pass the current filters so the export reflects what the user is
+      // looking at. Empty filters → whole directory (within their scope).
+      const params = new URLSearchParams();
+      if (bucket !== "ALL") params.set("status", bucket);
+      if (q) params.set("q", q);
+      if (industry) params.set("industry", industry);
+      if (category) params.set("category", category);
+      if (location) params.set("location", location);
+      const res = await fetch(`/api/crm/cold-leads/export?${params.toString()}`);
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        toast.error(data.error ?? "Export failed");
+        return;
+      }
+      const blob = await res.blob();
+      const a = document.createElement("a");
+      const objUrl = URL.createObjectURL(blob);
+      a.href = objUrl;
+      a.download = `cold-leads-${new Date().toISOString().slice(0, 10)}.xlsx`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(objUrl);
+    } finally {
+      setPendingAction(false);
     }
   }
 
@@ -269,12 +316,24 @@ export function ColdLeadsClient({
               : "Your call queue. Open a lead to record what happened."}
           </p>
         </div>
-        {isManagerOrAdmin && (
-          <Button onClick={() => setImportOpen(true)} disabled={importing}>
-            <Upload className="h-4 w-4 me-1.5" />
-            Import Excel
+        <div className="flex items-center gap-2">
+          {/* Export is available to anyone with read access — reps get their
+              own queue, managers get their team's, admin gets everything. */}
+          <Button
+            variant="outline"
+            onClick={handleExport}
+            disabled={pendingAction || loading}
+          >
+            <FileDown className="h-4 w-4 me-1.5" />
+            Export Excel
           </Button>
-        )}
+          {isManagerOrAdmin && (
+            <Button onClick={() => setImportOpen(true)} disabled={importing}>
+              <Upload className="h-4 w-4 me-1.5" />
+              Import Excel
+            </Button>
+          )}
+        </div>
       </div>
 
       {/* Bucket tabs */}
@@ -501,6 +560,7 @@ const TEMPLATE_OPTIONAL_COLUMNS: Array<{ key: string; label: string }> = [
   { key: "website", label: "Website" },
   { key: "contactPerson", label: "Contact person" },
   { key: "contactPosition", label: "Contact position" },
+  { key: "socialMedia", label: "Social media" },
   { key: "industry", label: "Industry" },
   { key: "category", label: "Category" },
   { key: "location", label: "Location" },
@@ -519,7 +579,7 @@ function ImportDialog({
   onOpenChange: (open: boolean) => void;
   importing: boolean;
   fileRef: React.RefObject<HTMLInputElement | null>;
-  onFile: (file: File) => void;
+  onFile: (file: File, skipDuplicates: boolean) => void;
 }) {
   // Default: keep the heavy-hitters checked so a one-click download is
   // useful out of the box; the rare extras (website, contact position) are
@@ -528,6 +588,12 @@ function ImportDialog({
     new Set(["companyName", "email", "industry", "location", "source", "notes"])
   );
   const [downloading, setDownloading] = useState(false);
+  // Default OFF — every uploaded row is appended to the directory, even if
+  // the phone/email already exists. This was the cause of the "the new
+  // upload overwrote my old data" complaint: dupes were being silently
+  // dropped, so a second upload of a near-identical sheet looked like a
+  // no-op. Admin can opt back in if they're re-uploading the same batch.
+  const [skipDuplicates, setSkipDuplicates] = useState(false);
 
   function toggleColumn(key: string) {
     setSelected((prev) => {
@@ -629,9 +695,25 @@ function ImportDialog({
               <p className="text-xs text-muted-foreground mt-0.5">
                 Accepts <span className="font-mono">.xlsx</span> or{" "}
                 <span className="font-mono">.csv</span>. Up to 50,000 rows per upload.
-                Duplicates (by phone or email) are skipped automatically.
+                Every row is appended to the directory — uploading a second
+                file <b>adds</b> to your existing data, it never replaces it.
               </p>
             </div>
+            <label className="flex items-start gap-2 cursor-pointer text-xs">
+              <Checkbox
+                checked={skipDuplicates}
+                onCheckedChange={() => setSkipDuplicates((s) => !s)}
+              />
+              <span>
+                Skip rows whose phone or email already exists in the directory
+                <span className="block text-muted-foreground mt-0.5">
+                  Off (the default) keeps everything in your file — useful when
+                  you&apos;re building the directory and want each upload to add new
+                  rows. Turn this on when you&apos;re re-uploading a near-identical
+                  list and don&apos;t want copies.
+                </span>
+              </span>
+            </label>
             <input
               ref={fileRef}
               type="file"
@@ -639,7 +721,7 @@ function ImportDialog({
               className="hidden"
               onChange={(e) => {
                 const f = e.target.files?.[0];
-                if (f) onFile(f);
+                if (f) onFile(f, skipDuplicates);
                 e.target.value = "";
               }}
             />
@@ -746,21 +828,96 @@ function DispositionDialog({
   onClose: () => void;
   onChanged: () => void;
 }) {
+  const router = useRouter();
   const [disposition, setDisposition] = useState<"NO_ANSWER" | "WAITING_LIST" | "NOT_INTERESTED">("NO_ANSWER");
   const [notes, setNotes] = useState("");
   const [saving, setSaving] = useState(false);
+  // Editable fields — the lead frequently arrives incomplete and the rep
+  // needs to fill it in while they're on the phone. Every field below is
+  // bound to the lead state and PATCHed via /api/crm/cold-leads/[id] when
+  // the rep clicks "Save & disposition" or "Save details only".
+  const [editOpen, setEditOpen] = useState(false);
+  const [editWebsite, setEditWebsite] = useState("");
+  const [editSocial, setEditSocial] = useState("");
+  const [editContactPerson, setEditContactPerson] = useState("");
+  const [editContactPosition, setEditContactPosition] = useState("");
+  const [editPhone, setEditPhone] = useState("");
+  const [editEmail, setEditEmail] = useState("");
+  const [editIndustry, setEditIndustry] = useState("");
+  const [editLocation, setEditLocation] = useState("");
+  const [editLeadNotes, setEditLeadNotes] = useState("");
 
   useEffect(() => {
     if (lead) {
       setDisposition("NO_ANSWER");
       setNotes("");
+      setEditOpen(false);
+      setEditWebsite(lead.website ?? "");
+      setEditSocial(lead.socialMedia ?? "");
+      setEditContactPerson(lead.contactPerson ?? "");
+      setEditContactPosition(lead.contactPosition ?? "");
+      setEditPhone(lead.phone ?? "");
+      setEditEmail(lead.email ?? "");
+      setEditIndustry(lead.industry ?? "");
+      setEditLocation(lead.location ?? "");
+      setEditLeadNotes(lead.notes ?? "");
     }
   }, [lead]);
 
-  async function save() {
+  // Helper that PATCHes the lead with whatever fields the rep filled in.
+  // Returns true on success, false on failure. We deliberately push every
+  // editable field — null for blanks — so blanking out a previously-set
+  // field works (e.g. "I called and that website is wrong, let me clear it").
+  async function patchLeadDetails(): Promise<boolean> {
+    if (!lead) return false;
+    const body = {
+      website: editWebsite.trim() || null,
+      socialMedia: editSocial.trim() || null,
+      contactPerson: editContactPerson.trim() || null,
+      contactPosition: editContactPosition.trim() || null,
+      phone: editPhone.trim() || null,
+      email: editEmail.trim() || null,
+      industry: editIndustry.trim() || null,
+      location: editLocation.trim() || null,
+      notes: editLeadNotes.trim() || null,
+    };
+    const res = await fetch(`/api/crm/cold-leads/${lead.id}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      toast.error(data.error ?? "Couldn't save lead details");
+      return false;
+    }
+    return true;
+  }
+
+  async function saveDetailsOnly() {
     if (!lead) return;
     setSaving(true);
     try {
+      const ok = await patchLeadDetails();
+      if (ok) {
+        toast.success("Lead details updated");
+        onClose();
+        onChanged();
+      }
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function saveAndDisposition() {
+    if (!lead) return;
+    setSaving(true);
+    try {
+      // Save the editable fields first (best-effort — if the PATCH fails
+      // we surface the error and don't write the disposition either; that
+      // way the rep sees exactly what went wrong and can fix it).
+      const detailsOk = await patchLeadDetails();
+      if (!detailsOk) return;
       const res = await fetch(`/api/crm/cold-leads/${lead.id}/disposition`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -768,10 +925,10 @@ function DispositionDialog({
       });
       const data = await res.json().catch(() => ({}));
       if (!res.ok) {
-        toast.error(data.error ?? "Failed");
+        toast.error(data.error ?? "Failed to record disposition");
         return;
       }
-      toast.success("Disposition recorded");
+      toast.success(`Marked as ${disposition.replace("_", " ").toLowerCase()}`);
       onClose();
       onChanged();
     } finally {
@@ -779,14 +936,21 @@ function DispositionDialog({
     }
   }
 
+  function goConvert() {
+    if (!lead) return;
+    router.push(`/crm/cold-leads/${lead.id}/convert`);
+  }
+
   return (
     <Dialog open={!!lead} onOpenChange={(open) => !open && onClose()}>
-      <DialogContent className="sm:max-w-md">
+      <DialogContent className="sm:max-w-lg max-h-[90vh] overflow-y-auto">
         <DialogHeader>
           <DialogTitle>Record call · {lead?.name}</DialogTitle>
         </DialogHeader>
         {lead && (
-          <div className="space-y-3">
+          <div className="space-y-4">
+            {/* Quick-call info card — at-a-glance everything the rep needs to
+                start the conversation. Tap-to-call phone is on top. */}
             <div className="rounded-md bg-muted/40 p-3 text-sm space-y-1">
               {lead.companyName && (
                 <p className="flex items-center gap-2">
@@ -822,6 +986,7 @@ function DispositionDialog({
               )}
               {lead.website && (
                 <p className="text-xs">
+                  🌐{" "}
                   <a
                     href={lead.website.startsWith("http") ? lead.website : `https://${lead.website}`}
                     target="_blank"
@@ -832,10 +997,23 @@ function DispositionDialog({
                   </a>
                 </p>
               )}
+              {lead.socialMedia && (
+                <p className="text-xs">
+                  📱 <span className="text-muted-foreground">{lead.socialMedia}</span>
+                </p>
+              )}
+              {lead.notes && (
+                <p className="text-xs text-muted-foreground italic mt-1">
+                  &quot;{lead.notes}&quot;
+                </p>
+              )}
             </div>
+
+            {/* The four call outcomes. Convert sits visually beside the
+                other three — it's a real outcome, not a separate flow. */}
             <div className="space-y-1.5">
-              <Label>Outcome</Label>
-              <div className="grid grid-cols-3 gap-1.5">
+              <Label>Call outcome</Label>
+              <div className="grid grid-cols-2 gap-1.5">
                 {(["NO_ANSWER", "WAITING_LIST", "NOT_INTERESTED"] as const).map((d) => (
                   <button
                     key={d}
@@ -848,33 +1026,110 @@ function DispositionDialog({
                         : "border-border hover:bg-accent"
                     )}
                   >
-                    {d.replace("_", " ").toLowerCase()}
+                    {d === "NO_ANSWER" && "📞 No answer"}
+                    {d === "WAITING_LIST" && "⏳ Waiting list"}
+                    {d === "NOT_INTERESTED" && "❌ Not interested"}
                   </button>
                 ))}
+                <button
+                  type="button"
+                  onClick={goConvert}
+                  className="rounded-md border-2 border-emerald-500/50 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300 px-2 py-2 text-xs font-medium hover:bg-emerald-500/20 transition-all"
+                  title="Promote this lead into an opportunity"
+                >
+                  ✓ Convert to opportunity
+                </button>
               </div>
-              <p className="text-xs text-muted-foreground">
-                To convert into an opportunity instead, use{" "}
-                <Link href={`/crm/cold-leads/${lead.id}/convert`} className="text-primary hover:underline">
-                  Convert
-                </Link>.
+              <p className="text-[11px] text-muted-foreground">
+                <b>No answer</b> — they didn&apos;t pick up. The lead is recyclable
+                back to the pool. <b>Waiting list</b> — interested but not now,
+                resurfaces after ~30 days. <b>Not interested</b> — closed for
+                now (admin can keep or delete). <b>Convert</b> — they&apos;re
+                interested; this opens the opportunity form with the lead&apos;s
+                data prefilled.
               </p>
             </div>
+
             <div className="space-y-1.5">
-              <Label>Notes (optional)</Label>
+              <Label>Call notes</Label>
               <Input
                 value={notes}
                 onChange={(e) => setNotes(e.target.value)}
-                placeholder="What did they say?"
+                placeholder="What did they say? Objection / next step / who else to talk to..."
               />
+            </div>
+
+            {/* Editable fields — collapsed by default so the call interface
+                stays focused. Reps open this when they need to backfill
+                missing data they learned on the call (website, social,
+                better contact person, fixed phone, etc.). */}
+            <div className="rounded-md border border-dashed">
+              <button
+                type="button"
+                onClick={() => setEditOpen((o) => !o)}
+                className="w-full px-3 py-2 text-xs font-medium flex items-center justify-between hover:bg-accent"
+              >
+                <span>{editOpen ? "▾" : "▸"} Update lead details</span>
+                <span className="text-muted-foreground">
+                  {editOpen ? "Click to collapse" : "Fix missing info / add website / social"}
+                </span>
+              </button>
+              {editOpen && (
+                <div className="p-3 space-y-2 border-t">
+                  <div className="grid grid-cols-2 gap-2">
+                    <div className="space-y-1">
+                      <Label className="text-[11px]">Phone</Label>
+                      <Input value={editPhone} onChange={(e) => setEditPhone(e.target.value)} className="h-8 text-xs" />
+                    </div>
+                    <div className="space-y-1">
+                      <Label className="text-[11px]">Email</Label>
+                      <Input value={editEmail} onChange={(e) => setEditEmail(e.target.value)} className="h-8 text-xs" />
+                    </div>
+                    <div className="space-y-1">
+                      <Label className="text-[11px]">Website</Label>
+                      <Input value={editWebsite} onChange={(e) => setEditWebsite(e.target.value)} placeholder="https://" className="h-8 text-xs" />
+                    </div>
+                    <div className="space-y-1">
+                      <Label className="text-[11px]">Social media</Label>
+                      <Input value={editSocial} onChange={(e) => setEditSocial(e.target.value)} placeholder="LinkedIn / Instagram / FB" className="h-8 text-xs" />
+                    </div>
+                    <div className="space-y-1">
+                      <Label className="text-[11px]">Contact person</Label>
+                      <Input value={editContactPerson} onChange={(e) => setEditContactPerson(e.target.value)} className="h-8 text-xs" />
+                    </div>
+                    <div className="space-y-1">
+                      <Label className="text-[11px]">Their position</Label>
+                      <Input value={editContactPosition} onChange={(e) => setEditContactPosition(e.target.value)} placeholder="CEO / Procurement / …" className="h-8 text-xs" />
+                    </div>
+                    <div className="space-y-1">
+                      <Label className="text-[11px]">Industry</Label>
+                      <Input value={editIndustry} onChange={(e) => setEditIndustry(e.target.value)} className="h-8 text-xs" />
+                    </div>
+                    <div className="space-y-1">
+                      <Label className="text-[11px]">Location</Label>
+                      <Input value={editLocation} onChange={(e) => setEditLocation(e.target.value)} className="h-8 text-xs" />
+                    </div>
+                  </div>
+                  <div className="space-y-1">
+                    <Label className="text-[11px]">Lead notes (saved on the record)</Label>
+                    <Input value={editLeadNotes} onChange={(e) => setEditLeadNotes(e.target.value)} placeholder="Background info you want future reps to see" className="h-8 text-xs" />
+                  </div>
+                </div>
+              )}
             </div>
           </div>
         )}
-        <DialogFooter>
+        <DialogFooter className="flex-wrap gap-2">
           <Button variant="outline" onClick={onClose} disabled={saving}>
             Cancel
           </Button>
-          <Button onClick={save} disabled={saving}>
-            {saving ? "Saving…" : "Save"}
+          {editOpen && (
+            <Button variant="outline" onClick={saveDetailsOnly} disabled={saving}>
+              {saving ? "Saving…" : "Save details only"}
+            </Button>
+          )}
+          <Button onClick={saveAndDisposition} disabled={saving}>
+            {saving ? "Saving…" : "Record call"}
           </Button>
         </DialogFooter>
       </DialogContent>

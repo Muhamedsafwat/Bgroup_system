@@ -39,8 +39,13 @@ type DashboardData = {
     weightedPipeline: number;
     wonCountMTD: number;
     wonValueMTD: number;
-    targetAttainment: number;
+    /// `null` means no target is set on the rep's CRM profile. The UI
+    /// shows "—" + a prompt instead of pretending the rep is at 0%
+    /// (which was previously misread as "absurd 500%" when the fallback
+    /// target of 50k was tiny next to actual MTD revenue).
+    targetAttainment: number | null;
     monthlyTarget: number;
+    targetSet?: boolean;
   };
   todayActivity: {
     callsToday: number;
@@ -129,14 +134,24 @@ export function MyDashboardClient({
         />
         <KPICard
           title={t.kpis.targetAttainment}
-          value={`${data.kpis.targetAttainment}%`}
-          subtitle={`${fmt(data.kpis.wonValueMTD)} / ${fmt(data.kpis.monthlyTarget)}`}
+          value={
+            data.kpis.targetAttainment == null
+              ? "—"
+              : `${Math.min(data.kpis.targetAttainment, 9999)}%`
+          }
+          subtitle={
+            data.kpis.targetAttainment == null
+              ? "No monthly target set"
+              : `${fmt(data.kpis.wonValueMTD)} / ${fmt(data.kpis.monthlyTarget)}`
+          }
           icon={<Target className="h-5 w-5" />}
         />
       </div>
 
-      {/* Target Progress */}
-      <Progress value={Math.min(data.kpis.targetAttainment, 100)} className="h-3" />
+      {/* Target progress bar — only meaningful when a target is set. */}
+      {data.kpis.targetAttainment != null && (
+        <Progress value={Math.min(data.kpis.targetAttainment, 100)} className="h-3" />
+      )}
 
       {/* Today's Activity */}
       <div className="grid grid-cols-2 md:grid-cols-5 gap-4">

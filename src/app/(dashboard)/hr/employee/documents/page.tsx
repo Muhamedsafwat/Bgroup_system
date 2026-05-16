@@ -10,6 +10,7 @@ import { useToast } from '@/components/hr/ui/toast'
 import { useAuth } from '@/contexts/hr/AuthContext'
 import api from '@/lib/hr/api'
 import { formatDate, getFileSize } from '@/lib/hr/utils'
+import { describeError } from "@/lib/zod-errors";
 
 const DOCUMENT_SECTIONS = [
   { type: 'job_description', label: 'Job Description' },
@@ -81,7 +82,7 @@ export default function MyDocumentsPage() {
       setDeleteTarget(null)
       toast({ title: 'Document deleted' })
     },
-    onError: () => toast({ title: 'Error', variant: 'destructive', description: 'Failed to delete document.' }),
+    onError: (__err: unknown) => toast({ title: 'Error', variant: 'destructive', description: describeError(__err) || 'Failed to delete document.' }),
   })
 
   function handleFileInput(docType: string, files: FileList | null) {

@@ -1,9 +1,10 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { ChevronLeft, ChevronRight, Loader2 } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { MeetingDetailDialog } from "@/components/crm/meetings/MeetingDetailDialog";
 
 type Meeting = {
   id: string;
@@ -74,6 +75,7 @@ export function WeeklyCalendarClient() {
   const [weekStart, setWeekStart] = useState(() => startOfWeek(new Date()));
   const [meetings, setMeetings] = useState<Meeting[]>([]);
   const [loading, setLoading] = useState(true);
+  const [openMeetingId, setOpenMeetingId] = useState<string | null>(null);
 
   const weekDays: Date[] = useMemo(() => {
     return Array.from({ length: 7 }, (_, i) => {
@@ -89,45 +91,71 @@ export function WeeklyCalendarClient() {
     return d;
   }, [weekStart]);
 
-  useEffect(() => {
-    let cancelled = false;
+  const loadMeetings = useCallback(async () => {
     setLoading(true);
-    // scope=all so every CRM member sees the org-wide booked grid — needed
-    // for product-slot conflict awareness before booking a new meeting.
-    const params = new URLSearchParams({
-      from: weekStart.toISOString(),
-      to: weekEnd.toISOString(),
-      scope: "all",
-    });
-    fetch(`/api/crm/meetings?${params.toString()}`)
-      .then((r) => (r.ok ? r.json() : { meetings: [] }))
-      .then((d) => {
-        if (!cancelled) setMeetings(d.meetings ?? []);
-      })
-      .finally(() => !cancelled && setLoading(false));
-    return () => {
-      cancelled = true;
-    };
+    try {
+      // scope=all so every CRM member sees the org-wide booked grid —
+      // needed for product-slot conflict awareness before booking a new
+      // meeting, and for the assistant to find meetings to act on.
+      const params = new URLSearchParams({
+        from: weekStart.toISOString(),
+        to: weekEnd.toISOString(),
+        scope: "all",
+      });
+      const res = await fetch(`/api/crm/meetings?${params.toString()}`);
+      const data = res.ok ? await res.json() : { meetings: [] };
+      setMeetings(data.meetings ?? []);
+    } finally {
+      setLoading(false);
+    }
   }, [weekStart, weekEnd]);
 
-  // Map "yyyy-mm-dd:H:M" to meeting(s) that occupy that 30-min slot.
-  const slotMap = useMemo(() => {
-    const map = new Map<string, Meeting[]>();
+  useEffect(() => {
+    loadMeetings();
+  }, [loadMeetings]);
+
+  // Two-layer slot map so a meeting spans visually instead of duplicating:
+  //
+  //   anchorMap   key (yyyy-mm-dd:H:M) → [{ meeting, span }]
+  //                Slots WHERE the meeting starts. We render the card here
+  //                and let it grow downward via <td rowSpan>.
+  //
+  //   coveredSet  set of yyyy-mm-dd:H:M slots that are visually consumed by
+  //                a meeting starting in an earlier slot. We skip emitting a
+  //                <td> for these — the rowSpan above already fills the
+  //                space, so a second <td> would shove the column off-grid.
+  //
+  // Two meetings starting in the same slot stack inside the single cell;
+  // the cell's rowSpan is the max span among them so neither gets clipped.
+  const { anchorMap, coveredSet } = useMemo(() => {
+    const anchors = new Map<string, { meeting: Meeting; span: number }[]>();
+    const covered = new Set<string>();
     for (const m of meetings) {
       const start = new Date(m.startAt);
       const end = new Date(m.endAt);
-      const cursor = new Date(start);
-      // Snap cursor down to the previous 30-min boundary.
-      cursor.setMinutes(Math.floor(cursor.getMinutes() / 30) * 30, 0, 0);
-      while (cursor < end) {
-        const key = `${ymd(cursor)}:${cursor.getHours()}:${cursor.getMinutes()}`;
-        const arr = map.get(key) ?? [];
-        arr.push(m);
-        map.set(key, arr);
+      // Snap start down to the previous 30-min boundary so meetings booked
+      // mid-slot (10:15→11:15) still anchor cleanly at 10:00.
+      const anchor = new Date(start);
+      anchor.setMinutes(Math.floor(anchor.getMinutes() / 30) * 30, 0, 0);
+      // Round span up so a 45-min meeting fills 2 slots instead of 1.5.
+      const span = Math.max(
+        1,
+        Math.ceil((end.getTime() - anchor.getTime()) / (30 * 60_000))
+      );
+      const key = `${ymd(anchor)}:${anchor.getHours()}:${anchor.getMinutes()}`;
+      const list = anchors.get(key) ?? [];
+      list.push({ meeting: m, span });
+      anchors.set(key, list);
+      // Mark every slot AFTER the anchor as covered.
+      const cursor = new Date(anchor);
+      for (let i = 1; i < span; i++) {
         cursor.setMinutes(cursor.getMinutes() + 30);
+        covered.add(
+          `${ymd(cursor)}:${cursor.getHours()}:${cursor.getMinutes()}`
+        );
       }
     }
-    return map;
+    return { anchorMap: anchors, coveredSet: covered };
   }, [meetings]);
 
   const todayYmd = ymd(new Date());
@@ -220,30 +248,48 @@ export function WeeklyCalendarClient() {
                 </td>
                 {weekDays.map((d) => {
                   const key = `${ymd(d)}:${slot.h}:${slot.m}`;
-                  const ms = slotMap.get(key) ?? [];
-                  return (
-                    <td key={key} className="border-l p-1 align-top min-h-[2rem]">
-                      {ms.length === 0 ? (
+                  // This slot is the bottom half of a longer meeting — the
+                  // <td> rowSpan above already fills the visual space, so
+                  // emitting a cell here would push the rest of the column
+                  // off by one. Skip silently.
+                  if (coveredSet.has(key)) return null;
+                  const anchors = anchorMap.get(key) ?? [];
+                  if (anchors.length === 0) {
+                    return (
+                      <td key={key} className="border-l p-1 align-top min-h-[2rem]">
                         <span className="text-emerald-500/40 text-[10px]">✓</span>
-                      ) : (
-                        <div className="space-y-1">
-                          {ms.map((m) => (
-                            <div
-                              key={m.id}
-                              className={cn(
-                                "rounded-md border px-1.5 py-1 text-[10px] truncate",
-                                STATUS_BG[m.status] ?? "bg-muted border-border"
-                              )}
-                              title={`${m.code} · ${m.contactName ?? ""} · ${m.customerNeed ?? ""} · ${m.scheduledBy.fullName} · ${m.status}`}
-                            >
-                              <div className="truncate font-medium">
-                                {m.customerNeed ?? m.contactName ?? m.code}
-                              </div>
-                              <div className="truncate opacity-80">{m.scheduledBy.fullName}</div>
+                      </td>
+                    );
+                  }
+                  // Multiple meetings can anchor in the same slot. Use the
+                  // largest span so the cell is tall enough to hold all of
+                  // them without overlapping the next time slot.
+                  const span = Math.max(...anchors.map((a) => a.span));
+                  return (
+                    <td
+                      key={key}
+                      rowSpan={span}
+                      className="border-l p-1 align-top"
+                    >
+                      <div className="flex flex-col gap-1 h-full">
+                        {anchors.map(({ meeting: m }) => (
+                          <button
+                            key={m.id}
+                            type="button"
+                            onClick={() => setOpenMeetingId(m.id)}
+                            className={cn(
+                              "rounded-md border px-1.5 py-1 text-[10px] flex-1 flex flex-col justify-start text-start cursor-pointer transition-shadow hover:shadow-md hover:ring-1 hover:ring-primary/30 focus:outline-none focus:ring-2 focus:ring-primary",
+                              STATUS_BG[m.status] ?? "bg-muted border-border"
+                            )}
+                            title={`Click for details · ${m.code} · ${m.contactName ?? ""} · ${m.customerNeed ?? ""} · ${m.scheduledBy.fullName} · ${m.status}`}
+                          >
+                            <div className="font-medium truncate">
+                              {m.customerNeed ?? m.contactName ?? m.code}
                             </div>
-                          ))}
-                        </div>
-                      )}
+                            <div className="truncate opacity-80">{m.scheduledBy.fullName}</div>
+                          </button>
+                        ))}
+                      </div>
                     </td>
                   );
                 })}
@@ -254,8 +300,18 @@ export function WeeklyCalendarClient() {
       </div>
 
       <p className="text-xs text-muted-foreground">
-        ✓ available · colored cells are booked meetings. Reps see only their own slots.
+        ✓ available · click a colored block to see details, the meeting link,
+        the opportunity&apos;s last update, and to record the post-meeting outcome.
       </p>
+
+      <MeetingDetailDialog
+        meetingId={openMeetingId}
+        open={!!openMeetingId}
+        onOpenChange={(open) => {
+          if (!open) setOpenMeetingId(null);
+        }}
+        onChanged={loadMeetings}
+      />
     </div>
   );
 }

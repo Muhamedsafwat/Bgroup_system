@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { db } from "@/lib/db";
 import { z } from "zod";
+import { describeZodError } from "@/lib/zod-errors";
 
 // Public endpoint — no auth. Rate-limited by IP via the existing helper.
 import { checkRateLimit } from "@/lib/hr/rate-limit";
@@ -22,7 +23,7 @@ export async function POST(
   const body = await req.json();
   const parsed = applySchema.safeParse(body);
   if (!parsed.success) {
-    return NextResponse.json({ error: parsed.error.issues[0].message }, { status: 400 });
+    { const __z = describeZodError(parsed.error); return NextResponse.json({ error: __z.message, fieldErrors: __z.fieldErrors }, { status: 400 }); }
   }
   if (parsed.data.website) {
     // Bot trap — silently accept but don't store.

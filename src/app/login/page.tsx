@@ -23,7 +23,9 @@ function LoginForm() {
   const searchParams = useSearchParams();
   const callbackUrl = searchParams.get("callbackUrl") || "/";
 
-  const [email, setEmail] = useState("");
+  // Pre-fill the email when we got bounced here from the force-change-password
+  // flow (we always re-auth after a password change to dodge JWT-cache races).
+  const [email, setEmail] = useState(searchParams.get("email") || "");
   const [password, setPassword] = useState("");
   const [showPassword, setShowPassword] = useState(false);
   const [error, setError] = useState("");

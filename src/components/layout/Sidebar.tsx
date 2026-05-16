@@ -163,19 +163,39 @@ function getCrmNav(crmRole?: string): NavSection[] {
   const sections: NavSection[] = [];
   const isManager = crmRole === "MANAGER" || crmRole === "ADMIN";
 
-  sections.push({
-    title: "Work",
-    items: [
-      { href: "/crm/sales-board", label: "Dashboard", icon: BarChart3 },
-      { href: "/crm/pipeline", label: "Pipeline", icon: TrendingUp },
-      { href: "/crm/opportunities", label: "Opportunities", icon: TrendingUp },
-      { href: "/crm/cold-leads", label: "Cold leads", icon: Phone },
-      { href: "/crm/companies", label: "Companies", icon: Building2 },
-      { href: "/crm/contacts", label: "Contacts", icon: Contact },
-      { href: "/crm/meetings", label: "Meetings & calendar", icon: CalendarCheck },
-      { href: "/crm/reports", label: "Daily reports", icon: ClipboardList },
-    ],
-  });
+  // ASSISTANT is intentionally narrow: meetings + their own tasks + their
+  // personal dashboard. The full pipeline/opportunities/companies/etc.
+  // surfaces are blocked by the proxy too, so even URL-typing won't get
+  // them through. Post-meeting they can open ONE specific opportunity
+  // (the one tied to a meeting they handled) via the meeting detail.
+  if (crmRole === "ASSISTANT") {
+    sections.push({
+      title: "Work",
+      items: [
+        { href: "/crm/my", label: "My day", icon: LayoutDashboard },
+        { href: "/crm/meetings", label: "Meetings & calendar", icon: CalendarCheck },
+        { href: "/tasks", label: "My tasks", icon: ClipboardList },
+      ],
+    });
+    return sections;
+  }
+
+  const workItems = [
+    { href: "/crm/sales-board", label: "Dashboard", icon: BarChart3 },
+    { href: "/crm/pipeline", label: "Pipeline", icon: TrendingUp },
+    { href: "/crm/opportunities", label: "Opportunities", icon: TrendingUp },
+    { href: "/crm/cold-leads", label: "Cold leads", icon: Phone },
+    // Companies is a curated vendor / principal directory — only admin
+    // + sales manager see it. Reps capture the customer's company name
+    // as free text on the opportunity itself.
+    ...(isManager
+      ? [{ href: "/crm/companies", label: "Companies", icon: Building2 }]
+      : []),
+    { href: "/crm/contacts", label: "Contacts", icon: Contact },
+    { href: "/crm/meetings", label: "Meetings & calendar", icon: CalendarCheck },
+    { href: "/crm/reports", label: "Daily reports", icon: ClipboardList },
+  ];
+  sections.push({ title: "Work", items: workItems });
 
   if (crmRole === "ADMIN") {
     // Single Settings entry → /admin/settings (consolidated landing).

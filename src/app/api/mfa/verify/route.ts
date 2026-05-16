@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
 import { verifyTotpEnrollment } from "@/lib/mfa/totp";
 import { z } from "zod";
+import { describeZodError } from "@/lib/zod-errors";
 
 const bodySchema = z.object({
   credentialId: z.string().min(1),
@@ -16,7 +17,7 @@ export async function POST(req: Request) {
   const body = await req.json();
   const parsed = bodySchema.safeParse(body);
   if (!parsed.success) {
-    return NextResponse.json({ error: parsed.error.issues[0].message }, { status: 400 });
+    { const __z = describeZodError(parsed.error); return NextResponse.json({ error: __z.message, fieldErrors: __z.fieldErrors }, { status: 400 }); }
   }
   const result = await verifyTotpEnrollment(
     session.user.id,

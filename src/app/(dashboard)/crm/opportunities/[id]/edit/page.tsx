@@ -50,6 +50,10 @@ export default async function EditOpportunityPage({
 
   const initial = {
     id: opp.id,
+    // Prefer the modern free-text field; fall back to the legacy linked
+    // CrmCompany.nameEn so opps created before the schema change still
+    // render meaningfully in edit mode.
+    customerCompanyName: opp.customerCompanyName ?? opp.company?.nameEn ?? "",
     companyId: opp.companyId,
     primaryContactId: opp.primaryContactId,
     entityId: opp.entityId,
