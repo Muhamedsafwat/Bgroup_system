@@ -34,6 +34,10 @@ declare module "next-auth" {
       // Partners-specific
       partnerId?: string;
       partnerProfileId?: string;
+      // True when the user signed in with a password the admin set for them
+      // and hasn't replaced it yet. The proxy redirects every navigation to
+      // /account/change-password while this is true.
+      mustChangePassword?: boolean;
     };
   }
 
@@ -54,6 +58,7 @@ declare module "@auth/core/jwt" {
     crmProfileId?: string;
     partnerId?: string;
     partnerProfileId?: string;
+    mustChangePassword?: boolean;
     modulesRefreshedAt?: number;
   }
 }
@@ -285,6 +290,7 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
 
         if (dbUser) {
           token.userId = dbUser.id;
+          token.mustChangePassword = !!dbUser.mustChangePassword;
 
           // Determine accessible modules
           const modules: ("hr" | "crm" | "partners")[] = [];
@@ -355,6 +361,7 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
         session.user.crmProfileId = token.crmProfileId as string | undefined;
         session.user.partnerId = token.partnerId as string | undefined;
         session.user.partnerProfileId = token.partnerProfileId as string | undefined;
+        session.user.mustChangePassword = !!token.mustChangePassword;
       }
       return session;
     },

@@ -10,6 +10,10 @@ type ForecastData = {
   kpis: {
     weightedPipeline: number;
     wonValueMTD: number;
+    /// New: team target (sum of `monthlyTargetEGP` for the reps in the caller's
+    /// scope). Source of truth — the leaderboard-derived sum used to come up
+    /// zero when reps had no opps yet, but their target is still real.
+    teamTarget?: number;
   };
   leaderboard: Array<{
     wonValue: number;
@@ -29,7 +33,12 @@ export function ForecastPageClient({
   const fmt = (n: number) =>
     new Intl.NumberFormat(locale === "ar" ? "ar-EG" : "en-US").format(n);
 
-  const totalTarget = data.leaderboard.reduce((s, r) => s + r.target, 0);
+  // Prefer the server-computed team target (sum of reps' monthlyTargetEGP).
+  // Fall back to the per-row sum in the leaderboard for backwards-compat with
+  // any cached forecast payload that doesn't include the new field yet.
+  const totalTarget =
+    data.kpis.teamTarget ??
+    data.leaderboard.reduce((s, r) => s + r.target, 0);
   const commitForecast = data.kpis.wonValueMTD + data.kpis.weightedPipeline * 0.7;
   const bestCase = data.kpis.wonValueMTD + data.kpis.weightedPipeline;
   const worstCase = data.kpis.wonValueMTD + data.kpis.weightedPipeline * 0.3;

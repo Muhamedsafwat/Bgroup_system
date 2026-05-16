@@ -20,7 +20,10 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
-import { createLossReason, updateLossReason } from "../actions";
+import { Trash2 } from "lucide-react";
+import { toast } from "sonner";
+import { useRouter } from "next/navigation";
+import { createLossReason, deleteLossReason, updateLossReason } from "../actions";
 
 type LossReasonItem = {
   id: string;
@@ -39,6 +42,7 @@ type LossReasonItem = {
 
 export function LossReasonsClient({ reasons }: { reasons: LossReasonItem[] }) {
   const { t, locale } = useLocale();
+  const router = useRouter();
   const [open, setOpen] = useState(false);
   const [editing, setEditing] = useState<LossReasonItem | null>(null);
   const [saving, setSaving] = useState(false);
@@ -68,19 +72,47 @@ export function LossReasonsClient({ reasons }: { reasons: LossReasonItem[] }) {
     try {
       if (editing) {
         await updateLossReason(editing.id, { labelEn, labelAr });
+        toast.success("Updated");
       } else {
         await createLossReason({ labelEn, labelAr, code });
+        toast.success("Created");
       }
       setOpen(false);
+      router.refresh();
     } catch (err) {
-      console.error(err);
+      toast.error(err instanceof Error ? err.message : "Save failed");
     } finally {
       setSaving(false);
     }
   }
 
   async function toggleActive(reason: LossReasonItem) {
-    await updateLossReason(reason.id, { active: !reason.active });
+    setSaving(true);
+    try {
+      await updateLossReason(reason.id, { active: !reason.active });
+      router.refresh();
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Update failed");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function handleDelete(reason: LossReasonItem) {
+    const ok = window.confirm(
+      `Permanently delete loss reason "${reason.labelEn}"? Cannot be undone.`
+    );
+    if (!ok) return;
+    setSaving(true);
+    try {
+      await deleteLossReason(reason.id);
+      toast.success(`"${reason.labelEn}" deleted`);
+      router.refresh();
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Delete failed");
+    } finally {
+      setSaving(false);
+    }
   }
 
   return (
@@ -135,11 +167,12 @@ export function LossReasonsClient({ reasons }: { reasons: LossReasonItem[] }) {
                       )}
                     </TableCell>
                     <TableCell>
-                      <div className="flex gap-2">
+                      <div className="flex gap-1">
                         <Button
                           variant="ghost"
                           size="sm"
                           onClick={() => openEdit(reason)}
+                          disabled={saving}
                         >
                           {t.common.edit}
                         </Button>
@@ -147,8 +180,19 @@ export function LossReasonsClient({ reasons }: { reasons: LossReasonItem[] }) {
                           variant="ghost"
                           size="sm"
                           onClick={() => toggleActive(reason)}
+                          disabled={saving}
                         >
                           {reason.active ? t.common.inactive : t.common.active}
+                        </Button>
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          onClick={() => handleDelete(reason)}
+                          disabled={saving}
+                          className="text-destructive hover:text-destructive"
+                          title="Delete permanently"
+                        >
+                          <Trash2 className="h-3.5 w-3.5" />
                         </Button>
                       </div>
                     </TableCell>

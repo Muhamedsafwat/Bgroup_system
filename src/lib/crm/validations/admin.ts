@@ -53,12 +53,41 @@ export const updateEntitySchema = z.object({
 
 // ========== FX RATES ==========
 
+const CURRENCY_CODES = ["EGP", "USD", "SAR", "AED", "QAR"] as const;
+
+export const createFxRateSchema = z.object({
+  currency: z.enum(CURRENCY_CODES),
+  rate: z.number().positive("Rate must be positive"),
+});
+
 export const updateFxRateSchema = z.object({
   currency: z.string().min(1, "CrmCurrency is required"),
   rate: z.number().positive("Rate must be positive"),
 });
 
 // ========== STAGE CONFIGS ==========
+
+export const createStageConfigSchema = z.object({
+  stage: z.enum([
+    "NEW",
+    "CONTACTED",
+    "DISCOVERY",
+    "QUALIFIED",
+    "TECH_MEETING",
+    "PROPOSAL_SENT",
+    "NEGOTIATION",
+    "VERBAL_YES",
+    "POSTPONED",
+    "WON",
+    "LOST",
+  ]),
+  entityId: z.string().nullable().optional(),
+  probabilityPct: z.number().min(0).max(100),
+  slaHours: z.number().min(0).nullable().optional(),
+  displayOrder: z.number().int().min(0).max(99),
+  customLabelEn: z.string().trim().max(80).nullable().optional(),
+  customLabelAr: z.string().trim().max(80).nullable().optional(),
+});
 
 export const updateStageConfigSchema = z.object({
   probabilityPct: z.number().min(0).max(100).optional(),
@@ -98,4 +127,42 @@ export const updateLeadSourceSchema = z.object({
   labelAr: z.string().min(1).optional(),
   code: z.string().min(1).optional(),
   active: z.boolean().optional(),
+});
+
+// ========== CUSTOMER NEEDS ==========
+
+export const createCustomerNeedSchema = z.object({
+  labelEn: z.string().trim().min(1, "Label is required").max(120),
+  labelAr: z.string().trim().max(120).optional(),
+  category: z.string().trim().max(120).optional(),
+  sortOrder: z.number().int().min(0).max(9999).optional(),
+});
+
+export const updateCustomerNeedSchema = z.object({
+  labelEn: z.string().trim().min(1).max(120).optional(),
+  labelAr: z.string().trim().max(120).optional(),
+  category: z.string().trim().max(120).optional(),
+  sortOrder: z.number().int().min(0).max(9999).optional(),
+  active: z.boolean().optional(),
+});
+
+// ========== MEETING TYPE CONFIGS ==========
+
+export const createMeetingTypeConfigSchema = z.object({
+  code: z
+    .string()
+    .trim()
+    .min(1, "Code is required")
+    .max(40)
+    .regex(/^[A-Z0-9_]+$/, "Code: UPPER, digits, and underscores only (e.g. SITE_VISIT)"),
+  labelEn: z.string().trim().min(1, "English label is required").max(80),
+  labelAr: z.string().trim().max(80).optional(),
+  sortOrder: z.number().int().min(0).max(999).optional(),
+});
+
+export const updateMeetingTypeConfigSchema = z.object({
+  labelEn: z.string().trim().min(1).max(80).optional(),
+  labelAr: z.string().trim().max(80).optional(),
+  active: z.boolean().optional(),
+  sortOrder: z.number().int().min(0).max(999).optional(),
 });

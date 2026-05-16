@@ -6,6 +6,7 @@ import { useSession } from "next-auth/react";
 import { useEffect, useState } from "react";
 import { cn } from "@/lib/utils";
 import { ModuleSwitcher } from "./ModuleSwitcher";
+import { SidebarAccountDialog } from "./SidebarAccountDialog";
 import {
   // HR icons
   LayoutDashboard,
@@ -168,6 +169,7 @@ function getCrmNav(crmRole?: string): NavSection[] {
       { href: "/crm/sales-board", label: "Dashboard", icon: BarChart3 },
       { href: "/crm/pipeline", label: "Pipeline", icon: TrendingUp },
       { href: "/crm/opportunities", label: "Opportunities", icon: TrendingUp },
+      { href: "/crm/cold-leads", label: "Cold leads", icon: Phone },
       { href: "/crm/companies", label: "Companies", icon: Building2 },
       { href: "/crm/contacts", label: "Contacts", icon: Contact },
       { href: "/crm/meetings", label: "Meetings & calendar", icon: CalendarCheck },
@@ -276,6 +278,7 @@ export function Sidebar() {
   const pathname = usePathname();
   const { data: session } = useSession();
   const [collapsed, setCollapsed] = useState(false);
+  const [accountOpen, setAccountOpen] = useState(false);
 
   const modules = session?.user?.modules || [];
 
@@ -417,18 +420,35 @@ export function Sidebar() {
         </nav>
       </ScrollArea>
 
-      {/* User + Logout */}
+      {/* User + Logout. The identity tile is a button that opens the
+          unified account dialog (photo + password + 2FA link). When the
+          sidebar is collapsed, the photo-circle alone acts as the trigger. */}
       <div className="border-t p-3">
-        {session?.user && !collapsed && (
-          <div className="flex items-center gap-3 mb-3">
-            <div className="h-8 w-8 rounded-full bg-muted flex items-center justify-center text-sm font-medium shrink-0">
-              {session.user.name?.charAt(0) || "U"}
+        {session?.user && (
+          <button
+            type="button"
+            onClick={() => setAccountOpen(true)}
+            className={cn(
+              "flex items-center gap-3 mb-2 w-full rounded-lg p-1.5 hover:bg-sidebar-accent text-start transition-colors",
+              collapsed && "justify-center"
+            )}
+            title={collapsed ? (session.user.name ?? session.user.email ?? "Account") : "Account"}
+          >
+            <div className="h-8 w-8 rounded-full bg-muted flex items-center justify-center text-sm font-medium shrink-0 overflow-hidden">
+              {session.user.image ? (
+                // eslint-disable-next-line @next/next/no-img-element
+                <img src={session.user.image} alt="" className="h-full w-full object-cover" />
+              ) : (
+                session.user.name?.charAt(0) || "U"
+              )}
             </div>
-            <div className="flex-1 min-w-0">
-              <p className="text-sm font-medium truncate">{session.user.name}</p>
-              <p className="text-xs text-muted-foreground truncate">{session.user.email}</p>
-            </div>
-          </div>
+            {!collapsed && (
+              <div className="flex-1 min-w-0">
+                <p className="text-sm font-medium truncate">{session.user.name}</p>
+                <p className="text-xs text-muted-foreground truncate">{session.user.email}</p>
+              </div>
+            )}
+          </button>
         )}
         <button
           onClick={() => signOut({ redirectTo: "/login" })}
@@ -442,6 +462,7 @@ export function Sidebar() {
           {!collapsed && <span>Logout</span>}
         </button>
       </div>
+      <SidebarAccountDialog open={accountOpen} onOpenChange={setAccountOpen} />
     </aside>
   );
 }

@@ -67,7 +67,14 @@ export async function POST(request: Request) {
   }
 
   const hash = await bcrypt.hash(parsed.data.newPassword, 10);
-  await db.user.update({ where: { id: user.id }, data: { password: hash } });
+  // Clear `mustChangePassword` on a successful change. Users invited with a
+  // temporary admin-set password are gated to this endpoint until they pick
+  // their own; once they do, normal navigation unlocks via the JWT refresh
+  // on the very next request.
+  await db.user.update({
+    where: { id: user.id },
+    data: { password: hash, mustChangePassword: false },
+  });
 
   return NextResponse.json({ ok: true });
 }

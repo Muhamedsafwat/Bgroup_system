@@ -18,6 +18,7 @@ import { Plus, Trash2, RotateCcw, Pencil, X, Check } from "lucide-react";
 import { toast } from "sonner";
 import {
   createCustomerNeed,
+  deleteCustomerNeed,
   updateCustomerNeed,
 } from "../actions";
 
@@ -108,6 +109,23 @@ export function CustomerNeedsClient({ initial }: { initial: Need[] }) {
       toast.success(n.active ? "Hidden from picker" : "Restored");
     } catch (e) {
       toast.error(e instanceof Error ? e.message : "Update failed");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function handleDelete(n: Need) {
+    const ok = window.confirm(
+      `Permanently delete "${n.labelEn}"? If any meeting references it, the delete will be refused.`
+    );
+    if (!ok) return;
+    setSaving(true);
+    try {
+      await deleteCustomerNeed(n.id);
+      setNeeds(needs.filter((x) => x.id !== n.id));
+      toast.success(`"${n.labelEn}" deleted`);
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Delete failed");
     } finally {
       setSaving(false);
     }
@@ -235,9 +253,18 @@ export function CustomerNeedsClient({ initial }: { initial: Need[] }) {
                           onClick={() => toggleActive(n)}
                           disabled={saving}
                           title={n.active ? "Hide from picker" : "Restore"}
-                          className={n.active ? "text-destructive" : ""}
                         >
-                          {n.active ? <Trash2 className="h-3.5 w-3.5" /> : <RotateCcw className="h-3.5 w-3.5" />}
+                          {n.active ? <X className="h-3.5 w-3.5" /> : <RotateCcw className="h-3.5 w-3.5" />}
+                        </Button>
+                        <Button
+                          size="sm"
+                          variant="ghost"
+                          onClick={() => handleDelete(n)}
+                          disabled={saving}
+                          className="text-destructive hover:text-destructive"
+                          title="Delete permanently"
+                        >
+                          <Trash2 className="h-3.5 w-3.5" />
                         </Button>
                       </div>
                     )}

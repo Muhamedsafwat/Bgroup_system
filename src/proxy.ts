@@ -197,6 +197,33 @@ export async function proxy(request: NextRequest) {
   const hrRoles = session.user.hrRoles ?? [];
   const partnerId = session.user.partnerId ?? null;
 
+  // Force-change-password gate: a user invited with a temporary admin-set
+  // password (or one whose password an admin just reset) must pick a new
+  // one before doing anything else. We let through:
+  //   - the change-password page itself
+  //   - the matching API endpoint
+  //   - sign-out, NextAuth callbacks, and static assets (covered above)
+  //   - account API endpoints the dialog needs (session + upload-photo)
+  // Everything else hops to /account/change-password.
+  if (session.user.mustChangePassword) {
+    const allowDuringGate =
+      pathname.startsWith("/account/change-password") ||
+      pathname === "/api/account/change-password" ||
+      pathname === "/api/auth/session" ||
+      pathname === "/api/auth/signout" ||
+      pathname.startsWith("/api/auth/callback");
+    if (!allowDuringGate) {
+      if (pathname.startsWith("/api/")) {
+        return NextResponse.json(
+          { error: "Password change required", code: "MUST_CHANGE_PASSWORD" },
+          { status: 403 }
+        );
+      }
+      const redirectTo = new URL("/account/change-password", request.url);
+      return NextResponse.redirect(redirectTo);
+    }
+  }
+
   // Module access enforcement — pages
   if (pathname.startsWith("/hr") && !modules.includes("hr")) {
     return NextResponse.redirect(new URL("/", request.url));

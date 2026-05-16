@@ -20,7 +20,10 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
-import { createLeadSource, updateLeadSource } from "../actions";
+import { Trash2 } from "lucide-react";
+import { toast } from "sonner";
+import { useRouter } from "next/navigation";
+import { createLeadSource, deleteLeadSource, updateLeadSource } from "../actions";
 
 type LeadSourceItem = {
   id: string;
@@ -39,6 +42,7 @@ type LeadSourceItem = {
 
 export function LeadSourcesClient({ sources }: { sources: LeadSourceItem[] }) {
   const { t, locale } = useLocale();
+  const router = useRouter();
   const [open, setOpen] = useState(false);
   const [editing, setEditing] = useState<LeadSourceItem | null>(null);
   const [saving, setSaving] = useState(false);
@@ -68,19 +72,47 @@ export function LeadSourcesClient({ sources }: { sources: LeadSourceItem[] }) {
     try {
       if (editing) {
         await updateLeadSource(editing.id, { labelEn, labelAr, code });
+        toast.success("Updated");
       } else {
         await createLeadSource({ labelEn, labelAr, code });
+        toast.success("Created");
       }
       setOpen(false);
+      router.refresh();
     } catch (err) {
-      console.error(err);
+      toast.error(err instanceof Error ? err.message : "Save failed");
     } finally {
       setSaving(false);
     }
   }
 
   async function toggleActive(source: LeadSourceItem) {
-    await updateLeadSource(source.id, { active: !source.active });
+    setSaving(true);
+    try {
+      await updateLeadSource(source.id, { active: !source.active });
+      router.refresh();
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Update failed");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function handleDelete(source: LeadSourceItem) {
+    const ok = window.confirm(
+      `Permanently delete lead source "${source.labelEn}"? Cannot be undone.`
+    );
+    if (!ok) return;
+    setSaving(true);
+    try {
+      await deleteLeadSource(source.id);
+      toast.success(`"${source.labelEn}" deleted`);
+      router.refresh();
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Delete failed");
+    } finally {
+      setSaving(false);
+    }
   }
 
   return (
@@ -135,11 +167,12 @@ export function LeadSourcesClient({ sources }: { sources: LeadSourceItem[] }) {
                       )}
                     </TableCell>
                     <TableCell>
-                      <div className="flex gap-2">
+                      <div className="flex gap-1">
                         <Button
                           variant="ghost"
                           size="sm"
                           onClick={() => openEdit(source)}
+                          disabled={saving}
                         >
                           {t.common.edit}
                         </Button>
@@ -147,8 +180,19 @@ export function LeadSourcesClient({ sources }: { sources: LeadSourceItem[] }) {
                           variant="ghost"
                           size="sm"
                           onClick={() => toggleActive(source)}
+                          disabled={saving}
                         >
                           {source.active ? t.common.inactive : t.common.active}
+                        </Button>
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          onClick={() => handleDelete(source)}
+                          disabled={saving}
+                          className="text-destructive hover:text-destructive"
+                          title="Delete permanently"
+                        >
+                          <Trash2 className="h-3.5 w-3.5" />
                         </Button>
                       </div>
                     </TableCell>

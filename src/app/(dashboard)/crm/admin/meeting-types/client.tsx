@@ -4,7 +4,15 @@ import { useState } from "react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
+import {
+  Dialog,
+  DialogContent,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import {
   Table,
   TableBody,
@@ -13,9 +21,13 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-import { Trash2, RotateCcw, Pencil, X, Check } from "lucide-react";
+import { Trash2, RotateCcw, Pencil, X, Check, Plus } from "lucide-react";
 import { toast } from "sonner";
-import { updateMeetingTypeConfig } from "../actions";
+import {
+  createMeetingTypeConfig,
+  deleteMeetingTypeConfig,
+  updateMeetingTypeConfig,
+} from "../actions";
 
 type Row = {
   id: string;
@@ -33,6 +45,52 @@ export function MeetingTypesClient({ initial }: { initial: Row[] }) {
   const [editLabelAr, setEditLabelAr] = useState("");
   const [editSort, setEditSort] = useState(0);
   const [saving, setSaving] = useState(false);
+
+  const [addOpen, setAddOpen] = useState(false);
+  const [addCode, setAddCode] = useState("");
+  const [addLabelEn, setAddLabelEn] = useState("");
+  const [addLabelAr, setAddLabelAr] = useState("");
+  const [addSort, setAddSort] = useState(0);
+
+  async function handleCreate() {
+    setSaving(true);
+    try {
+      const row = (await createMeetingTypeConfig({
+        code: addCode.trim().toUpperCase(),
+        labelEn: addLabelEn.trim(),
+        labelAr: addLabelAr.trim(),
+        sortOrder: addSort,
+      })) as Row;
+      setRows([...rows, row].sort((a, b) => a.sortOrder - b.sortOrder));
+      setAddOpen(false);
+      setAddCode("");
+      setAddLabelEn("");
+      setAddLabelAr("");
+      setAddSort(0);
+      toast.success(`Meeting type "${row.labelEn}" added`);
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Add failed");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function handleDelete(r: Row) {
+    const ok = window.confirm(
+      `Permanently delete "${r.labelEn}" (${r.code})? Cannot be undone.`
+    );
+    if (!ok) return;
+    setSaving(true);
+    try {
+      await deleteMeetingTypeConfig(r.id);
+      setRows(rows.filter((x) => x.id !== r.id));
+      toast.success(`"${r.labelEn}" deleted`);
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Delete failed");
+    } finally {
+      setSaving(false);
+    }
+  }
 
   function startEdit(r: Row) {
     setEditingId(r.id);
@@ -74,14 +132,19 @@ export function MeetingTypesClient({ initial }: { initial: Row[] }) {
 
   return (
     <div className="space-y-4">
-      <div>
-        <h1 className="text-2xl font-bold">Meeting types</h1>
-        <p className="text-sm text-muted-foreground mt-1">
-          The dropdown reps pick from when booking a meeting. The set of codes
-          (DEMO / OFFICE_VISIT / FOLLOWUP / PROPOSAL / ONBOARDING) is fixed
-          because they&apos;re tied to business rules, but you can rename the
-          labels, reorder them, or hide types you don&apos;t run.
-        </p>
+      <div className="flex items-start justify-between gap-3">
+        <div>
+          <h1 className="text-2xl font-bold">Meeting types</h1>
+          <p className="text-sm text-muted-foreground mt-1">
+            The dropdown reps pick from when booking a meeting. Rename labels,
+            reorder them, hide types you don&apos;t run, or add new ones. Codes
+            must be UPPER_SNAKE (e.g. <span className="font-mono">SITE_VISIT</span>).
+          </p>
+        </div>
+        <Button onClick={() => setAddOpen(true)} disabled={saving}>
+          <Plus className="me-1 h-4 w-4" />
+          Add type
+        </Button>
       </div>
 
       <Card>
@@ -146,7 +209,7 @@ export function MeetingTypesClient({ initial }: { initial: Row[] }) {
                       </div>
                     ) : (
                       <div className="flex gap-1">
-                        <Button size="sm" variant="ghost" onClick={() => startEdit(r)}>
+                        <Button size="sm" variant="ghost" onClick={() => startEdit(r)} title="Edit">
                           <Pencil className="h-3.5 w-3.5" />
                         </Button>
                         <Button
@@ -154,9 +217,19 @@ export function MeetingTypesClient({ initial }: { initial: Row[] }) {
                           variant="ghost"
                           onClick={() => toggleActive(r)}
                           disabled={saving}
-                          className={r.active ? "text-destructive" : ""}
+                          title={r.active ? "Hide" : "Restore"}
                         >
-                          {r.active ? <Trash2 className="h-3.5 w-3.5" /> : <RotateCcw className="h-3.5 w-3.5" />}
+                          {r.active ? <X className="h-3.5 w-3.5" /> : <RotateCcw className="h-3.5 w-3.5" />}
+                        </Button>
+                        <Button
+                          size="sm"
+                          variant="ghost"
+                          onClick={() => handleDelete(r)}
+                          disabled={saving}
+                          className="text-destructive hover:text-destructive"
+                          title="Delete permanently"
+                        >
+                          <Trash2 className="h-3.5 w-3.5" />
                         </Button>
                       </div>
                     )}
@@ -167,6 +240,68 @@ export function MeetingTypesClient({ initial }: { initial: Row[] }) {
           </Table>
         </CardContent>
       </Card>
+
+      <Dialog open={addOpen} onOpenChange={setAddOpen}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>Add meeting type</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-3">
+            <div className="space-y-1.5">
+              <Label>Code</Label>
+              <Input
+                value={addCode}
+                onChange={(e) => setAddCode(e.target.value.toUpperCase().replace(/[^A-Z0-9_]/g, ""))}
+                placeholder="SITE_VISIT"
+                className="font-mono"
+                maxLength={40}
+              />
+              <p className="text-xs text-muted-foreground">
+                UPPER, digits, and underscores only.
+              </p>
+            </div>
+            <div className="space-y-1.5">
+              <Label>Label (EN)</Label>
+              <Input
+                value={addLabelEn}
+                onChange={(e) => setAddLabelEn(e.target.value)}
+                placeholder="Site visit"
+              />
+            </div>
+            <div className="space-y-1.5">
+              <Label>Label (AR)</Label>
+              <Input
+                value={addLabelAr}
+                onChange={(e) => setAddLabelAr(e.target.value)}
+                placeholder="زيارة الموقع"
+                dir="rtl"
+              />
+            </div>
+            <div className="space-y-1.5">
+              <Label>Sort order</Label>
+              <Input
+                type="number"
+                value={addSort}
+                onChange={(e) => setAddSort(Number(e.target.value) || 0)}
+                min={0}
+                max={999}
+                className="w-24"
+              />
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setAddOpen(false)} disabled={saving}>
+              Cancel
+            </Button>
+            <Button
+              onClick={handleCreate}
+              disabled={saving || !addCode || !addLabelEn || !/^[A-Z0-9_]+$/.test(addCode)}
+            >
+              Add
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

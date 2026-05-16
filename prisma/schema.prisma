@@ -85,6 +85,12 @@ model User {
   mfaCredentials UserMfaCredential[]
   recoveryCodes  UserRecoveryCode[]
   mfaEnabled     Boolean             @default(false)
+  /// Forces the user to change their password the next time they sign in.
+  /// Set to true when an admin creates an account or resets a password —
+  /// the initial password is temporary and the user must replace it before
+  /// they can do anything else. Cleared by /api/account/change-password
+  /// the moment the user picks a new one.
+  mustChangePassword Boolean        @default(false)
   onboardedAt    DateTime?
   bookingPage    BookingPage?
   assignedTasks  Task[]              @relation("TaskAssignee")
@@ -2213,6 +2219,128 @@ enum CrmRole {
   ADMIN
 }
 
+/// Cold-lead lifecycle. Imported rows start as `NEW` and get parked in a
+/// disposition bucket after a rep contacts them. The bucket determines what
+/// the manager can do next (push back to a rep, schedule a recycle after
+/// the waiting period, archive permanently, etc).
+enum CrmColdLeadStatus {
+  /// Imported and not yet routed (in the big directory, unassigned).
+  NEW
+  /// Currently assigned to a rep; sits in their call list until they touch it.
+  ASSIGNED
+  /// Rep called and got no answer — recyclable. Manager can push back to a rep.
+  NO_ANSWER
+  /// Rep talked to the prospect; not the right time. Resurfaces after the
+  /// waiting period (default ~30 days) via the recycle job / manager push.
+  WAITING_LIST
+  /// Rep talked to the prospect; explicit no-go. Manager can delete or keep
+  /// for future "tried, didn't work" reference.
+  NOT_INTERESTED
+  /// Rep converted the lead into a real CrmOpportunity. Stops appearing in
+  /// the dialer queue.
+  CONVERTED
+  /// Manager archived. Out of every bucket.
+  ARCHIVED
+}
+
+/// One row per imported lead. Imports come from Excel/CSV uploads handled by
+/// `/api/crm/cold-leads/import` — the parser writes each row here and links
+/// it to a `CrmColdLeadImport` batch so a bad upload can be undone in one
+/// click. Personal data (phone, email) is stored verbatim — admins should
+/// treat the directory as PII and gate via the platform-admin checks.
+model CrmColdLead {
+  id          String            @id @default(cuid())
+  name        String
+  companyName String?
+  phone       String?
+  email       String?
+  /// Optional fields surfaced by the admin's customizable Excel template:
+  /// website (https://...), contactPerson (a primary contact's name when
+  /// it differs from `name`), contactPosition (their title — "CEO",
+  /// "Procurement Manager", etc). All free text and optional.
+  website         String?
+  contactPerson   String?
+  contactPosition String?
+  industry    String?
+  category    String?
+  location    String?
+  source      String?
+  notes       String?
+
+  status      CrmColdLeadStatus @default(NEW)
+
+  assignedToId String?
+  assignedTo   CrmUserProfile?  @relation("CrmColdLeadAssignee", fields: [assignedToId], references: [id])
+  assignedAt   DateTime?
+
+  lastDispositionAt DateTime?
+  /// When the lead was last pushed to a rep — used by the daily recycle to
+  /// know when a WAITING_LIST row is ready to be re-distributed.
+  /// 30 days is the default cooldown for WAITING_LIST; NO_ANSWER goes back
+  /// to the pool immediately on the next "redistribute" sweep.
+  recycleEligibleAt DateTime?
+
+  /// FK to the actual CrmOpportunity if the rep converted. Lets the manager
+  /// jump from "Converted" bucket to the live deal for follow-up.
+  convertedOpportunityId String? @unique
+  convertedOpportunity   CrmOpportunity? @relation("CrmColdLeadConverted", fields: [convertedOpportunityId], references: [id])
+
+  importBatchId String?
+  importBatch   CrmColdLeadImport? @relation(fields: [importBatchId], references: [id], onDelete: SetNull)
+
+  dispositions CrmColdLeadDisposition[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([status])
+  @@index([assignedToId])
+  @@index([industry])
+  @@index([category])
+  @@index([location])
+  @@index([importBatchId])
+  @@index([recycleEligibleAt])
+  @@map("crm_cold_leads")
+}
+
+/// One row per Excel/CSV upload. Stores the raw filename and counters so the
+/// admin can see "X rows imported, Y kept, Z were duplicate" and bulk-undo
+/// the import via the batch id.
+model CrmColdLeadImport {
+  id            String   @id @default(cuid())
+  importedById  String
+  importedBy    CrmUserProfile @relation("CrmColdLeadImporter", fields: [importedById], references: [id])
+  fileName      String
+  rowCount      Int      @default(0)
+  duplicateCount Int     @default(0)
+  notes         String?
+  createdAt     DateTime @default(now())
+
+  leads CrmColdLead[]
+
+  @@index([importedById])
+  @@index([createdAt])
+  @@map("crm_cold_lead_imports")
+}
+
+/// Audit trail of every time a rep touches a cold lead. The `disposition`
+/// is the bucket the rep dropped the lead into; `notes` carry any text the
+/// rep wrote (objection, call back date the prospect asked for, etc).
+model CrmColdLeadDisposition {
+  id           String            @id @default(cuid())
+  coldLeadId   String
+  coldLead     CrmColdLead       @relation(fields: [coldLeadId], references: [id], onDelete: Cascade)
+  repId        String
+  rep          CrmUserProfile    @relation("CrmColdLeadDispositioner", fields: [repId], references: [id])
+  disposition  CrmColdLeadStatus
+  notes        String?
+  dispositionedAt DateTime @default(now())
+
+  @@index([coldLeadId])
+  @@index([repId, dispositionedAt])
+  @@map("crm_cold_lead_dispositions")
+}
+
 enum CrmOpportunityStage {
   NEW
   CONTACTED
@@ -2351,6 +2479,9 @@ model CrmUserProfile {
   meetings              CrmMeeting[]     @relation("CrmMeetingScheduler")
   approvedMeetings      CrmMeeting[]     @relation("CrmMeetingApprover")
   dailyReports          CrmDailyReport[] @relation("CrmDailyReportRep")
+  assignedColdLeads     CrmColdLead[]    @relation("CrmColdLeadAssignee")
+  coldLeadImports       CrmColdLeadImport[] @relation("CrmColdLeadImporter")
+  coldLeadDispositions  CrmColdLeadDisposition[] @relation("CrmColdLeadDispositioner")
   activityLogs          CrmActivityLog[]
   notes                 CrmNote[]
 
@@ -2499,6 +2630,9 @@ model CrmOpportunity {
   // Documents
   proposalUrl String?
   contractUrl String?
+
+  // Cold-lead → opportunity link, set when a rep converts an imported lead.
+  convertedFromColdLead CrmColdLead? @relation("CrmColdLeadConverted")
 
   // Notes & Context
   description      String?

@@ -3,6 +3,38 @@ import type { SessionUser } from "@/types";
 import { scopeOpportunityByRole } from "@/lib/crm/rbac";
 import { computeHygieneScore, getOverdueFollowups, getAgingProposals, getStaleLeads, getMissingNextActions } from "@/lib/crm/business/alerts";
 
+/**
+ * Sales targets are sourced from `CrmUserProfile.monthlyTargetEGP` per rep.
+ * Used as a leaderboard floor and to drive the forecast page. Previously the
+ * forecast summed targets from rows in the leaderboard, which was built FROM
+ * opportunities — so a rep with zero opps (or a manager whose team hadn't
+ * logged any opps yet) saw `Target: 0`. Pull from the rep list directly so
+ * the number reflects what was actually set in CRM admin.
+ */
+const DEFAULT_TARGET_EGP = 50000;
+
+function repTargetList(session: SessionUser) {
+  switch (session.role) {
+    case "REP":
+      return { id: session.id };
+    case "MANAGER":
+      return {
+        OR: [{ id: session.id }, { managerId: session.id }],
+        active: true,
+      };
+    case "ASSISTANT":
+      return session.entityId
+        ? { entityId: session.entityId, active: true }
+        : { id: "__none__" }; // assistants don't carry team-target context
+    case "ACCOUNT_MGR":
+      return { id: session.id };
+    case "ADMIN":
+      return { active: true };
+    default:
+      return { id: session.id };
+  }
+}
+
 export async function getGroupDashboardData(
   session: SessionUser,
   filters?: { entityId?: string }
@@ -40,6 +72,18 @@ export async function getGroupDashboardData(
       },
     }),
   ]);
+
+  // Team target: sum of monthlyTargetEGP across the reps the caller is
+  // accountable for. Falls back to DEFAULT_TARGET_EGP per rep where the admin
+  // hasn't filled the field in yet so the gap math stays meaningful.
+  const repTargets = await db.crmUserProfile.findMany({
+    where: repTargetList(session),
+    select: { id: true, monthlyTargetEGP: true },
+  });
+  const teamTarget = repTargets.reduce(
+    (sum, r) => sum + (Number(r.monthlyTargetEGP) || DEFAULT_TARGET_EGP),
+    0
+  );
 
   // Aggregate KPIs
   const weightedPipeline = openOpps.reduce((sum, o) => sum + Number(o.weightedValueEGP), 0);
@@ -159,6 +203,7 @@ export async function getGroupDashboardData(
       weightedPipeline: Math.round(weightedPipeline),
       wonCountMTD: wonOpps.length,
       wonValueMTD: Math.round(wonValueMTD),
+      teamTarget: Math.round(teamTarget),
     },
     leaderboard,
     topHotOpportunities: topHot,

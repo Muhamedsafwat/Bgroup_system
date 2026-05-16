@@ -9,12 +9,18 @@ import {
   updateUserSchema,
   createEntitySchema,
   updateEntitySchema,
+  createFxRateSchema,
   updateFxRateSchema,
+  createStageConfigSchema,
   updateStageConfigSchema,
   createLossReasonSchema,
   updateLossReasonSchema,
   createLeadSourceSchema,
   updateLeadSourceSchema,
+  createCustomerNeedSchema,
+  updateCustomerNeedSchema,
+  createMeetingTypeConfigSchema,
+  updateMeetingTypeConfigSchema,
 } from "@/lib/crm/validations/admin";
 
 async function requireAdmin() {
@@ -234,6 +240,52 @@ export async function updateFxRate(currency: string, rate: number) {
   return JSON.parse(JSON.stringify(fxRate));
 }
 
+/**
+ * Create an FX rate row for a currency we haven't tracked before. The CrmFxRate
+ * table is keyed by currency, so duplicates would 500 with a confusing Prisma
+ * error — pre-check and surface a friendly conflict message instead.
+ */
+export async function createFxRate(input: { currency: string; rate: number }) {
+  await requireAdmin();
+  const parsed = createFxRateSchema.parse(input);
+  const existing = await db.crmFxRate.findUnique({
+    where: { currency: parsed.currency as never },
+  });
+  if (existing) {
+    throw new Error(`${parsed.currency} rate already exists — edit it instead`);
+  }
+  const fxRate = await db.crmFxRate.create({
+    data: { currency: parsed.currency as never, toEGP: parsed.rate },
+  });
+  revalidatePath("/crm/admin/fx-rates");
+  return JSON.parse(JSON.stringify(fxRate));
+}
+
+/**
+ * Hard-delete an FX rate. Refuses if any opportunity still references the
+ * currency (FX rates are looked up by currency code at write time, not via
+ * FK — but historical opps reference the currency on their rows). Pre-checking
+ * gives the admin a clear "deactivate by setting to 0 or migrate first" cue
+ * instead of a silently broken financial calculation later.
+ */
+export async function deleteFxRate(currency: string) {
+  await requireAdmin();
+  if (currency === "EGP") {
+    throw new Error("EGP is the base currency and cannot be deleted");
+  }
+  const inUse = await db.crmOpportunity.count({
+    where: { currency: currency as never, deletedAt: null },
+  });
+  if (inUse > 0) {
+    throw new Error(
+      `Cannot delete: ${inUse} open opportunity(ies) priced in ${currency}. Convert them first.`
+    );
+  }
+  await db.crmFxRate.delete({ where: { currency: currency as never } });
+  revalidatePath("/crm/admin/fx-rates");
+  return { ok: true };
+}
+
 // ========== STAGE CONFIGS ==========
 
 export async function getStageConfigs() {
@@ -266,37 +318,28 @@ export async function updateStageConfig(id: string, data: Record<string, unknown
  * isn't surfaced until a CrmStageConfig row marks it active and gives it a
  * probability + display order.
  */
-export async function createStageConfig(input: {
-  stage: string;
-  entityId?: string | null;
-  probabilityPct: number;
-  slaHours?: number | null;
-  displayOrder: number;
-  customLabelEn?: string | null;
-  customLabelAr?: string | null;
-}) {
+export async function createStageConfig(input: Record<string, unknown>) {
   await requireAdmin();
+  const parsed = createStageConfigSchema.parse(input);
   // Reject if a config for this (entity, stage) pair already exists — the
-  // unique constraint would 500 with a confusing message otherwise. Use
-  // findFirst because the compound unique key requires entityId be string,
-  // not null, in the Prisma generated type.
+  // unique constraint would 500 with a confusing message otherwise.
   const dupe = await db.crmStageConfig.findFirst({
     where: {
-      entityId: input.entityId ?? null,
-      stage: input.stage as never,
+      entityId: parsed.entityId ?? null,
+      stage: parsed.stage,
     },
   });
   if (dupe) throw new Error("This stage is already configured for this entity");
 
   const config = await db.crmStageConfig.create({
     data: {
-      stage: input.stage as never,
-      entityId: input.entityId ?? null,
-      probabilityPct: input.probabilityPct,
-      slaHours: input.slaHours ?? null,
-      displayOrder: input.displayOrder,
-      customLabelEn: input.customLabelEn ?? null,
-      customLabelAr: input.customLabelAr ?? null,
+      stage: parsed.stage,
+      entityId: parsed.entityId ?? null,
+      probabilityPct: parsed.probabilityPct,
+      slaHours: parsed.slaHours ?? null,
+      displayOrder: parsed.displayOrder,
+      customLabelEn: parsed.customLabelEn ?? null,
+      customLabelAr: parsed.customLabelAr ?? null,
       isActive: true,
     },
   });
@@ -374,6 +417,25 @@ export async function updateLossReason(id: string, data: Record<string, unknown>
   return JSON.parse(JSON.stringify(reason));
 }
 
+/**
+ * Hard-delete a loss reason. Refuses if any historical opportunity still
+ * references it — those `LOST` rows carry the reason's id on `lossReasonId`
+ * and deleting would break the post-mortem reporting on why deals were lost.
+ * Admins can deactivate (active:false) to hide from the dropdown instead.
+ */
+export async function deleteLossReason(id: string) {
+  await requireAdmin();
+  const refs = await db.crmOpportunity.count({ where: { lossReasonId: id } });
+  if (refs > 0) {
+    throw new Error(
+      `Cannot delete: ${refs} lost opportunity(ies) still cite this reason. Deactivate it instead.`
+    );
+  }
+  await db.crmLossReason.delete({ where: { id } });
+  revalidatePath("/crm/admin/loss-reasons");
+  return { ok: true };
+}
+
 // ========== LEAD SOURCES ==========
 
 export async function getLeadSources() {
@@ -415,6 +477,26 @@ export async function updateLeadSource(id: string, data: Record<string, unknown>
   return JSON.parse(JSON.stringify(source));
 }
 
+/**
+ * Hard-delete a lead source. Refuses if any opportunity still references the
+ * code — historical leadSource is stored as a free-text code on the opp row.
+ * Admins can deactivate to hide from the dropdown without losing history.
+ */
+export async function deleteLeadSource(id: string) {
+  await requireAdmin();
+  const source = await db.crmLeadSource.findUnique({ where: { id } });
+  if (!source) throw new Error("Lead source not found");
+  const refs = await db.crmOpportunity.count({ where: { leadSource: source.code } });
+  if (refs > 0) {
+    throw new Error(
+      `Cannot delete: ${refs} opportunity(ies) cite this lead source. Deactivate it instead.`
+    );
+  }
+  await db.crmLeadSource.delete({ where: { id } });
+  revalidatePath("/crm/admin/lead-sources");
+  return { ok: true };
+}
+
 // ========== CUSTOMER NEEDS ==========
 
 export async function listCustomerNeeds() {
@@ -425,23 +507,17 @@ export async function listCustomerNeeds() {
   return JSON.parse(JSON.stringify(rows));
 }
 
-export async function createCustomerNeed(input: {
-  labelEn: string;
-  labelAr?: string;
-  category?: string;
-  sortOrder?: number;
-}) {
+export async function createCustomerNeed(input: Record<string, unknown>) {
   await requireAdmin();
-  const label = input.labelEn.trim();
-  if (!label) throw new Error("Label is required");
-  const existing = await db.crmCustomerNeed.findUnique({ where: { labelEn: label } });
+  const parsed = createCustomerNeedSchema.parse(input);
+  const existing = await db.crmCustomerNeed.findUnique({ where: { labelEn: parsed.labelEn } });
   if (existing) throw new Error("A customer need with that label already exists");
   const row = await db.crmCustomerNeed.create({
     data: {
-      labelEn: label,
-      labelAr: input.labelAr?.trim() ?? "",
-      category: input.category?.trim() ?? "",
-      sortOrder: input.sortOrder ?? 0,
+      labelEn: parsed.labelEn,
+      labelAr: parsed.labelAr ?? "",
+      category: parsed.category ?? "",
+      sortOrder: parsed.sortOrder ?? 0,
       active: true,
     },
   });
@@ -449,23 +525,36 @@ export async function createCustomerNeed(input: {
   return JSON.parse(JSON.stringify(row));
 }
 
-export async function updateCustomerNeed(
-  id: string,
-  input: { labelEn?: string; labelAr?: string; category?: string; sortOrder?: number; active?: boolean }
-) {
+export async function updateCustomerNeed(id: string, input: Record<string, unknown>) {
   await requireAdmin();
+  const parsed = updateCustomerNeedSchema.parse(input);
   const row = await db.crmCustomerNeed.update({
     where: { id },
-    data: {
-      ...(input.labelEn !== undefined && { labelEn: input.labelEn.trim() }),
-      ...(input.labelAr !== undefined && { labelAr: input.labelAr.trim() }),
-      ...(input.category !== undefined && { category: input.category.trim() }),
-      ...(input.sortOrder !== undefined && { sortOrder: input.sortOrder }),
-      ...(input.active !== undefined && { active: input.active }),
-    },
+    data: parsed,
   });
   revalidatePath("/crm/admin/customer-needs");
   return JSON.parse(JSON.stringify(row));
+}
+
+/**
+ * Hard-delete a customer need. Refuses if any meeting still references the
+ * label — `CrmMeeting.customerNeed` is a denormalised label string, so a
+ * deletion would orphan past meetings. Deactivate instead to hide from the
+ * "Book meeting" dropdown while preserving history.
+ */
+export async function deleteCustomerNeed(id: string) {
+  await requireAdmin();
+  const need = await db.crmCustomerNeed.findUnique({ where: { id } });
+  if (!need) throw new Error("Customer need not found");
+  const refs = await db.crmMeeting.count({ where: { customerNeed: need.labelEn } });
+  if (refs > 0) {
+    throw new Error(
+      `Cannot delete: ${refs} meeting(s) cite "${need.labelEn}". Deactivate it instead.`
+    );
+  }
+  await db.crmCustomerNeed.delete({ where: { id } });
+  revalidatePath("/crm/admin/customer-needs");
+  return { ok: true };
 }
 
 // ========== MEETING TYPE CONFIGS ==========
@@ -478,20 +567,62 @@ export async function listMeetingTypeConfigs() {
   return JSON.parse(JSON.stringify(rows));
 }
 
-export async function updateMeetingTypeConfig(
-  id: string,
-  input: { labelEn?: string; labelAr?: string; active?: boolean; sortOrder?: number }
-) {
+export async function updateMeetingTypeConfig(id: string, input: Record<string, unknown>) {
   await requireAdmin();
+  const parsed = updateMeetingTypeConfigSchema.parse(input);
   const row = await db.crmMeetingTypeConfig.update({
     where: { id },
+    data: parsed,
+  });
+  revalidatePath("/crm/admin/meeting-types");
+  return JSON.parse(JSON.stringify(row));
+}
+
+/**
+ * Create a new meeting type. Code must be UPPER_SNAKE so it pairs cleanly
+ * with the `CrmMeetingType` enum values used as `meetingType` on CrmMeeting.
+ * Note: the enum itself can't be extended at runtime — these custom codes
+ * are stored as the `code` column and validated against the enum at write
+ * time on the meeting create endpoint. Adding a brand-new code here without
+ * also extending the enum will let it appear in the dropdown but reject on
+ * save; that's why we keep this admin-only and pre-warn in the UI.
+ */
+export async function createMeetingTypeConfig(input: Record<string, unknown>) {
+  await requireAdmin();
+  const parsed = createMeetingTypeConfigSchema.parse(input);
+  const existing = await db.crmMeetingTypeConfig.findUnique({ where: { code: parsed.code } });
+  if (existing) throw new Error(`Code "${parsed.code}" already exists`);
+  const row = await db.crmMeetingTypeConfig.create({
     data: {
-      ...(input.labelEn !== undefined && { labelEn: input.labelEn.trim() }),
-      ...(input.labelAr !== undefined && { labelAr: input.labelAr.trim() }),
-      ...(input.active !== undefined && { active: input.active }),
-      ...(input.sortOrder !== undefined && { sortOrder: input.sortOrder }),
+      code: parsed.code,
+      labelEn: parsed.labelEn,
+      labelAr: parsed.labelAr ?? "",
+      sortOrder: parsed.sortOrder ?? 0,
+      active: true,
     },
   });
   revalidatePath("/crm/admin/meeting-types");
   return JSON.parse(JSON.stringify(row));
+}
+
+/**
+ * Hard-delete a meeting type. Refuses if any meeting still has this type —
+ * deactivate via update({active:false}) to hide from the booking dropdown
+ * without dropping the historical row.
+ */
+export async function deleteMeetingTypeConfig(id: string) {
+  await requireAdmin();
+  const cfg = await db.crmMeetingTypeConfig.findUnique({ where: { id } });
+  if (!cfg) throw new Error("Meeting type not found");
+  const refs = await db.crmMeeting.count({
+    where: { meetingType: cfg.code as never },
+  });
+  if (refs > 0) {
+    throw new Error(
+      `Cannot delete: ${refs} meeting(s) use this type. Deactivate it instead.`
+    );
+  }
+  await db.crmMeetingTypeConfig.delete({ where: { id } });
+  revalidatePath("/crm/admin/meeting-types");
+  return { ok: true };
 }

@@ -73,11 +73,11 @@ export function ContactForm({ companyId, initialData }: ContactFormProps) {
           const { companyId: _, ...updateData } = data;
           await updateContactAction(initialData.id, updateData);
           toast.success(t.activityLog.updated);
-          router.push(`/contacts/${initialData.id}`);
+          router.push(`/crm/contacts/${initialData.id}`);
         } else {
           const contact = await createContactAction(data);
           toast.success(t.activityLog.created);
-          router.push(`/contacts/${contact.id}`);
+          router.push(`/crm/contacts/${contact.id}`);
         }
       } catch (error) {
         toast.error(

@@ -198,11 +198,16 @@ export async function POST(req: Request) {
   try {
     const result = await db.$transaction(async (tx) => {
       const hashed = await bcrypt.hash(data.password, 12);
+      // Every admin-created account starts with the admin-set password
+      // marked as temporary — the user is forced to replace it on first
+      // login. Skipping this means the plaintext shared via email/chat
+      // could be reused by anyone who intercepts it.
       const user = await tx.user.create({
         data: {
           email: data.email.toLowerCase(),
           name: data.name,
           password: hashed,
+          mustChangePassword: true,
           hrAccess: !!data.hr,
           crmAccess: !!data.crm,
           partnersAccess: !!data.partner,

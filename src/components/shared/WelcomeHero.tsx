@@ -24,6 +24,7 @@ import {
 } from "lucide-react";
 import type { ComponentType } from "react";
 import { firstNameOf as _firstNameOf, timeOfDay as _timeOfDay, type Tone } from "@/lib/welcome";
+import { WelcomeControls } from "./WelcomeControls";
 
 /**
  * Server components can't serialize function references across the RSC
@@ -186,7 +187,8 @@ export function WelcomeHero({
   const greet = greeting ?? GREETINGS[timeOfDay()];
 
   return (
-    <div className={compact ? "w-full" : "min-h-[60vh] flex items-center justify-center py-6"}>
+    <div className={compact ? "w-full" : "relative min-h-[60vh] flex items-center justify-center py-6"}>
+      {!compact && <WelcomeControls />}
       <div className="w-full max-w-4xl mx-auto">
         {/* Hero — brand mark + greeting + role pill */}
         <div className={`flex flex-col items-center text-center ${compact ? "mb-5" : "mb-8"}`}>

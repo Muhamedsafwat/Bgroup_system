@@ -68,7 +68,13 @@ export async function POST(
   }
 
   const hash = await bcrypt.hash(parsed.data.newPassword, 10);
-  await db.user.update({ where: { id: target.id }, data: { password: hash } });
+  // Force the user to replace this admin-set password on their next login —
+  // the admin knows the plaintext temporarily, so it has to be rotated by
+  // the actual user before they can do anything else.
+  await db.user.update({
+    where: { id: target.id },
+    data: { password: hash, mustChangePassword: true },
+  });
 
   // Audit trail — admins reading audit-logs/page.tsx can see every reset.
   // HrAuditLog.userId is a FK to HrUserProfile.userId (User id), so we pass
