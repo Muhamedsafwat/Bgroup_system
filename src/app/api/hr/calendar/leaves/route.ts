@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
 import { db } from "@/lib/db";
 import { z } from "zod";
+import { describeZodError } from "@/lib/zod-errors";
 
 const querySchema = z.object({
   from: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
@@ -41,7 +42,7 @@ export async function GET(req: Request) {
     departmentId: url.searchParams.get("departmentId") ?? undefined,
   });
   if (!parsed.success) {
-    return NextResponse.json({ error: parsed.error.issues[0].message }, { status: 400 });
+    { const __z = describeZodError(parsed.error); return NextResponse.json({ error: __z.message, fieldErrors: __z.fieldErrors }, { status: 400 }); }
   }
   const { from, to, companyId, departmentId } = parsed.data;
 

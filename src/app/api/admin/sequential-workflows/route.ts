@@ -4,6 +4,7 @@ import { z } from "zod";
 import { auth } from "@/lib/auth";
 import { db } from "@/lib/db";
 import { uniqueViolationMessage } from "@/lib/prisma-errors";
+import { describeZodError } from "@/lib/zod-errors";
 
 const stepSchema = z.object({
   position: z.number().int().min(0).max(100).optional(),
@@ -72,7 +73,7 @@ export async function POST(req: Request) {
   const body = await req.json();
   const parsed = createSchema.safeParse(body);
   if (!parsed.success) {
-    return NextResponse.json({ error: parsed.error.issues[0].message }, { status: 400 });
+    { const __z = describeZodError(parsed.error); return NextResponse.json({ error: __z.message, fieldErrors: __z.fieldErrors }, { status: 400 }); }
   }
   const data = parsed.data;
 

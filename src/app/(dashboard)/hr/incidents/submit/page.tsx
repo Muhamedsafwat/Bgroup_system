@@ -1,5 +1,7 @@
 'use client'
 
+import { describeError } from "@/lib/zod-errors";
+
 import React, { useState, useRef, useEffect } from 'react'
 import { useQuery, useMutation } from '@tanstack/react-query'
 import { Check, ChevronRight, User, AlertTriangle, FileText, Send } from 'lucide-react'
@@ -169,7 +171,7 @@ export default function SubmitIncidentPage() {
       setSubmittedId(data.id)
       toast.success('Incident submitted successfully')
     },
-    onError: () => toast.error('Failed to submit incident'),
+    onError: (__err: unknown) => toast.error(describeError(__err) || 'Failed to submit incident'),
   })
 
   useEffect(() => {

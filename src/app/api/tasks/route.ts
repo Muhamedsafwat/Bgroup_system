@@ -5,6 +5,7 @@ import { db } from "@/lib/db";
 import { Prisma, TaskStatus, TaskPriority, TaskType, TaskEntityType } from "@/generated/prisma";
 import { moduleForEntityType } from "@/lib/tasks/helpers";
 import { recurrenceSchema } from "@/lib/tasks/recurrence";
+import { describeZodError } from "@/lib/zod-errors";
 
 const createSchema = z.object({
   title: z.string().trim().min(1).max(200),
@@ -147,7 +148,7 @@ export async function POST(req: Request) {
   const body = await req.json();
   const parsed = createSchema.safeParse(body);
   if (!parsed.success) {
-    return NextResponse.json({ error: parsed.error.issues[0].message }, { status: 400 });
+    { const __z = describeZodError(parsed.error); return NextResponse.json({ error: __z.message, fieldErrors: __z.fieldErrors }, { status: 400 }); }
   }
   const data = parsed.data;
 

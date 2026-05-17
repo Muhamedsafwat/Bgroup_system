@@ -1,5 +1,7 @@
 'use client'
 
+import { describeError } from "@/lib/zod-errors";
+
 import React, { useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { Pencil, Check, X, Camera, Send, Loader2 } from 'lucide-react'
@@ -63,7 +65,7 @@ export default function MyProfilePage() {
       setEditingField(null)
       toast({ title: 'Updated', description: 'Your profile has been updated.' })
     },
-    onError: () => toast({ title: 'Error', variant: 'destructive', description: 'Failed to update field.' }),
+    onError: (__err: unknown) => toast({ title: 'Error', variant: 'destructive', description: describeError(__err) || 'Failed to update field.' }),
   })
 
   const uploadPhotoMutation = useMutation({
@@ -76,7 +78,7 @@ export default function MyProfilePage() {
       queryClient.invalidateQueries({ queryKey: ['my-employee-profile'] })
       toast({ title: 'Photo updated' })
     },
-    onError: () => toast({ title: 'Error', variant: 'destructive', description: 'Failed to upload photo.' }),
+    onError: (__err: unknown) => toast({ title: 'Error', variant: 'destructive', description: describeError(__err) || 'Failed to upload photo.' }),
   })
 
   const updateRequestMutation = useMutation({
@@ -89,7 +91,7 @@ export default function MyProfilePage() {
       setUpdateRequestReason('')
       toast({ title: 'Request submitted', description: 'HR will review your update request.' })
     },
-    onError: () => toast({ title: 'Error', variant: 'destructive', description: 'Failed to submit request.' }),
+    onError: (__err: unknown) => toast({ title: 'Error', variant: 'destructive', description: describeError(__err) || 'Failed to submit request.' }),
   })
 
   function handlePhotoClick() {

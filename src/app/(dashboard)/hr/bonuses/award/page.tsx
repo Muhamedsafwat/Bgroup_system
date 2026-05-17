@@ -1,5 +1,7 @@
 'use client'
 
+import { describeError } from "@/lib/zod-errors";
+
 import React, { useState, useRef, useEffect } from 'react'
 import { useQuery, useMutation } from '@tanstack/react-query'
 import { Check, ChevronRight, User, Gift, FileText, Send } from 'lucide-react'
@@ -154,7 +156,7 @@ export default function AwardBonusPage() {
       setSubmittedId(data.id)
       toast.success('Bonus awarded successfully')
     },
-    onError: () => toast.error('Failed to award bonus'),
+    onError: (__err: unknown) => toast.error(describeError(__err) || 'Failed to award bonus'),
   })
 
   useEffect(() => {

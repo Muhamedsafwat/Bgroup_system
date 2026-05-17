@@ -58,7 +58,8 @@ type Opportunity = {
   nextActionDate: string | null;
   expectedCloseDate: string | null;
   updatedAt: string;
-  company: { id: string; nameEn: string; nameAr: string | null };
+  customerCompanyName: string | null;
+  company: { id: string; nameEn: string; nameAr: string | null } | null;
   owner: { id: string; fullName: string; fullNameAr: string | null };
   entity: { id: string; code: string; nameEn: string; nameAr: string; color: string };
 };
@@ -302,7 +303,7 @@ export function OpportunityListClient({
                   )}
                   <TableCell>
                     <div>
-                      <p className="font-medium">{opp.company.nameEn}</p>
+                      <p className="font-medium">{opp.customerCompanyName ?? opp.company?.nameEn ?? "—"}</p>
                       <p className="text-xs text-muted-foreground ltr-nums">{opp.code}</p>
                     </div>
                   </TableCell>

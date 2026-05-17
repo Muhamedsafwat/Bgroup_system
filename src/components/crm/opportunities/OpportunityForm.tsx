@@ -42,7 +42,11 @@ type Product = { id: string; code: string; nameEn: string; nameAr: string; entit
  */
 type OpportunityFormInitial = {
   id: string;
-  companyId: string;
+  /// Display-time customer name. We seed the form's free-text input with
+  /// this. New opps store it directly on the row; legacy rows fall back
+  /// to the linked CrmCompany.nameEn via the loader.
+  customerCompanyName?: string | null;
+  companyId?: string | null;
   primaryContactId?: string | null;
   entityId: string;
   title?: string | null;
@@ -91,7 +95,8 @@ export function OpportunityForm({
     resolver: zodResolver(createOpportunitySchema),
     defaultValues: initial
       ? {
-          companyId: initial.companyId,
+          customerCompanyName: initial.customerCompanyName ?? "",
+          companyId: initial.companyId ?? undefined,
           primaryContactId: initial.primaryContactId ?? undefined,
           entityId: initial.entityId,
           title: initial.title ?? undefined,
@@ -111,6 +116,7 @@ export function OpportunityForm({
           productIds: initial.productIds ?? [],
         }
       : {
+          customerCompanyName: "",
           entityId: userEntityId || "",
           currency: "EGP",
           priority: "COLD",
@@ -140,49 +146,8 @@ export function OpportunityForm({
   }
 
   const selectedEntityId = watch("entityId");
-  const selectedCompanyId = watch("companyId");
   const selectedCurrency = watch("currency");
   const estimatedValue = watch("estimatedValue");
-
-  // Local extension of the company list so the inline-create flow can append
-  // a new company without a full refetch.
-  const [companyOptions, setCompanyOptions] = useState<Company[]>(companies);
-  const [showQuickAdd, setShowQuickAdd] = useState(false);
-  const [quickAddName, setQuickAddName] = useState("");
-  const [quickAddNameAr, setQuickAddNameAr] = useState("");
-  const [creatingCompany, setCreatingCompany] = useState(false);
-
-  async function handleQuickCreateCompany() {
-    if (!quickAddName.trim()) {
-      toast.error(locale === "ar" ? "اسم الشركة مطلوب" : "Company name required");
-      return;
-    }
-    setCreatingCompany(true);
-    try {
-      const created = await createCompanyAction({
-        nameEn: quickAddName.trim(),
-        nameAr: quickAddNameAr.trim() || null,
-        // Minimal payload — the user can fill the rest later from the
-        // company detail page. createCompany will default other fields.
-        entityId: selectedEntityId || (companies[0]?.id ?? entities[0]?.id ?? ""),
-      } as never);
-      const newCo: Company = {
-        id: (created as { id: string }).id,
-        nameEn: quickAddName.trim(),
-        nameAr: quickAddNameAr.trim() || null,
-      };
-      setCompanyOptions([newCo, ...companyOptions]);
-      setValue("companyId", newCo.id);
-      setShowQuickAdd(false);
-      setQuickAddName("");
-      setQuickAddNameAr("");
-      toast.success(locale === "ar" ? "تم إنشاء الشركة" : "Company created");
-    } catch (err) {
-      toast.error(err instanceof Error ? err.message : "Failed to create company");
-    } finally {
-      setCreatingCompany(false);
-    }
-  }
 
   async function onSubmit(data: CreateOpportunityInput) {
     const payload = { ...data, productIds: selectedProductIds };
@@ -202,7 +167,22 @@ export function OpportunityForm({
         router.push(`/crm/opportunities/${opp.id}`);
       }
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : "Save failed");
+      // Server-action throws bubble up as Error objects with the message
+      // we threw on the server (e.g. "Company not found..."). In production
+      // builds Next.js sometimes shows a generic Server-Components-render
+      // error overlay BEFORE our toast renders — surface it loudly so the
+      // user knows what to fix.
+      const msg =
+        err instanceof Error
+          ? err.message
+          : typeof err === "string"
+            ? err
+            : "Save failed — try again or contact support";
+      toast.error(msg, { duration: 8000 });
+      // Don't propagate. Without this, Next.js will catch the re-thrown
+      // error and render the global error overlay on top of our toast.
+      // The user has the toast — that's enough actionable signal.
+      console.warn("[OpportunityForm] save failed:", err);
     }
   }
 
@@ -214,105 +194,34 @@ export function OpportunityForm({
           <CardTitle className="text-lg">{t.nav.companies}</CardTitle>
         </CardHeader>
         <CardContent className="space-y-4">
+          {/* Customer company name is free text. There's no curated directory
+              of customer companies — the rep types whatever the prospect
+              calls themselves. Managers + admin can group/filter by this
+              column on the pipeline page, but no one navigates to a
+              "company page" for a prospect. */}
           <div className="space-y-2">
-            <div className="flex items-center justify-between">
-              <Label>{t.forms.selectCompany} *</Label>
-              {!showQuickAdd && (
-                <button
-                  type="button"
-                  onClick={() => setShowQuickAdd(true)}
-                  className="text-xs text-primary hover:underline inline-flex items-center gap-1"
-                >
-                  <Plus className="h-3 w-3" />
-                  {locale === "ar" ? "إضافة شركة جديدة" : "New company"}
-                </button>
-              )}
-            </div>
-            <Select
-              value={selectedCompanyId}
-              onValueChange={(v: any) => setValue("companyId", v)}
-            >
-              <SelectTrigger>
-                <SelectValue placeholder={t.forms.selectCompany}>
-                  {(() => {
-                    const c = companyOptions.find((x) => x.id === selectedCompanyId);
-                    return c
-                      ? locale === "ar" && c.nameAr
-                        ? c.nameAr
-                        : c.nameEn
-                      : t.forms.selectCompany;
-                  })()}
-                </SelectValue>
-              </SelectTrigger>
-              <SelectContent>
-                {companyOptions.map((c) => (
-                  <SelectItem key={c.id} value={c.id}>
-                    {locale === "ar" && c.nameAr ? c.nameAr : c.nameEn}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-            {errors.companyId && (
-              <p className="text-sm text-destructive mt-1">{errors.companyId.message}</p>
-            )}
-
-            {/* Inline "quick add" — saves a stub Company without leaving the
-                opportunity form, then auto-selects it. The user can fill in
-                the rest of the company profile from /crm/companies later. */}
-            {showQuickAdd && (
-              <div className="rounded-lg border border-dashed border-primary/40 bg-primary/5 p-3 space-y-2">
-                <div className="flex items-center justify-between">
-                  <p className="text-xs font-semibold uppercase tracking-wider text-primary">
-                    {locale === "ar" ? "إضافة شركة سريعة" : "Quick-add company"}
-                  </p>
-                  <button
-                    type="button"
-                    onClick={() => setShowQuickAdd(false)}
-                    className="text-muted-foreground hover:text-foreground"
-                  >
-                    <X className="h-4 w-4" />
-                  </button>
-                </div>
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-                  <Input
-                    placeholder={locale === "ar" ? "الاسم (إنجليزي)" : "Name (English)"}
-                    value={quickAddName}
-                    onChange={(e) => setQuickAddName(e.target.value)}
-                    autoFocus
-                  />
-                  <Input
-                    placeholder={locale === "ar" ? "الاسم (عربي)" : "Name (Arabic)"}
-                    value={quickAddNameAr}
-                    onChange={(e) => setQuickAddNameAr(e.target.value)}
-                    dir="rtl"
-                  />
-                </div>
-                <div className="flex justify-end gap-2">
-                  <Button
-                    type="button"
-                    size="sm"
-                    variant="outline"
-                    onClick={() => setShowQuickAdd(false)}
-                    disabled={creatingCompany}
-                  >
-                    {t.common.cancel}
-                  </Button>
-                  <Button
-                    type="button"
-                    size="sm"
-                    onClick={handleQuickCreateCompany}
-                    disabled={creatingCompany || !quickAddName.trim()}
-                  >
-                    {creatingCompany
-                      ? locale === "ar"
-                        ? "جارٍ الإنشاء..."
-                        : "Creating..."
-                      : locale === "ar"
-                        ? "إنشاء واختيار"
-                        : "Create & select"}
-                  </Button>
-                </div>
-              </div>
+            <Label htmlFor="customerCompanyName">
+              {locale === "ar" ? "اسم شركة العميل" : "Customer company name"} *
+            </Label>
+            <Input
+              id="customerCompanyName"
+              {...register("customerCompanyName")}
+              placeholder={
+                locale === "ar"
+                  ? "مثال: شركة الأمل للتجارة"
+                  : "e.g. Acme Industries"
+              }
+              autoFocus={!isEdit}
+            />
+            <p className="text-xs text-muted-foreground">
+              {locale === "ar"
+                ? "اكتب اسم الشركة كما يسمونها أنفسهم. لا حاجة لإنشائها في النظام."
+                : "Type the company name as the prospect calls themselves. No directory record needed."}
+            </p>
+            {errors.customerCompanyName && (
+              <p className="text-sm text-destructive">
+                {errors.customerCompanyName.message}
+              </p>
             )}
           </div>
         </CardContent>

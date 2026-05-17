@@ -1,5 +1,7 @@
 'use client'
 
+import { describeError } from "@/lib/zod-errors";
+
 import React, { useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { Plus, Pencil, Trash2, Building2 } from 'lucide-react'
@@ -68,7 +70,7 @@ export default function CompaniesSettingsPage() {
       setDialogOpen(false)
       toast({ title: 'Company created', description: `${form.name_en} has been added.` })
     },
-    onError: () => toast({ title: 'Error', description: 'Failed to create company.', variant: 'destructive' }),
+    onError: (__err: unknown) => toast({ title: 'Error', description: describeError(__err) || 'Failed to create company.', variant: 'destructive' }),
   })
 
   const updateMutation = useMutation({
@@ -81,7 +83,7 @@ export default function CompaniesSettingsPage() {
       setDialogOpen(false)
       toast({ title: 'Company updated', description: `${form.name_en} has been updated.` })
     },
-    onError: () => toast({ title: 'Error', description: 'Failed to update company.', variant: 'destructive' }),
+    onError: (__err: unknown) => toast({ title: 'Error', description: describeError(__err) || 'Failed to update company.', variant: 'destructive' }),
   })
 
   const deleteMutation = useMutation({
@@ -91,7 +93,7 @@ export default function CompaniesSettingsPage() {
       setDeleteTarget(null)
       toast({ title: 'Company deleted' })
     },
-    onError: () => toast({ title: 'Error', description: 'Failed to delete company.', variant: 'destructive' }),
+    onError: (__err: unknown) => toast({ title: 'Error', description: describeError(__err) || 'Failed to delete company.', variant: 'destructive' }),
   })
 
   const toggleActiveMutation = useMutation({

@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { db } from "@/lib/db";
 import { z } from "zod";
 import { requireAuthSession } from "@/lib/admin-auth";
+import { describeZodError } from "@/lib/zod-errors";
 
 type FieldDef = {
   name: string;
@@ -76,11 +77,11 @@ export async function POST(
   const body = await req.json();
   const parsedData = dataSchema.safeParse(body.data ?? {});
   if (!parsedData.success) {
-    return NextResponse.json({ error: parsedData.error.issues[0].message }, { status: 400 });
+    { const __z = describeZodError(parsedData.error); return NextResponse.json({ error: __z.message, fieldErrors: __z.fieldErrors }, { status: 400 }); }
   }
   const dataCheck = validator.safeParse(parsedData.data);
   if (!dataCheck.success) {
-    return NextResponse.json({ error: dataCheck.error.issues[0].message }, { status: 400 });
+    { const __z = describeZodError(dataCheck.error); return NextResponse.json({ error: __z.message, fieldErrors: __z.fieldErrors }, { status: 400 }); }
   }
 
   const record = await db.customRecord.create({

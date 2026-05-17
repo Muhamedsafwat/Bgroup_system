@@ -4,6 +4,7 @@ import { auth } from "@/lib/auth";
 import { db } from "@/lib/db";
 import { computeRecycleEligibility } from "@/lib/crm/cold-leads";
 import type { CrmColdLeadStatus } from "@/generated/prisma";
+import { describeZodError } from "@/lib/zod-errors";
 
 /**
  * POST /api/crm/cold-leads/[id]/disposition
@@ -35,7 +36,7 @@ export async function POST(
   const body = await request.json().catch(() => null);
   const parsed = schema.safeParse(body);
   if (!parsed.success) {
-    return NextResponse.json({ error: parsed.error.issues[0].message }, { status: 422 });
+    { const __z = describeZodError(parsed.error); return NextResponse.json({ error: __z.message, fieldErrors: __z.fieldErrors }, { status: 422 }); }
   }
 
   const lead = await db.crmColdLead.findUnique({

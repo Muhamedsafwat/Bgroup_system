@@ -47,7 +47,9 @@ type GroupData = {
     wonCount: number;
     wonValue: number;
     target: number;
-    attainment: number;
+    /// `null` means "no monthly target set on this rep" — leaderboard
+    /// shows "—" instead of a misleading 0% or absurd 500%.
+    attainment: number | null;
   }>;
   topHotOpportunities: Array<{
     id: string;
@@ -192,20 +194,29 @@ export function GroupDashboardClient({
                     <TableCell className="text-center ltr-nums">{rep.wonCount}</TableCell>
                     <TableCell className="text-end ltr-nums">{fmt(rep.wonValue)}</TableCell>
                     <TableCell className="text-end">
-                      <div className="flex items-center justify-end gap-2">
-                        <Progress value={Math.min(rep.attainment, 100)} className="h-2 w-16" />
+                      {rep.attainment == null ? (
                         <span
-                          className={`ltr-nums text-sm font-medium ${
-                            rep.attainment >= 100
-                              ? "text-green-600"
-                              : rep.attainment >= 50
-                                ? "text-amber-600"
-                                : "text-red-600"
-                          }`}
+                          className="text-xs text-muted-foreground"
+                          title="No monthly target set for this rep"
                         >
-                          {rep.attainment}%
+                          —
                         </span>
-                      </div>
+                      ) : (
+                        <div className="flex items-center justify-end gap-2">
+                          <Progress value={Math.min(rep.attainment, 100)} className="h-2 w-16" />
+                          <span
+                            className={`ltr-nums text-sm font-medium ${
+                              rep.attainment >= 100
+                                ? "text-green-600"
+                                : rep.attainment >= 50
+                                  ? "text-amber-600"
+                                  : "text-red-600"
+                            }`}
+                          >
+                            {rep.attainment}%
+                          </span>
+                        </div>
+                      )}
                     </TableCell>
                   </TableRow>
                 ))}

@@ -37,12 +37,17 @@ async function getFxRates(): Promise<FxRateMap> {
  * the seed installs per-entity configs, not globals — without this we'd
  * always return 5% and weighted-value calculations would be useless.
  */
+// Fallback probabilities used ONLY when no CrmStageConfig row exists for the
+// stage. Kept in sync with the seeded configs (admin can change them per
+// entity later). If you change the seed, change these — otherwise newly
+// created entities get a different ramp than configured entities, and the
+// forecast on the unconfigured entity will look off.
 const STAGE_DEFAULT_PROBABILITY: Record<CrmOpportunityStage, number> = {
   NEW: 5,
   CONTACTED: 15,
   DISCOVERY: 30,
-  QUALIFIED: 70,
-  TECH_MEETING: 50,
+  QUALIFIED: 50,
+  TECH_MEETING: 60,
   PROPOSAL_SENT: 75,
   NEGOTIATION: 85,
   VERBAL_YES: 95,
@@ -164,13 +169,25 @@ export async function createOpportunity(input: CreateOpportunityInput) {
   const session = await getRequiredSession();
   const parsed = createOpportunitySchema.parse(input);
 
-  // RBAC: verify user has access to the target company
-  const companyScope = scopeCompanyByRole(session);
-  const company = await db.crmCompany.findFirst({
-    where: { id: parsed.companyId, ...companyScope },
-    select: { nameEn: true },
-  });
-  if (!company) throw new Error("Company not found or access denied");
+  // Customer company is plain text on the opp. We DO NOT look up or create
+  // a CrmCompany row — that table is for the admin-curated principal
+  // directory (the vendors we sell on behalf of), not the prospect list.
+  // The legacy `companyId` FK is left null on new rows; existing rows keep
+  // their relation. If the caller did pass a companyId (admin tooling or
+  // the cold-lead conversion flow) we still honour it.
+  const customerCompanyName = parsed.customerCompanyName.trim();
+  let companyId: string | undefined = parsed.companyId || undefined;
+  if (companyId) {
+    const company = await db.crmCompany.findUnique({
+      where: { id: companyId },
+      select: { id: true },
+    });
+    if (!company) {
+      throw new Error(
+        `Linked company id is invalid — leave it blank and just type the customer's company name.`
+      );
+    }
+  }
 
   const fxRates = await getFxRates();
   const probabilityPct = await getStageProbability("NEW");
@@ -182,13 +199,14 @@ export async function createOpportunity(input: CreateOpportunityInput) {
   );
 
   const code = await generateOpportunityCode();
-  const title = parsed.title || company.nameEn || code;
+  const title = parsed.title || customerCompanyName || code;
 
   const opp = await db.$transaction(async (tx) => {
     const created = await tx.crmOpportunity.create({
       data: {
         code,
-        companyId: parsed.companyId,
+        customerCompanyName,
+        companyId: companyId ?? null,
         primaryContactId: parsed.primaryContactId || null,
         ownerId: session.id,
         entityId: parsed.entityId,

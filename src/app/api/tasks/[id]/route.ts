@@ -8,6 +8,7 @@ import { recurrenceSchema, spawnNextRecurrence } from "@/lib/tasks/recurrence";
 import { findUnblockedTasks } from "@/lib/tasks/dependencies";
 import { publish } from "@/lib/events/bus";
 import { advanceRunOnTaskDone, markRunStepStarted } from "@/lib/sequential-workflows/engine";
+import { describeZodError } from "@/lib/zod-errors";
 
 const patchSchema = z.object({
   title: z.string().trim().min(1).max(200).optional(),
@@ -77,7 +78,7 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
   const body = await req.json();
   const parsed = patchSchema.safeParse(body);
   if (!parsed.success) {
-    return NextResponse.json({ error: parsed.error.issues[0].message }, { status: 400 });
+    { const __z = describeZodError(parsed.error); return NextResponse.json({ error: __z.message, fieldErrors: __z.fieldErrors }, { status: 400 }); }
   }
   const { delegationNote, recurrence, ...rest } = parsed.data;
 

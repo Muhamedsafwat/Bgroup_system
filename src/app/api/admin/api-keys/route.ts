@@ -3,6 +3,7 @@ import { db } from "@/lib/db";
 import { z } from "zod";
 import { requirePlatformAdmin } from "@/lib/admin-auth";
 import { generateApiKey } from "@/lib/api-keys";
+import { describeZodError } from "@/lib/zod-errors";
 
 const createSchema = z.object({
   name: z.string().trim().min(1).max(80),
@@ -35,7 +36,7 @@ export async function POST(req: Request) {
   const body = await req.json();
   const parsed = createSchema.safeParse(body);
   if (!parsed.success) {
-    return NextResponse.json({ error: parsed.error.issues[0].message }, { status: 400 });
+    { const __z = describeZodError(parsed.error); return NextResponse.json({ error: __z.message, fieldErrors: __z.fieldErrors }, { status: 400 }); }
   }
   const { plaintext, hash, prefix } = generateApiKey();
   const key = await db.apiKey.create({

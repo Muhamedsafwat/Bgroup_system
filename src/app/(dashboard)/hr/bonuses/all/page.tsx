@@ -1,5 +1,7 @@
 'use client'
 
+import { describeError } from "@/lib/zod-errors";
+
 import React, { useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import api from '@/lib/hr/api'
@@ -116,7 +118,7 @@ export default function AllBonusesPage() {
       setDismissMode(false)
       setDismissReason('')
     },
-    onError: () => toast.error('Failed to dismiss bonus'),
+    onError: (__err: unknown) => toast.error(describeError(__err) || 'Failed to dismiss bonus'),
   })
 
   const companies = Array.isArray(companiesData) ? companiesData : companiesData?.results ?? []

@@ -1,5 +1,7 @@
 'use client'
 
+import { describeError } from "@/lib/zod-errors";
+
 import React, { useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import {
@@ -159,7 +161,7 @@ export default function MonthlyPayrollPage() {
     mutationFn: ({ id, notes }: { id: number; notes: string }) =>
       api.patch(`/payroll/salaries/${id}/`, { notes }),
     onSuccess: () => toast.success('Note saved'),
-    onError: () => toast.error('Failed to save note'),
+    onError: (__err: unknown) => toast.error(describeError(__err) || 'Failed to save note'),
   })
 
   const finalizeMutation = useMutation({

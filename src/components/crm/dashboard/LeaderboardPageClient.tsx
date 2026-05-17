@@ -24,7 +24,7 @@ type LeaderboardEntry = {
   wonCount: number;
   wonValue: number;
   target: number;
-  attainment: number;
+  attainment: number | null;
 };
 
 export function LeaderboardPageClient({
@@ -74,20 +74,26 @@ export function LeaderboardPageClient({
                   <TableCell className="text-end ltr-nums">{fmt(rep.wonValue)}</TableCell>
                   <TableCell className="text-end ltr-nums">{fmt(rep.target)}</TableCell>
                   <TableCell className="text-end">
-                    <div className="flex items-center justify-end gap-2">
-                      <Progress value={Math.min(rep.attainment, 100)} className="h-2 w-20" />
-                      <span
-                        className={`ltr-nums text-sm font-semibold ${
-                          rep.attainment >= 100
-                            ? "text-green-600"
-                            : rep.attainment >= 50
-                              ? "text-amber-600"
-                              : "text-red-600"
-                        }`}
-                      >
-                        {rep.attainment}%
+                    {rep.attainment == null ? (
+                      <span className="text-xs text-muted-foreground" title="No monthly target set">
+                        —
                       </span>
-                    </div>
+                    ) : (
+                      <div className="flex items-center justify-end gap-2">
+                        <Progress value={Math.min(rep.attainment, 100)} className="h-2 w-20" />
+                        <span
+                          className={`ltr-nums text-sm font-semibold ${
+                            rep.attainment >= 100
+                              ? "text-green-600"
+                              : rep.attainment >= 50
+                                ? "text-amber-600"
+                                : "text-red-600"
+                          }`}
+                        >
+                          {rep.attainment}%
+                        </span>
+                      </div>
+                    )}
                   </TableCell>
                 </TableRow>
               ))}

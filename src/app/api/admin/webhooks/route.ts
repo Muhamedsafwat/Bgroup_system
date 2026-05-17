@@ -3,6 +3,7 @@ import { db } from "@/lib/db";
 import { z } from "zod";
 import { requirePlatformAdmin } from "@/lib/admin-auth";
 import { generateWebhookSecret } from "@/lib/webhooks";
+import { describeZodError } from "@/lib/zod-errors";
 
 const createSchema = z.object({
   url: z.string().url(),
@@ -33,7 +34,7 @@ export async function POST(req: Request) {
   const body = await req.json();
   const parsed = createSchema.safeParse(body);
   if (!parsed.success) {
-    return NextResponse.json({ error: parsed.error.issues[0].message }, { status: 400 });
+    { const __z = describeZodError(parsed.error); return NextResponse.json({ error: __z.message, fieldErrors: __z.fieldErrors }, { status: 400 }); }
   }
   const secret = generateWebhookSecret();
   const endpoint = await db.webhookEndpoint.create({

@@ -4,12 +4,18 @@ import { z } from "zod";
 import { auth } from "@/lib/auth";
 import { db } from "@/lib/db";
 import { CrmMeetingStatus, CrmMeetingType, type Prisma } from "@/generated/prisma";
+import { describeZodError } from "@/lib/zod-errors";
 
 const createSchema = z.object({
   startAt: z.string().datetime(),
   durationMinutes: z.number().int().min(15).max(8 * 60),
   meetingType: z.nativeEnum(CrmMeetingType).optional(),
-  opportunityId: z.string().nullable().optional(),
+  // Every meeting must be tied to an opportunity. The assistant workflow
+  // (write minutes / update what happened after the meeting) hinges on the
+  // opportunity link — without it there's no deal to land the outcome on.
+  // The column itself stays nullable for legacy rows; the API rejects new
+  // meetings without one.
+  opportunityId: z.string().min(1, "Pick the opportunity this meeting is about"),
   companyId: z.string().nullable().optional(),
   contactName: z.string().trim().max(200).optional().nullable(),
   contactPhone: z.string().trim().max(40).optional().nullable(),
@@ -94,7 +100,7 @@ export async function POST(req: Request) {
   const body = await req.json();
   const parsed = createSchema.safeParse(body);
   if (!parsed.success) {
-    return NextResponse.json({ error: parsed.error.issues[0].message }, { status: 400 });
+    { const __z = describeZodError(parsed.error); return NextResponse.json({ error: __z.message, fieldErrors: __z.fieldErrors }, { status: 400 }); }
   }
   const data = parsed.data;
 
@@ -119,6 +125,31 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: "Sales rep not found" }, { status: 400 });
     }
     scheduledById = data.scheduledById;
+  }
+
+  // Verify the opportunity is real and (for non-managers) belongs to the
+  // caller. Managers/admins can pin a meeting to any opp in their scope.
+  // Without this check, a rep could attach their meeting to someone else's
+  // deal — the assistant would then think they're cleared to update that
+  // unrelated opp after the meeting.
+  const oppOwnerCheck = await db.crmOpportunity.findFirst({
+    where: {
+      id: data.opportunityId,
+      deletedAt: null,
+      ...(isManager ? {} : { ownerId: scheduledById }),
+    },
+    select: { id: true, companyId: true },
+  });
+  if (!oppOwnerCheck) {
+    return NextResponse.json(
+      { error: "Opportunity not found or not yours to schedule" },
+      { status: 400 }
+    );
+  }
+  // Auto-fill `companyId` from the opportunity if the caller didn't provide
+  // one — keeps the meeting → opp → company graph consistent.
+  if (!data.companyId) {
+    data.companyId = oppOwnerCheck.companyId;
   }
 
   const startAt = new Date(data.startAt);

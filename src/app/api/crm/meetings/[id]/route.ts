@@ -4,6 +4,7 @@ import { z } from "zod";
 import { auth } from "@/lib/auth";
 import { db } from "@/lib/db";
 import { CrmMeetingStatus, CrmMeetingType } from "@/generated/prisma";
+import { describeZodError } from "@/lib/zod-errors";
 
 const patchSchema = z.object({
   startAt: z.string().datetime().optional(),
@@ -28,7 +29,16 @@ async function loadOrError(id: string, session: Session) {
   const meeting = await db.crmMeeting.findUnique({ where: { id } });
   if (!meeting) return { error: NextResponse.json({ error: "Not found" }, { status: 404 }) };
   const ownProfile = session.user.crmProfileId;
-  if (meeting.scheduledById !== ownProfile && !isManager(session)) {
+  // The assistant who approved the meeting also needs read access — that's
+  // their whole post-meeting workflow (write outcome to the linked opp).
+  // Assistants in general can see any meeting they could approve.
+  const isAssistant = session.user.crmRole === "ASSISTANT";
+  const isAuthorized =
+    meeting.scheduledById === ownProfile ||
+    meeting.approvedById === ownProfile ||
+    isManager(session) ||
+    isAssistant;
+  if (!isAuthorized) {
     return { error: NextResponse.json({ error: "Not found" }, { status: 404 }) };
   }
   return { meeting };
@@ -44,11 +54,49 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
     where: { id },
     include: {
       scheduledBy: { select: { id: true, fullName: true, userId: true } },
-      opportunity: { select: { id: true, code: true, title: true } },
+      approvedBy: { select: { id: true, fullName: true } },
+      opportunity: { select: { id: true, code: true, title: true, stage: true } },
       company: { select: { id: true, nameEn: true } },
     },
   });
-  return NextResponse.json({ meeting });
+
+  // Pull the linked opportunity's recent notes + activity so the meeting
+  // dialog can render the "last update" timeline without a second round-trip.
+  // Limited to 5 of each — the dialog only shows a preview; full history
+  // lives on the opportunity detail page.
+  let recentNotes: Array<{
+    id: string;
+    content: string;
+    createdAt: string;
+    author: { id: string; fullName: string };
+  }> = [];
+  let recentActivity: Array<{
+    id: string;
+    action: string;
+    metadata: unknown;
+    createdAt: string;
+    actor: { id: string; fullName: string };
+  }> = [];
+  if (meeting?.opportunityId) {
+    const [notes, activity] = await Promise.all([
+      db.crmNote.findMany({
+        where: { opportunityId: meeting.opportunityId },
+        orderBy: { createdAt: "desc" },
+        take: 5,
+        include: { author: { select: { id: true, fullName: true } } },
+      }),
+      db.crmActivityLog.findMany({
+        where: { opportunityId: meeting.opportunityId },
+        orderBy: { createdAt: "desc" },
+        take: 5,
+        include: { actor: { select: { id: true, fullName: true } } },
+      }),
+    ]);
+    recentNotes = JSON.parse(JSON.stringify(notes));
+    recentActivity = JSON.parse(JSON.stringify(activity));
+  }
+
+  return NextResponse.json({ meeting, recentNotes, recentActivity });
 }
 
 export async function PATCH(req: Request, { params }: { params: Promise<{ id: string }> }) {
@@ -61,7 +109,7 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
   const body = await req.json();
   const parsed = patchSchema.safeParse(body);
   if (!parsed.success) {
-    return NextResponse.json({ error: parsed.error.issues[0].message }, { status: 400 });
+    { const __z = describeZodError(parsed.error); return NextResponse.json({ error: __z.message, fieldErrors: __z.fieldErrors }, { status: 400 }); }
   }
   const data = parsed.data;
 

@@ -181,7 +181,20 @@ export function OpportunityDetailClient({
   }
 
   const entity = opp.entity as { code: string; nameEn: string; nameAr: string; color: string };
-  const company = opp.company as { nameEn: string; nameAr: string | null; phone: string | null };
+  // The customer-company on an opportunity is now stored as free text on
+  // the row itself; the legacy `company` FK is nullable and only populated
+  // for admin-curated rows or cold-lead-converted opps. Always prefer the
+  // free-text name and fall back to the linked record so legacy opps still
+  // render without a guard at every call site below.
+  const linkedCompany = opp.company as { nameEn: string; nameAr: string | null; phone: string | null } | null;
+  const company = {
+    nameEn:
+      (opp.customerCompanyName as string | null | undefined) ??
+      linkedCompany?.nameEn ??
+      "—",
+    nameAr: linkedCompany?.nameAr ?? null,
+    phone: linkedCompany?.phone ?? null,
+  };
   const owner = opp.owner as { fullName: string; fullNameAr: string | null };
   const contact = opp.primaryContact as { fullName: string; phone: string | null; email: string | null; whatsapp: string | null } | null;
   const stageChanges = (opp.stageChanges || []) as Array<{ id: string; fromStage: string | null; toStage: string; changedAt: string; durationDays: number | null }>;

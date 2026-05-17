@@ -1,5 +1,7 @@
 'use client'
 
+import { describeError } from "@/lib/zod-errors";
+
 import React, { useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { Plus, Pencil, Trash2 } from 'lucide-react'
@@ -60,18 +62,18 @@ export default function LeavePolicyPage() {
   const createMutation = useMutation({
     mutationFn: (payload: Record<string, unknown>) => api.post('/attendance/leave-types/', payload),
     onSuccess: () => { queryClient.invalidateQueries({ queryKey: ['leave-types'] }); setDialogOpen(false); toast.success('Leave type created') },
-    onError: () => toast.error('Failed to create leave type'),
+    onError: (__err: unknown) => toast.error(describeError(__err) || 'Failed to create leave type'),
   })
   const updateMutation = useMutation({
     mutationFn: ({ id, payload }: { id: number; payload: Record<string, unknown> }) =>
       api.patch(`/attendance/leave-types/${id}/`, payload),
     onSuccess: () => { queryClient.invalidateQueries({ queryKey: ['leave-types'] }); setDialogOpen(false); toast.success('Leave type updated') },
-    onError: () => toast.error('Failed to update leave type'),
+    onError: (__err: unknown) => toast.error(describeError(__err) || 'Failed to update leave type'),
   })
   const deleteMutation = useMutation({
     mutationFn: (id: number) => api.delete(`/attendance/leave-types/${id}/`),
     onSuccess: () => { queryClient.invalidateQueries({ queryKey: ['leave-types'] }); setDeleteTarget(null); toast.success('Leave type deleted') },
-    onError: () => toast.error('Failed to delete leave type'),
+    onError: (__err: unknown) => toast.error(describeError(__err) || 'Failed to delete leave type'),
   })
 
   function openAdd() { setEditLeave(null); setForm(EMPTY_FORM); setDialogOpen(true) }

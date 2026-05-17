@@ -3,6 +3,7 @@ import { auth } from "@/lib/auth";
 import { db } from "@/lib/db";
 import { z } from "zod";
 import { publish } from "@/lib/events/bus";
+import { describeZodError } from "@/lib/zod-errors";
 
 const bodySchema = z.object({
   module: z.enum(["hr", "partners"]),
@@ -51,7 +52,7 @@ export async function PATCH(req: Request) {
   // Single: mark one notification as read.
   const parsed = bodySchema.safeParse(body);
   if (!parsed.success) {
-    return NextResponse.json({ error: parsed.error.issues[0].message }, { status: 400 });
+    { const __z = describeZodError(parsed.error); return NextResponse.json({ error: __z.message, fieldErrors: __z.fieldErrors }, { status: 400 }); }
   }
 
   if (parsed.data.module === "hr") {

@@ -3,6 +3,7 @@ import { db } from "@/lib/db";
 import { z } from "zod";
 import { auth } from "@/lib/auth";
 import { randomBytes } from "node:crypto";
+import { describeZodError } from "@/lib/zod-errors";
 
 const lineSchema = z.object({
   productId: z.string().optional(),
@@ -47,7 +48,7 @@ export async function POST(req: Request) {
   const body = await req.json();
   const parsed = createSchema.safeParse(body);
   if (!parsed.success) {
-    return NextResponse.json({ error: parsed.error.issues[0].message }, { status: 400 });
+    { const __z = describeZodError(parsed.error); return NextResponse.json({ error: __z.message, fieldErrors: __z.fieldErrors }, { status: 400 }); }
   }
 
   const quote = await db.quote.create({

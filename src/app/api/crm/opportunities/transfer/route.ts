@@ -3,6 +3,7 @@ import type { Session } from "next-auth";
 import { z } from "zod";
 import { auth } from "@/lib/auth";
 import { db } from "@/lib/db";
+import { describeZodError } from "@/lib/zod-errors";
 
 /**
  * POST /api/crm/opportunities/transfer
@@ -46,7 +47,7 @@ export async function POST(req: Request) {
   const body = await req.json();
   const parsed = transferSchema.safeParse(body);
   if (!parsed.success) {
-    return NextResponse.json({ error: parsed.error.issues[0].message }, { status: 400 });
+    { const __z = describeZodError(parsed.error); return NextResponse.json({ error: __z.message, fieldErrors: __z.fieldErrors }, { status: 400 }); }
   }
   const { opportunityIds, toRepId, reason } = parsed.data;
 

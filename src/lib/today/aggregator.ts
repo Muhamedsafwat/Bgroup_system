@@ -230,7 +230,7 @@ export async function getTodayData(session: Session): Promise<TodayData> {
           items: closing.map((o) => ({
             id: o.id,
             code: o.code,
-            company: o.company.nameEn,
+            company: o.customerCompanyName ?? o.company?.nameEn ?? "—",
             expectedCloseDate: o.expectedCloseDate?.toISOString() ?? "",
             weightedValueEGP: Number(o.weightedValueEGP),
             href: `/crm/opportunities/${o.id}`,

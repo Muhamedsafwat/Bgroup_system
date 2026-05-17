@@ -3,6 +3,7 @@ import type { Session } from "next-auth";
 import { z } from "zod";
 import { auth } from "@/lib/auth";
 import { db } from "@/lib/db";
+import { describeZodError } from "@/lib/zod-errors";
 
 /**
  * POST /api/crm/cold-leads/redistribute
@@ -49,7 +50,7 @@ export async function POST(request: Request) {
   const body = await request.json().catch(() => null);
   const parsed = schema.safeParse(body);
   if (!parsed.success) {
-    return NextResponse.json({ error: parsed.error.issues[0].message }, { status: 422 });
+    { const __z = describeZodError(parsed.error); return NextResponse.json({ error: __z.message, fieldErrors: __z.fieldErrors }, { status: 422 }); }
   }
 
   const now = new Date();
@@ -113,7 +114,7 @@ export async function DELETE(request: Request) {
   const body = await request.json().catch(() => null);
   const parsed = z.object({ leadIds: z.array(z.string()).min(1) }).safeParse(body);
   if (!parsed.success) {
-    return NextResponse.json({ error: parsed.error.issues[0].message }, { status: 422 });
+    { const __z = describeZodError(parsed.error); return NextResponse.json({ error: __z.message, fieldErrors: __z.fieldErrors }, { status: 422 }); }
   }
   await db.crmColdLead.updateMany({
     where: { id: { in: parsed.data.leadIds } },

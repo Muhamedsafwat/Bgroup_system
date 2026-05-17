@@ -3,6 +3,7 @@ import { z } from "zod";
 import { auth } from "@/lib/auth";
 import { db } from "@/lib/db";
 import { TaskStatus, TaskPriority } from "@/generated/prisma";
+import { describeZodError } from "@/lib/zod-errors";
 
 const bulkSchema = z.object({
   ids: z.array(z.string()).min(1).max(200),
@@ -22,7 +23,7 @@ export async function POST(req: Request) {
   const body = await req.json();
   const parsed = bulkSchema.safeParse(body);
   if (!parsed.success) {
-    return NextResponse.json({ error: parsed.error.issues[0].message }, { status: 400 });
+    { const __z = describeZodError(parsed.error); return NextResponse.json({ error: __z.message, fieldErrors: __z.fieldErrors }, { status: 400 }); }
   }
   const { ids, action } = parsed.data;
 

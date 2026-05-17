@@ -1,5 +1,7 @@
 'use client'
 
+import { describeError } from "@/lib/zod-errors";
+
 import React, { useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { Plus, Edit2, Trash2, Users } from 'lucide-react'
@@ -151,7 +153,7 @@ function ShiftsTab() {
       setEditingShift(null)
       reset()
     },
-    onError: () => toast.error('Failed to save shift'),
+    onError: (__err: unknown) => toast.error(describeError(__err) || 'Failed to save shift'),
   })
 
   const deleteMutation = useMutation({
@@ -160,7 +162,7 @@ function ShiftsTab() {
       toast.success('Shift deleted')
       qc.invalidateQueries({ queryKey: ['attendance', 'shifts'] })
     },
-    onError: () => toast.error('Failed to delete shift'),
+    onError: (__err: unknown) => toast.error(describeError(__err) || 'Failed to delete shift'),
   })
 
   const assignMutation = useMutation({
@@ -171,7 +173,7 @@ function ShiftsTab() {
       setAssignDialog(null)
       setSelectedEmployees([])
     },
-    onError: () => toast.error('Failed to assign employees'),
+    onError: (__err: unknown) => toast.error(describeError(__err) || 'Failed to assign employees'),
   })
 
   function openEdit(shift: Shift) {
@@ -449,7 +451,7 @@ function AutoRulesTab() {
       setEditingRule(null)
       reset()
     },
-    onError: () => toast.error('Failed to save rule'),
+    onError: (__err: unknown) => toast.error(describeError(__err) || 'Failed to save rule'),
   })
 
   const toggleMutation = useMutation({
@@ -458,7 +460,7 @@ function AutoRulesTab() {
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['attendance', 'auto-rules'] })
     },
-    onError: () => toast.error('Failed to update rule'),
+    onError: (__err: unknown) => toast.error(describeError(__err) || 'Failed to update rule'),
   })
 
   const deleteMutation = useMutation({
@@ -467,7 +469,7 @@ function AutoRulesTab() {
       toast.success('Rule deleted')
       qc.invalidateQueries({ queryKey: ['attendance', 'auto-rules'] })
     },
-    onError: () => toast.error('Failed to delete rule'),
+    onError: (__err: unknown) => toast.error(describeError(__err) || 'Failed to delete rule'),
   })
 
   function openEdit(rule: AutoRule) {

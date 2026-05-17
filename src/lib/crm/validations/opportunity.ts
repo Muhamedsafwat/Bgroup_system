@@ -1,7 +1,12 @@
 import { z } from "zod";
 
 export const createOpportunitySchema = z.object({
-  companyId: z.string().min(1, "Company is required"),
+  /// Customer company name as free text. Reps type the prospect's company
+  /// name here — there's no curated directory of customer companies. The
+  /// `companyId` FK is kept for backwards-compat with admin-curated /
+  /// principal records but isn't required on create.
+  customerCompanyName: z.string().trim().min(1, "Customer company name is required").max(200),
+  companyId: z.string().optional(),
   primaryContactId: z.string().optional(),
   entityId: z.string().min(1, "Entity is required"),
   title: z.string().optional(),

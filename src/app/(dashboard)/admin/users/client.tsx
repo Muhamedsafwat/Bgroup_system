@@ -5,7 +5,7 @@ import Link from "next/link";
 import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { Loader2, Search, Users, Briefcase, Handshake, ShieldCheck, Plus, KeyRound, Copy } from "lucide-react";
+import { Loader2, Search, Users, Briefcase, Handshake, ShieldCheck, Plus, KeyRound, Copy, Layers } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import {
@@ -69,6 +69,7 @@ export function AdminUsersClient() {
   const [filter, setFilter] = useState<FilterKind>("all");
   const [q, setQ] = useState("");
   const [resetTarget, setResetTarget] = useState<AdminUser | null>(null);
+  const [grantTarget, setGrantTarget] = useState<AdminUser | null>(null);
 
   useEffect(() => {
     setLoading(true);
@@ -213,16 +214,33 @@ export function AdminUsersClient() {
                         {new Date(u.createdAt).toLocaleDateString()}
                       </td>
                       <td className="py-2.5 px-3 text-end">
-                        <Button
-                          variant="ghost"
-                          size="sm"
-                          className="h-7 px-2 text-xs"
-                          onClick={() => setResetTarget(u)}
-                          title="Reset this user's password"
-                        >
-                          <KeyRound className="h-3.5 w-3.5 me-1" />
-                          Reset password
-                        </Button>
+                        <div className="inline-flex gap-1">
+                          {/* Only show "Add module" when the user is missing
+                              at least one — once they have all three there's
+                              nothing to grant. */}
+                          {(!u.modules.hr || !u.modules.crm || !u.modules.partners) && (
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              className="h-7 px-2 text-xs"
+                              onClick={() => setGrantTarget(u)}
+                              title="Grant another module to this user"
+                            >
+                              <Layers className="h-3.5 w-3.5 me-1" />
+                              Add module
+                            </Button>
+                          )}
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            className="h-7 px-2 text-xs"
+                            onClick={() => setResetTarget(u)}
+                            title="Reset this user's password"
+                          >
+                            <KeyRound className="h-3.5 w-3.5 me-1" />
+                            Reset password
+                          </Button>
+                        </div>
                       </td>
                     </tr>
                   ))}
@@ -248,6 +266,20 @@ export function AdminUsersClient() {
       <ResetPasswordDialog
         user={resetTarget}
         onClose={() => setResetTarget(null)}
+      />
+      <GrantModuleDialog
+        user={grantTarget}
+        onClose={() => setGrantTarget(null)}
+        onGranted={() => {
+          setGrantTarget(null);
+          // Re-fetch the users list so the row shows the new module chips
+          // without a hard reload.
+          setLoading(true);
+          fetch("/api/admin/users")
+            .then((r) => r.json())
+            .then((data: { users: AdminUser[] }) => setUsers(data.users))
+            .finally(() => setLoading(false));
+        }}
       />
     </div>
   );
@@ -365,6 +397,343 @@ function ResetPasswordDialog({
           <Button onClick={submit} disabled={password.length < 8 || saving}>
             {saving ? "Resetting…" : "Reset password"}
           </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+/**
+ * Grant-module dialog. Lets the admin add HR, CRM, or Partners access to a
+ * user who already exists. Shows one tab per module the user is missing —
+ * existing modules are filtered out so the admin can't double-grant.
+ *
+ * Each tab carries the minimum fields required to spin up that module's
+ * profile (mirrors the create-user endpoint's schema). The submit POSTs to
+ * `/api/admin/users/[id]/modules` which handles the transaction.
+ */
+function GrantModuleDialog({
+  user,
+  onClose,
+  onGranted,
+}: {
+  user: AdminUser | null;
+  onClose: () => void;
+  onGranted: () => void;
+}) {
+  // Which modules are still grantable for this user. Filtering this list
+  // means an HR-only user opens straight to a tab they can actually use
+  // (CRM or Partners), no clicks wasted on disabled tabs.
+  const grantable: ("hr" | "crm" | "partners")[] = [];
+  if (user && !user.modules.hr) grantable.push("hr");
+  if (user && !user.modules.crm) grantable.push("crm");
+  if (user && !user.modules.partners) grantable.push("partners");
+
+  const [activeTab, setActiveTab] = useState<"hr" | "crm" | "partners">(
+    grantable[0] ?? "crm"
+  );
+  const [saving, setSaving] = useState(false);
+
+  // HR fields (mostly identical to /admin/users/new HR section)
+  const [hrEmployeeId, setHrEmployeeId] = useState("");
+  const [hrNameEn, setHrNameEn] = useState("");
+  const [hrNameAr, setHrNameAr] = useState("");
+  const [hrNationalId, setHrNationalId] = useState("");
+  const [hrGender, setHrGender] = useState<"male" | "female">("male");
+  const [hrPosition, setHrPosition] = useState("");
+  const [hrCompanyId, setHrCompanyId] = useState("");
+  const [hrCompanies, setHrCompanies] = useState<{ id: string; nameEn: string }[]>([]);
+
+  // CRM fields
+  const [crmFullName, setCrmFullName] = useState("");
+  const [crmRole, setCrmRole] = useState<"REP" | "MANAGER" | "ASSISTANT" | "ACCOUNT_MGR" | "ADMIN">("REP");
+  const [crmEntityId, setCrmEntityId] = useState("");
+  const [crmTarget, setCrmTarget] = useState("");
+  const [crmManagerId, setCrmManagerId] = useState("");
+  const [crmEntities, setCrmEntities] = useState<{ id: string; nameEn: string }[]>([]);
+  const [crmManagers, setCrmManagers] = useState<{ id: string; fullName: string }[]>([]);
+
+  // Partners fields
+  const [partnerCompany, setPartnerCompany] = useState("");
+  const [partnerPhone, setPartnerPhone] = useState("");
+  const [partnerRate, setPartnerRate] = useState("10");
+
+  // Seed defaults from the user when the dialog opens — the admin shouldn't
+  // re-type the name three times across tabs.
+  useEffect(() => {
+    if (!user) return;
+    setActiveTab(grantable[0] ?? "crm");
+    const displayName = user.name ?? user.email.split("@")[0];
+    setHrNameEn(displayName);
+    setHrNameAr(displayName);
+    setCrmFullName(displayName);
+    setPartnerCompany(displayName);
+    // Load picker options lazily when the modal opens.
+    fetch("/api/hr/companies")
+      .then((r) => (r.ok ? r.json() : []))
+      .then((data) => {
+        const list = Array.isArray(data) ? data : data.companies ?? data.data ?? [];
+        setHrCompanies(list.map((c: { id: string; nameEn: string }) => ({ id: c.id, nameEn: c.nameEn })));
+      })
+      .catch(() => setHrCompanies([]));
+    fetch("/api/crm/admin/entities")
+      .then((r) => (r.ok ? r.json() : { entities: [] }))
+      .then((data) => {
+        const list = Array.isArray(data) ? data : data.entities ?? data.data ?? [];
+        setCrmEntities(list.map((e: { id: string; nameEn: string }) => ({ id: e.id, nameEn: e.nameEn })));
+      })
+      .catch(() => setCrmEntities([]));
+    fetch("/api/crm/admin/users")
+      .then((r) => (r.ok ? r.json() : { users: [] }))
+      .then((data) => {
+        const list: Array<{ id: string; fullName: string; role: string }> =
+          Array.isArray(data) ? data : data.users ?? data.data ?? [];
+        setCrmManagers(
+          list
+            .filter((m) => m.role === "MANAGER" || m.role === "ADMIN")
+            .map((m) => ({ id: m.id, fullName: m.fullName }))
+        );
+      })
+      .catch(() => setCrmManagers([]));
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [user?.id]);
+
+  async function submit() {
+    if (!user) return;
+    const body: Record<string, unknown> = {};
+    if (activeTab === "hr") {
+      if (!hrEmployeeId || !hrNameEn || !hrNameAr || !hrNationalId || !hrCompanyId) {
+        toast.error("Employee ID, name (EN+AR), national ID and company are required");
+        return;
+      }
+      body.hr = {
+        employeeId: hrEmployeeId.trim(),
+        fullNameEn: hrNameEn.trim(),
+        fullNameAr: hrNameAr.trim(),
+        nationalId: hrNationalId.trim(),
+        gender: hrGender,
+        positionEn: hrPosition.trim() || undefined,
+        companyId: hrCompanyId,
+      };
+    } else if (activeTab === "crm") {
+      if (!crmFullName) {
+        toast.error("Full name is required");
+        return;
+      }
+      body.crm = {
+        fullName: crmFullName.trim(),
+        role: crmRole,
+        entityId: crmEntityId || undefined,
+        monthlyTargetEGP: crmTarget ? Number(crmTarget) : undefined,
+        managerId: crmManagerId || undefined,
+      };
+    } else if (activeTab === "partners") {
+      if (!partnerCompany) {
+        toast.error("Partner company name is required");
+        return;
+      }
+      body.partner = {
+        companyName: partnerCompany.trim(),
+        contactPhone: partnerPhone.trim() || undefined,
+        commissionRate: partnerRate ? Number(partnerRate) : undefined,
+      };
+    }
+
+    setSaving(true);
+    try {
+      const res = await fetch(`/api/admin/users/${user.id}/modules`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        toast.error(data.error ?? "Failed to add module");
+        return;
+      }
+      toast.success(`Granted ${activeTab.toUpperCase()} to ${user.email}`);
+      onGranted();
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <Dialog
+      open={!!user}
+      onOpenChange={(open) => {
+        if (!open) onClose();
+      }}
+    >
+      <DialogContent className="sm:max-w-lg max-h-[90vh] overflow-y-auto">
+        <DialogHeader>
+          <DialogTitle>Add module access</DialogTitle>
+        </DialogHeader>
+        {user && (
+          <div className="space-y-4">
+            <div className="rounded-md bg-muted/40 p-3 text-sm">
+              <p className="font-medium">{user.name ?? user.email}</p>
+              <p className="text-xs text-muted-foreground">{user.email}</p>
+              <div className="flex flex-wrap gap-1 mt-1.5">
+                {user.modules.hr && <ModuleChip kind="hr" />}
+                {user.modules.crm && <ModuleChip kind="crm" />}
+                {user.modules.partners && <ModuleChip kind="partners" />}
+              </div>
+            </div>
+
+            {grantable.length === 0 ? (
+              <p className="text-sm text-muted-foreground">
+                This user already has every module. Nothing to grant.
+              </p>
+            ) : (
+              <>
+                <Tabs value={activeTab} onValueChange={(v) => setActiveTab(v as typeof activeTab)}>
+                  <TabsList className="grid grid-cols-3 w-full">
+                    {grantable.includes("hr") && <TabsTrigger value="hr">HR</TabsTrigger>}
+                    {grantable.includes("crm") && <TabsTrigger value="crm">CRM</TabsTrigger>}
+                    {grantable.includes("partners") && <TabsTrigger value="partners">Partners</TabsTrigger>}
+                  </TabsList>
+                </Tabs>
+
+                {activeTab === "hr" && (
+                  <div className="space-y-3">
+                    <div className="grid grid-cols-2 gap-2">
+                      <div className="space-y-1">
+                        <Label className="text-xs">Employee ID *</Label>
+                        <Input value={hrEmployeeId} onChange={(e) => setHrEmployeeId(e.target.value)} placeholder="EMP-001" />
+                      </div>
+                      <div className="space-y-1">
+                        <Label className="text-xs">National ID *</Label>
+                        <Input value={hrNationalId} onChange={(e) => setHrNationalId(e.target.value)} />
+                      </div>
+                      <div className="space-y-1">
+                        <Label className="text-xs">Name (EN) *</Label>
+                        <Input value={hrNameEn} onChange={(e) => setHrNameEn(e.target.value)} />
+                      </div>
+                      <div className="space-y-1">
+                        <Label className="text-xs">Name (AR) *</Label>
+                        <Input value={hrNameAr} onChange={(e) => setHrNameAr(e.target.value)} dir="rtl" />
+                      </div>
+                      <div className="space-y-1">
+                        <Label className="text-xs">Position</Label>
+                        <Input value={hrPosition} onChange={(e) => setHrPosition(e.target.value)} placeholder="e.g. Sales Engineer" />
+                      </div>
+                      <div className="space-y-1">
+                        <Label className="text-xs">Gender *</Label>
+                        <select
+                          value={hrGender}
+                          onChange={(e) => setHrGender(e.target.value as "male" | "female")}
+                          className="h-9 w-full rounded-md border border-input bg-background px-2 text-sm"
+                        >
+                          <option value="male">Male</option>
+                          <option value="female">Female</option>
+                        </select>
+                      </div>
+                    </div>
+                    <div className="space-y-1">
+                      <Label className="text-xs">Company *</Label>
+                      <select
+                        value={hrCompanyId}
+                        onChange={(e) => setHrCompanyId(e.target.value)}
+                        className="h-9 w-full rounded-md border border-input bg-background px-2 text-sm"
+                      >
+                        <option value="">— Select —</option>
+                        {hrCompanies.map((c) => (
+                          <option key={c.id} value={c.id}>{c.nameEn}</option>
+                        ))}
+                      </select>
+                    </div>
+                  </div>
+                )}
+
+                {activeTab === "crm" && (
+                  <div className="space-y-3">
+                    <div className="space-y-1">
+                      <Label className="text-xs">Full name *</Label>
+                      <Input value={crmFullName} onChange={(e) => setCrmFullName(e.target.value)} />
+                    </div>
+                    <div className="grid grid-cols-2 gap-2">
+                      <div className="space-y-1">
+                        <Label className="text-xs">CRM role *</Label>
+                        <select
+                          value={crmRole}
+                          onChange={(e) => setCrmRole(e.target.value as typeof crmRole)}
+                          className="h-9 w-full rounded-md border border-input bg-background px-2 text-sm"
+                        >
+                          <option value="REP">Sales rep</option>
+                          <option value="ACCOUNT_MGR">Account manager</option>
+                          <option value="ASSISTANT">Assistant</option>
+                          <option value="MANAGER">Sales manager</option>
+                          <option value="ADMIN">CRM admin</option>
+                        </select>
+                      </div>
+                      <div className="space-y-1">
+                        <Label className="text-xs">Entity</Label>
+                        <select
+                          value={crmEntityId}
+                          onChange={(e) => setCrmEntityId(e.target.value)}
+                          className="h-9 w-full rounded-md border border-input bg-background px-2 text-sm"
+                        >
+                          <option value="">— Select —</option>
+                          {crmEntities.map((e) => (
+                            <option key={e.id} value={e.id}>{e.nameEn}</option>
+                          ))}
+                        </select>
+                      </div>
+                      <div className="space-y-1">
+                        <Label className="text-xs">Monthly target (EGP)</Label>
+                        <Input type="number" value={crmTarget} onChange={(e) => setCrmTarget(e.target.value)} placeholder="50000" />
+                      </div>
+                      {(crmRole === "REP" || crmRole === "ACCOUNT_MGR") && (
+                        <div className="space-y-1">
+                          <Label className="text-xs">Reports to</Label>
+                          <select
+                            value={crmManagerId}
+                            onChange={(e) => setCrmManagerId(e.target.value)}
+                            className="h-9 w-full rounded-md border border-input bg-background px-2 text-sm"
+                          >
+                            <option value="">— None —</option>
+                            {crmManagers.map((m) => (
+                              <option key={m.id} value={m.id}>{m.fullName}</option>
+                            ))}
+                          </select>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                )}
+
+                {activeTab === "partners" && (
+                  <div className="space-y-3">
+                    <div className="space-y-1">
+                      <Label className="text-xs">Partner company *</Label>
+                      <Input value={partnerCompany} onChange={(e) => setPartnerCompany(e.target.value)} />
+                    </div>
+                    <div className="grid grid-cols-2 gap-2">
+                      <div className="space-y-1">
+                        <Label className="text-xs">Contact phone</Label>
+                        <Input value={partnerPhone} onChange={(e) => setPartnerPhone(e.target.value)} />
+                      </div>
+                      <div className="space-y-1">
+                        <Label className="text-xs">Commission rate (%)</Label>
+                        <Input type="number" value={partnerRate} onChange={(e) => setPartnerRate(e.target.value)} min={0} max={100} />
+                      </div>
+                    </div>
+                  </div>
+                )}
+              </>
+            )}
+          </div>
+        )}
+        <DialogFooter>
+          <Button variant="outline" onClick={onClose} disabled={saving}>
+            Cancel
+          </Button>
+          {grantable.length > 0 && (
+            <Button onClick={submit} disabled={saving}>
+              {saving ? "Granting…" : `Grant ${activeTab.toUpperCase()}`}
+            </Button>
+          )}
         </DialogFooter>
       </DialogContent>
     </Dialog>

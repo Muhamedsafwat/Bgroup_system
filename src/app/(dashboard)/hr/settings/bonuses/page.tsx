@@ -1,5 +1,7 @@
 'use client'
 
+import { describeError } from "@/lib/zod-errors";
+
 import React, { useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { Plus, Pencil, Trash2, ChevronRight } from 'lucide-react'
@@ -108,33 +110,33 @@ export default function BonusesSettingsPage() {
   const createCat = useMutation({
     mutationFn: (data: CatFormData) => api.post('/bonuses/categories/', data),
     onSuccess: () => { queryClient.invalidateQueries({ queryKey: ['bonus-categories'] }); setCatDialogOpen(false); toast({ title: 'Category created' }) },
-    onError: () => toast({ title: 'Error', variant: 'destructive', description: 'Failed to create category.' }),
+    onError: (__err: unknown) => toast({ title: 'Error', variant: 'destructive', description: describeError(__err) || 'Failed to create category.' }),
   })
   const updateCat = useMutation({
     mutationFn: ({ id, data }: { id: number; data: CatFormData }) => api.patch(`/bonuses/categories/${id}/`, data),
     onSuccess: () => { queryClient.invalidateQueries({ queryKey: ['bonus-categories'] }); setCatDialogOpen(false); toast({ title: 'Category updated' }) },
-    onError: () => toast({ title: 'Error', variant: 'destructive', description: 'Failed to update category.' }),
+    onError: (__err: unknown) => toast({ title: 'Error', variant: 'destructive', description: describeError(__err) || 'Failed to update category.' }),
   })
   const deleteCat = useMutation({
     mutationFn: (id: number) => api.delete(`/bonuses/categories/${id}/`),
     onSuccess: () => { queryClient.invalidateQueries({ queryKey: ['bonus-categories'] }); setDeleteCatTarget(null); setSelectedCategory(null); toast({ title: 'Category deleted' }) },
-    onError: () => toast({ title: 'Error', variant: 'destructive', description: 'Failed to delete category.' }),
+    onError: (__err: unknown) => toast({ title: 'Error', variant: 'destructive', description: describeError(__err) || 'Failed to delete category.' }),
   })
 
   const createRule = useMutation({
     mutationFn: (data: Record<string, unknown>) => api.post('/bonuses/rules/', data),
     onSuccess: () => { queryClient.invalidateQueries({ queryKey: ['bonus-rules'] }); setRuleDialogOpen(false); toast({ title: 'Rule created' }) },
-    onError: () => toast({ title: 'Error', variant: 'destructive', description: 'Failed to create rule.' }),
+    onError: (__err: unknown) => toast({ title: 'Error', variant: 'destructive', description: describeError(__err) || 'Failed to create rule.' }),
   })
   const updateRule = useMutation({
     mutationFn: ({ id, data }: { id: number; data: Record<string, unknown> }) => api.patch(`/bonuses/rules/${id}/`, data),
     onSuccess: () => { queryClient.invalidateQueries({ queryKey: ['bonus-rules'] }); setRuleDialogOpen(false); toast({ title: 'Rule updated' }) },
-    onError: () => toast({ title: 'Error', variant: 'destructive', description: 'Failed to update rule.' }),
+    onError: (__err: unknown) => toast({ title: 'Error', variant: 'destructive', description: describeError(__err) || 'Failed to update rule.' }),
   })
   const deleteRule = useMutation({
     mutationFn: (id: number) => api.delete(`/bonuses/rules/${id}/`),
     onSuccess: () => { queryClient.invalidateQueries({ queryKey: ['bonus-rules'] }); setDeleteRuleTarget(null); toast({ title: 'Rule deleted' }) },
-    onError: () => toast({ title: 'Error', variant: 'destructive', description: 'Failed to delete rule.' }),
+    onError: (__err: unknown) => toast({ title: 'Error', variant: 'destructive', description: describeError(__err) || 'Failed to delete rule.' }),
   })
 
   function buildRulePayload(f: RuleFormData) {
