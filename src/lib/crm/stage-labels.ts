@@ -1,39 +1,38 @@
-import type { CrmOpportunityStage } from "@/generated/prisma";
-
+import type { CrmOpportunityStage } from "@/types";
 /**
- * Display labels per the CRM reference spec (Arabic 8-stage pipeline).
- *
- * The Prisma enum carries the canonical English value; the UI looks up the
- * label here based on the user's locale. The 8 stages used in the spec map
- * onto specific enum values (the remaining enum values are still legal —
- * just not part of the spec pipeline).
+ * Static fallback labels for the seed stage codes. These are only consulted
+ * when no admin-curated CrmStageConfig row exists for a given stage — the
+ * pipeline UI now fetches admin labels from /api/crm/stages and prefers
+ * those. Keep these in sync with the dictionaries.ts entries so that any
+ * server-rendered surface that hasn't fetched stages yet renders the same
+ * names the admin sees in Stage Config.
  */
-export const STAGE_LABEL_AR: Record<CrmOpportunityStage, string> = {
-  NEW: "عميل جديد",
-  CONTACTED: "في انتظار مكالمة",
-  DISCOVERY: "في انتظار ديمو",
-  QUALIFIED: "في انتظار اتخاذ قرار",
-  TECH_MEETING: "في انتظار مقابلة في المكتب",
-  PROPOSAL_SENT: "تم إرسال عرض",
+export const STAGE_LABEL_AR: Record<string, string> = {
+  NEW: "فرصة جديدة",
+  CONTACTED: "تم التواصل",
+  DISCOVERY: "اجتماع استكشافي",
+  QUALIFIED: "مؤهل",
+  TECH_MEETING: "اجتماع فني ثاني",
+  PROPOSAL_SENT: "إرسال العرض",
   NEGOTIATION: "تفاوض",
   VERBAL_YES: "موافقة شفهية",
   POSTPONED: "مؤجل",
-  WON: "تم التعاقد",
-  LOST: "غير مهتم",
+  WON: "ربحت",
+  LOST: "خسرت",
 };
 
-export const STAGE_LABEL_EN: Record<CrmOpportunityStage, string> = {
+export const STAGE_LABEL_EN: Record<string, string> = {
   NEW: "New",
-  CONTACTED: "Waiting for call",
-  DISCOVERY: "Waiting for demo",
-  QUALIFIED: "Waiting for decision",
-  TECH_MEETING: "Waiting for office meeting",
-  PROPOSAL_SENT: "Proposal sent",
+  CONTACTED: "Contacted",
+  DISCOVERY: "Discovery",
+  QUALIFIED: "Qualified",
+  TECH_MEETING: "Tech Meeting",
+  PROPOSAL_SENT: "Proposal Sent",
   NEGOTIATION: "Negotiation",
-  VERBAL_YES: "Verbal yes",
+  VERBAL_YES: "Verbal Yes",
   POSTPONED: "Postponed",
-  WON: "Signed contract",
-  LOST: "Not interested",
+  WON: "Won",
+  LOST: "Lost",
 };
 
 /** The 8 stages the sales-board dashboard renders by default. */
@@ -54,4 +53,22 @@ export function stageBucket(stage: CrmOpportunityStage): "active" | "won" | "los
   if (stage === "LOST") return "lost";
   if (stage === "POSTPONED") return "paused";
   return "active";
+}
+
+/**
+ * Resolve a display label for any stage — seeded or admin-added. Falls
+ * back to humanising the code (e.g. "FIELD_TRIAL" → "Field Trial") so the
+ * UI never shows the raw upper-snake code to end users.
+ */
+export function stageLabel(stage: string, locale: "en" | "ar" = "en"): string {
+  const dict = locale === "ar" ? STAGE_LABEL_AR : STAGE_LABEL_EN;
+  return (
+    dict[stage] ??
+    stage
+      .toLowerCase()
+      .split("_")
+      .filter(Boolean)
+      .map((w) => w.charAt(0).toUpperCase() + w.slice(1))
+      .join(" ")
+  );
 }

@@ -1,5 +1,4 @@
-import type { CrmOpportunityStage } from "@/generated/prisma";
-
+import type { CrmOpportunityStage } from "@/types";
 export const STAGE_ORDER: Record<CrmOpportunityStage, number> = {
   NEW: 0,
   CONTACTED: 1,

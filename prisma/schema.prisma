@@ -2344,19 +2344,13 @@ model CrmColdLeadDisposition {
   @@map("crm_cold_lead_dispositions")
 }
 
-enum CrmOpportunityStage {
-  NEW
-  CONTACTED
-  DISCOVERY
-  QUALIFIED
-  TECH_MEETING
-  PROPOSAL_SENT
-  NEGOTIATION
-  VERBAL_YES
-  POSTPONED
-  WON
-  LOST
-}
+// CrmOpportunityStage was previously a Prisma enum. It's now a free-text
+// String column so admins can add new stages from /crm/admin/stage-config
+// (e.g. "PILOT", "POC", "RFP") without a schema migration. The seeded
+// stages (NEW / CONTACTED / DISCOVERY / QUALIFIED / TECH_MEETING /
+// PROPOSAL_SENT / NEGOTIATION / VERBAL_YES / WON / LOST / POSTPONED) are
+// what every install starts with; everything past those lives in
+// CrmStageConfig as the authoritative directory.
 
 enum CrmPriority {
   HOT
@@ -2585,6 +2579,14 @@ model CrmOpportunity {
   /// group by it later. Kept alongside the legacy `companyId` for now so
   /// historical rows continue to render through the existing relation.
   customerCompanyName String?
+  /// Free-text contact info captured directly on the opp. Reps almost
+  /// always know "the person they're talking to" before they know which
+  /// CrmContact record (if any) they'd attach. Storing it here keeps the
+  /// rep moving — managers can normalise into the curated CrmContact
+  /// directory later if they want to.
+  customerContactName  String?
+  customerContactPhone String?
+  customerContactEmail String?
   companyId        String?
   company          CrmCompany?         @relation(fields: [companyId], references: [id])
   primaryContactId String?
@@ -2595,7 +2597,14 @@ model CrmOpportunity {
   entity           CrmEntity           @relation(fields: [entityId], references: [id])
 
   title            String
-  stage            CrmOpportunityStage @default(NEW)
+  /// Stage is a free-text code, not a Prisma enum, so admins can add new
+  /// stages from /crm/admin/stage-config without a schema migration. The
+  /// `CrmStageConfig` table is the source of truth for which stages exist,
+  /// their probabilities, and their display order. The canonical seed gives
+  /// you NEW / CONTACTED / DISCOVERY / QUALIFIED / TECH_MEETING /
+  /// PROPOSAL_SENT / NEGOTIATION / VERBAL_YES / WON / LOST / POSTPONED but
+  /// nothing stops the admin from adding "PILOT" or renaming any of these.
+  stage            String              @default("NEW")
   priority         CrmPriority         @default(COLD)
   leadSource       String?
   dealType         CrmDealType         @default(ONE_TIME)
@@ -2694,8 +2703,10 @@ model CrmStageHistory {
   id            String               @id @default(cuid())
   opportunityId String
   opportunity   CrmOpportunity       @relation(fields: [opportunityId], references: [id], onDelete: Cascade)
-  fromStage     CrmOpportunityStage?
-  toStage       CrmOpportunityStage
+  /// Matches CrmOpportunity.stage — String, not enum, so the audit trail
+  /// can record transitions involving admin-added stages.
+  fromStage     String?
+  toStage       String
   changedAt     DateTime             @default(now())
   changedById   String
   durationDays  Int?
@@ -2913,7 +2924,8 @@ model CrmStageConfig {
   id             String              @id @default(cuid())
   entityId       String?
   entity         CrmEntity?          @relation(fields: [entityId], references: [id])
-  stage          CrmOpportunityStage
+  /// Free-text stage code (NEW / CONTACTED / PILOT / whatever the admin adds).
+  stage          String
   /// Soft-delete flag: admins can hide a stage from the pipeline without
   /// dropping the underlying enum value (which would break historical data).
   /// Stages with isActive=false don't appear in the dropdown / kanban.

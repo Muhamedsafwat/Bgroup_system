@@ -4,6 +4,7 @@ import { Badge } from "@/components/ui/badge";
 import { useLocale } from "@/lib/i18n";
 import { cn } from "@/lib/utils";
 import type { CrmOpportunityStage } from "@/types";
+import { stageLabel } from "@/lib/crm/stage-labels";
 
 const STAGE_COLORS: Record<string, string> = {
   NEW: "bg-blue-100 text-blue-800",
@@ -28,8 +29,12 @@ export function StageBadge({
   probabilityPct?: number;
   showProbability?: boolean;
 }) {
-  const { t } = useLocale();
-  const label = t.stages[stage] || stage;
+  const { t, locale } = useLocale();
+  // `t.stages` is typed against the original enum union; with admin-added
+  // stages the lookup may be undefined, so fall through to the data-driven
+  // labels helper which humanises any unknown code.
+  const label =
+    (t.stages as Record<string, string>)[stage] ?? stageLabel(stage, locale === "ar" ? "ar" : "en");
 
   return (
     <Badge

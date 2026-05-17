@@ -22,6 +22,7 @@ import {
   CheckCircle2,
   XCircle,
   Clock,
+  Trash2,
 } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
@@ -114,6 +115,7 @@ export function ColdLeadsClient({
   const [distributeRepIds, setDistributeRepIds] = useState<Set<string>>(new Set());
 
   const [dispositionFor, setDispositionFor] = useState<Lead | null>(null);
+  const [editTarget, setEditTarget] = useState<Lead | null>(null);
 
   const fetchRows = useCallback(async () => {
     setLoading(true);
@@ -284,6 +286,56 @@ export function ColdLeadsClient({
     }
   }
 
+  async function handleDeleteLead(lead: Lead) {
+    if (lead.status === "CONVERTED") {
+      toast.error("Converted leads can't be deleted — they're linked to an opportunity. Archive instead.");
+      return;
+    }
+    const ok = window.confirm(
+      `Permanently delete "${lead.name}"? This removes the lead and all its call-disposition history. Use "Archive" if you want to keep the record.`
+    );
+    if (!ok) return;
+    setPendingAction(true);
+    try {
+      const res = await fetch(`/api/crm/cold-leads/${lead.id}`, { method: "DELETE" });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        toast.error(data.error ?? "Delete failed");
+        return;
+      }
+      toast.success(`Deleted "${lead.name}"`);
+      fetchRows();
+    } finally {
+      setPendingAction(false);
+    }
+  }
+
+  async function handleBulkDelete() {
+    if (selected.size === 0) return;
+    const ok = window.confirm(
+      `Permanently delete ${selected.size} lead(s)? This removes every selected row plus its call-disposition history. Use "Archive" if you only want to hide them.`
+    );
+    if (!ok) return;
+    setPendingAction(true);
+    try {
+      const res = await fetch("/api/crm/cold-leads/bulk-delete", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ leadIds: Array.from(selected) }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        toast.error(data.error ?? "Delete failed");
+        return;
+      }
+      toast.success(`${data.deleted} lead(s) deleted`);
+      setSelected(new Set());
+      fetchRows();
+    } finally {
+      setPendingAction(false);
+    }
+  }
+
   async function handleResetToPool() {
     if (selected.size === 0) return;
     setPendingAction(true);
@@ -408,6 +460,15 @@ export function ColdLeadsClient({
           >
             <Archive className="h-3.5 w-3.5 me-1" /> Archive
           </Button>
+          <Button
+            size="sm"
+            variant="outline"
+            onClick={handleBulkDelete}
+            disabled={pendingAction}
+            className="text-destructive hover:text-destructive border-destructive/40"
+          >
+            <Trash2 className="h-3.5 w-3.5 me-1" /> Delete permanently
+          </Button>
         </Card>
       )}
 
@@ -484,8 +545,32 @@ export function ColdLeadsClient({
                           Record call
                         </Button>
                       )}
-                      {isManagerOrAdmin && lead.assignedTo && (
-                        <span className="text-xs text-muted-foreground">Assigned</span>
+                      {isManagerOrAdmin && (
+                        <div className="inline-flex items-center gap-1">
+                          <Button
+                            size="sm"
+                            variant="ghost"
+                            className="h-7 px-2 text-xs"
+                            onClick={() => setEditTarget(lead)}
+                            title="Edit lead details"
+                          >
+                            Edit
+                          </Button>
+                          <Button
+                            size="sm"
+                            variant="ghost"
+                            className="h-7 w-7 p-0 text-destructive hover:text-destructive"
+                            onClick={() => handleDeleteLead(lead)}
+                            disabled={pendingAction || lead.status === "CONVERTED"}
+                            title={
+                              lead.status === "CONVERTED"
+                                ? "Converted leads can't be deleted — archive instead"
+                                : "Permanently delete this lead"
+                            }
+                          >
+                            <Trash2 className="h-3.5 w-3.5" />
+                          </Button>
+                        </div>
                       )}
                     </td>
                   </tr>
@@ -544,7 +629,249 @@ export function ColdLeadsClient({
         onClose={() => setDispositionFor(null)}
         onChanged={fetchRows}
       />
+      <EditLeadDialog
+        lead={editTarget}
+        onClose={() => setEditTarget(null)}
+        onChanged={fetchRows}
+        isManagerOrAdmin={isManagerOrAdmin}
+        reps={reps}
+      />
     </div>
+  );
+}
+
+/**
+ * Lead edit dialog. Reps can fix typos and backfill data fields on their
+ * own leads. Admin / manager additionally get a "Status" and "Assign to"
+ * picker so they can resurrect an archived lead, mark one CONVERTED
+ * manually, or move it off a rep who left the team. The admin path bypasses
+ * the disposition history because it's a correction, not a sales touch.
+ */
+function EditLeadDialog({
+  lead,
+  onClose,
+  onChanged,
+  isManagerOrAdmin,
+  reps,
+}: {
+  lead: Lead | null;
+  onClose: () => void;
+  onChanged: () => void;
+  isManagerOrAdmin: boolean;
+  reps: Rep[];
+}) {
+  const [form, setForm] = useState({
+    name: "",
+    companyName: "",
+    phone: "",
+    email: "",
+    website: "",
+    socialMedia: "",
+    contactPerson: "",
+    contactPosition: "",
+    industry: "",
+    category: "",
+    location: "",
+    source: "",
+    notes: "",
+  });
+  const [status, setStatus] = useState<string>("");
+  const [assignedToId, setAssignedToId] = useState<string>("");
+  const [saving, setSaving] = useState(false);
+
+  useEffect(() => {
+    if (!lead) return;
+    setForm({
+      name: lead.name ?? "",
+      companyName: lead.companyName ?? "",
+      phone: lead.phone ?? "",
+      email: lead.email ?? "",
+      website: lead.website ?? "",
+      socialMedia: lead.socialMedia ?? "",
+      contactPerson: lead.contactPerson ?? "",
+      contactPosition: lead.contactPosition ?? "",
+      industry: lead.industry ?? "",
+      category: lead.category ?? "",
+      location: lead.location ?? "",
+      source: lead.source ?? "",
+      notes: lead.notes ?? "",
+    });
+    setStatus(lead.status ?? "");
+    setAssignedToId(lead.assignedToId ?? "");
+  }, [lead]);
+
+  function set<K extends keyof typeof form>(key: K, value: string) {
+    setForm((prev) => ({ ...prev, [key]: value }));
+  }
+
+  async function submit() {
+    if (!lead) return;
+    if (!form.name.trim()) {
+      toast.error("Name can't be empty");
+      return;
+    }
+    setSaving(true);
+    try {
+      const body: Record<string, string | null> = {};
+      for (const [k, v] of Object.entries(form)) {
+        body[k] = (v as string).trim() || null;
+      }
+      // Name is required by the schema (min 1); send the trimmed value
+      // unconditionally so we don't accidentally null it out.
+      body.name = form.name.trim();
+      // Admin-only overrides. Only send when changed so the server can fall
+      // through its auto-status-on-assign logic, and so a rep who somehow
+      // saw these fields can't slip them past the 403 check.
+      if (isManagerOrAdmin) {
+        if (status && status !== lead.status) {
+          body.status = status;
+        }
+        const currentAssigned = lead.assignedToId ?? "";
+        if (assignedToId !== currentAssigned) {
+          body.assignedToId = assignedToId || null;
+        }
+      }
+      const res = await fetch(`/api/crm/cold-leads/${lead.id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        toast.error(data.error ?? "Update failed");
+        return;
+      }
+      toast.success(`"${form.name}" updated`);
+      onClose();
+      onChanged();
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <Dialog open={!!lead} onOpenChange={(open) => !open && onClose()}>
+      <DialogContent className="sm:max-w-2xl max-h-[90vh] overflow-y-auto">
+        <DialogHeader>
+          <DialogTitle>Edit cold lead</DialogTitle>
+        </DialogHeader>
+        {lead && (
+          <div className="space-y-3">
+            <p className="text-xs text-muted-foreground">
+              Code: <span className="font-mono">{lead.id}</span> · Status:{" "}
+              <span className="font-medium">{lead.status.replace("_", " ")}</span>
+              {lead.assignedTo && (
+                <> · Assigned to <span className="font-medium">{lead.assignedTo.fullName}</span></>
+              )}
+            </p>
+            <div className="grid grid-cols-2 gap-2">
+              <div className="col-span-2">
+                <Label className="text-[11px]">Name *</Label>
+                <Input value={form.name} onChange={(e) => set("name", e.target.value)} className="h-8 text-xs" />
+              </div>
+              <div>
+                <Label className="text-[11px]">Company</Label>
+                <Input value={form.companyName} onChange={(e) => set("companyName", e.target.value)} className="h-8 text-xs" />
+              </div>
+              <div>
+                <Label className="text-[11px]">Phone</Label>
+                <Input value={form.phone} onChange={(e) => set("phone", e.target.value)} className="h-8 text-xs" />
+              </div>
+              <div>
+                <Label className="text-[11px]">Email</Label>
+                <Input value={form.email} onChange={(e) => set("email", e.target.value)} className="h-8 text-xs" />
+              </div>
+              <div>
+                <Label className="text-[11px]">Website</Label>
+                <Input value={form.website} onChange={(e) => set("website", e.target.value)} placeholder="https://" className="h-8 text-xs" />
+              </div>
+              <div>
+                <Label className="text-[11px]">Social media</Label>
+                <Input value={form.socialMedia} onChange={(e) => set("socialMedia", e.target.value)} placeholder="LinkedIn / FB / IG" className="h-8 text-xs" />
+              </div>
+              <div>
+                <Label className="text-[11px]">Contact person</Label>
+                <Input value={form.contactPerson} onChange={(e) => set("contactPerson", e.target.value)} className="h-8 text-xs" />
+              </div>
+              <div>
+                <Label className="text-[11px]">Contact position</Label>
+                <Input value={form.contactPosition} onChange={(e) => set("contactPosition", e.target.value)} className="h-8 text-xs" />
+              </div>
+              <div>
+                <Label className="text-[11px]">Industry</Label>
+                <Input value={form.industry} onChange={(e) => set("industry", e.target.value)} className="h-8 text-xs" />
+              </div>
+              <div>
+                <Label className="text-[11px]">Category</Label>
+                <Input value={form.category} onChange={(e) => set("category", e.target.value)} className="h-8 text-xs" />
+              </div>
+              <div>
+                <Label className="text-[11px]">Location</Label>
+                <Input value={form.location} onChange={(e) => set("location", e.target.value)} className="h-8 text-xs" />
+              </div>
+              <div>
+                <Label className="text-[11px]">Source</Label>
+                <Input value={form.source} onChange={(e) => set("source", e.target.value)} className="h-8 text-xs" />
+              </div>
+              <div className="col-span-2">
+                <Label className="text-[11px]">Notes</Label>
+                <Input value={form.notes} onChange={(e) => set("notes", e.target.value)} className="h-8 text-xs" />
+              </div>
+            </div>
+
+            {isManagerOrAdmin && (
+              <div className="rounded-md border bg-muted/30 p-3 space-y-2">
+                <p className="text-[11px] font-semibold uppercase text-muted-foreground tracking-wide">
+                  Admin overrides
+                </p>
+                <p className="text-[11px] text-muted-foreground">
+                  Changing status or owner here is recorded as an admin correction (no disposition entry).
+                </p>
+                <div className="grid grid-cols-2 gap-2">
+                  <div>
+                    <Label className="text-[11px]">Status</Label>
+                    <select
+                      value={status}
+                      onChange={(e) => setStatus(e.target.value)}
+                      className="h-8 w-full rounded-md border border-input bg-background px-2 text-xs"
+                    >
+                      <option value="NEW">New (unassigned)</option>
+                      <option value="ASSIGNED">Assigned</option>
+                      <option value="NO_ANSWER">No answer</option>
+                      <option value="WAITING_LIST">Waiting list</option>
+                      <option value="NOT_INTERESTED">Not interested</option>
+                      <option value="CONVERTED">Converted</option>
+                      <option value="ARCHIVED">Archived</option>
+                    </select>
+                  </div>
+                  <div>
+                    <Label className="text-[11px]">Assigned sales</Label>
+                    <select
+                      value={assignedToId}
+                      onChange={(e) => setAssignedToId(e.target.value)}
+                      className="h-8 w-full rounded-md border border-input bg-background px-2 text-xs"
+                    >
+                      <option value="">— Unassigned —</option>
+                      {reps.map((r) => (
+                        <option key={r.id} value={r.id}>{r.fullName}</option>
+                      ))}
+                    </select>
+                  </div>
+                </div>
+              </div>
+            )}
+          </div>
+        )}
+        <DialogFooter>
+          <Button variant="outline" onClick={onClose} disabled={saving}>
+            Cancel
+          </Button>
+          <Button onClick={submit} disabled={saving || !form.name.trim()}>
+            {saving ? "Saving…" : "Save changes"}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   );
 }
 

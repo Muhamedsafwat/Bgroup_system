@@ -47,11 +47,15 @@ export async function GET() {
           employeeId: true,
           fullNameEn: true,
           positionEn: true,
+          level: true,
+          employmentType: true,
+          workModel: true,
           status: true,
           baseSalary: true,
           currency: true,
           directManager: { select: { id: true, fullNameEn: true } },
           company: { select: { id: true, nameEn: true } },
+          department: { select: { id: true, nameEn: true } },
         },
       },
       hrProfile: {
@@ -61,8 +65,26 @@ export async function GET() {
           roles: { select: { role: { select: { name: true } } } },
         },
       },
-      crmProfile: { select: { id: true, fullName: true, role: true } },
-      partnerProfile: { select: { id: true, companyName: true, commissionRate: true, isActive: true } },
+      crmProfile: {
+        select: {
+          id: true,
+          fullName: true,
+          role: true,
+          entityId: true,
+          monthlyTargetEGP: true,
+          managerId: true,
+          active: true,
+        },
+      },
+      partnerProfile: {
+        select: {
+          id: true,
+          companyName: true,
+          contactPhone: true,
+          commissionRate: true,
+          isActive: true,
+        },
+      },
     },
   });
 

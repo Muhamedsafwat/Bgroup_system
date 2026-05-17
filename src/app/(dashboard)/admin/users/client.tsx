@@ -5,7 +5,7 @@ import Link from "next/link";
 import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { Loader2, Search, Users, Briefcase, Handshake, ShieldCheck, Plus, KeyRound, Copy, Layers } from "lucide-react";
+import { Loader2, Search, Users, Briefcase, Handshake, ShieldCheck, Plus, KeyRound, Copy, Layers, Pencil } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import {
@@ -31,17 +31,35 @@ type AdminUser = {
       employeeId: string;
       fullNameEn: string;
       positionEn: string;
+      level: string | null;
+      employmentType: string | null;
+      workModel: string | null;
       status: string;
       baseSalary: string;
       currency: string;
       directManager: { id: string; fullNameEn: string } | null;
       company: { id: string; nameEn: string } | null;
+      department: { id: string; nameEn: string } | null;
     };
     roles: string[];
     isSuperuser: boolean;
   } | null;
-  crm: { id: string; fullName: string; role: string } | null;
-  partner: { id: string; companyName: string; commissionRate: number; isActive: boolean } | null;
+  crm: {
+    id: string;
+    fullName: string;
+    role: string;
+    entityId: string | null;
+    monthlyTargetEGP: string | null;
+    managerId: string | null;
+    active: boolean;
+  } | null;
+  partner: {
+    id: string;
+    companyName: string;
+    contactPhone: string | null;
+    commissionRate: number;
+    isActive: boolean;
+  } | null;
 };
 
 type FilterKind = "all" | "employees" | "sales" | "partners" | "admins";
@@ -70,6 +88,17 @@ export function AdminUsersClient() {
   const [q, setQ] = useState("");
   const [resetTarget, setResetTarget] = useState<AdminUser | null>(null);
   const [grantTarget, setGrantTarget] = useState<AdminUser | null>(null);
+  const [editTarget, setEditTarget] = useState<AdminUser | null>(null);
+
+  // After an edit lands we want fresh state without forcing the admin to
+  // hard-refresh. Same pattern as the grant-module flow above.
+  function reloadUsers() {
+    setLoading(true);
+    fetch("/api/admin/users")
+      .then((r) => r.json())
+      .then((data: { users: AdminUser[] }) => setUsers(data.users))
+      .finally(() => setLoading(false));
+  }
 
   useEffect(() => {
     setLoading(true);
@@ -215,6 +244,16 @@ export function AdminUsersClient() {
                       </td>
                       <td className="py-2.5 px-3 text-end">
                         <div className="inline-flex gap-1">
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            className="h-7 px-2 text-xs"
+                            onClick={() => setEditTarget(u)}
+                            title="Edit name, role, target, and team"
+                          >
+                            <Pencil className="h-3.5 w-3.5 me-1" />
+                            Edit
+                          </Button>
                           {/* Only show "Add module" when the user is missing
                               at least one — once they have all three there's
                               nothing to grant. */}
@@ -272,13 +311,15 @@ export function AdminUsersClient() {
         onClose={() => setGrantTarget(null)}
         onGranted={() => {
           setGrantTarget(null);
-          // Re-fetch the users list so the row shows the new module chips
-          // without a hard reload.
-          setLoading(true);
-          fetch("/api/admin/users")
-            .then((r) => r.json())
-            .then((data: { users: AdminUser[] }) => setUsers(data.users))
-            .finally(() => setLoading(false));
+          reloadUsers();
+        }}
+      />
+      <EditUserDialog
+        user={editTarget}
+        onClose={() => setEditTarget(null)}
+        onSaved={() => {
+          setEditTarget(null);
+          reloadUsers();
         }}
       />
     </div>
@@ -734,6 +775,439 @@ function GrantModuleDialog({
               {saving ? "Granting…" : `Grant ${activeTab.toUpperCase()}`}
             </Button>
           )}
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+/**
+ * Edit-user dialog. Renders one tab per module the user already has plus a
+ * "Basic" tab for user.name. Each tab posts the same PATCH endpoint with the
+ * fields the admin actually changed — empty tabs send nothing for that block.
+ *
+ * For MANAGER/ADMIN CRM users a "Team members" multi-select appears, seeded
+ * from the current direct reports (other CrmUserProfile rows whose managerId
+ * is this user's profile id). Toggling a rep on/off rewrites their managerId
+ * via the same PATCH (`crm.teamMemberIds`).
+ */
+function EditUserDialog({
+  user,
+  onClose,
+  onSaved,
+}: {
+  user: AdminUser | null;
+  onClose: () => void;
+  onSaved: () => void;
+}) {
+  const tabs: ("basic" | "hr" | "crm" | "partners")[] = ["basic"];
+  if (user?.hr) tabs.push("hr");
+  if (user?.crm) tabs.push("crm");
+  if (user?.partner) tabs.push("partners");
+
+  const [activeTab, setActiveTab] = useState<"basic" | "hr" | "crm" | "partners">("basic");
+  const [saving, setSaving] = useState(false);
+
+  // Basic
+  const [name, setName] = useState("");
+
+  // HR
+  const [hrPosition, setHrPosition] = useState("");
+  const [hrLevel, setHrLevel] = useState("");
+  const [hrBaseSalary, setHrBaseSalary] = useState("");
+  const [hrCurrency, setHrCurrency] = useState("EGP");
+  const [hrManagerId, setHrManagerId] = useState("");
+  const [hrManagers, setHrManagers] = useState<{ id: string; fullNameEn: string }[]>([]);
+
+  // CRM
+  const [crmFullName, setCrmFullName] = useState("");
+  const [crmRole, setCrmRole] = useState<string>("REP");
+  const [crmTarget, setCrmTarget] = useState("");
+  const [crmManagerId, setCrmManagerId] = useState("");
+  const [crmActive, setCrmActive] = useState(true);
+  const [crmManagers, setCrmManagers] = useState<{ id: string; fullName: string; role: string; managerId: string | null }[]>([]);
+  const [crmReps, setCrmReps] = useState<{ id: string; fullName: string; role: string; managerId: string | null }[]>([]);
+  const [teamMemberIds, setTeamMemberIds] = useState<Set<string>>(new Set());
+
+  // Partner
+  const [partnerCompany, setPartnerCompany] = useState("");
+  const [partnerPhone, setPartnerPhone] = useState("");
+  const [partnerRate, setPartnerRate] = useState("");
+  const [partnerActive, setPartnerActive] = useState(true);
+
+  // Seed everything when the dialog opens. Re-runs on user change.
+  useEffect(() => {
+    if (!user) return;
+    setActiveTab("basic");
+    setName(user.name ?? "");
+
+    if (user.hr) {
+      setHrPosition(user.hr.employee.positionEn ?? "");
+      setHrLevel(user.hr.employee.level ?? "");
+      setHrBaseSalary(String(user.hr.employee.baseSalary ?? ""));
+      setHrCurrency(user.hr.employee.currency ?? "EGP");
+      setHrManagerId(user.hr.employee.directManager?.id ?? "");
+      // Pull HR managers for the picker (employees with at least one report
+      // OR everyone — we keep it simple and offer all employees).
+      fetch("/api/admin/employees")
+        .then((r) => (r.ok ? r.json() : { employees: [] }))
+        .then((d) => {
+          const list = (d.employees ?? d ?? []) as Array<{ id: string; fullNameEn: string }>;
+          setHrManagers(list);
+        })
+        .catch(() => setHrManagers([]));
+    }
+
+    if (user.crm) {
+      setCrmFullName(user.crm.fullName);
+      setCrmRole(user.crm.role);
+      setCrmTarget(user.crm.monthlyTargetEGP ? String(user.crm.monthlyTargetEGP) : "");
+      setCrmManagerId(user.crm.managerId ?? "");
+      setCrmActive(user.crm.active);
+      fetch("/api/crm/admin/users")
+        .then((r) => (r.ok ? r.json() : { users: [] }))
+        .then((data) => {
+          const list: Array<{ id: string; fullName: string; role: string; managerId: string | null }> =
+            Array.isArray(data) ? data : data.users ?? data.data ?? [];
+          setCrmManagers(list.filter((m) => m.role === "MANAGER" || m.role === "ADMIN"));
+          // Anyone who is REP/ACCOUNT_MGR/ASSISTANT can be a team member;
+          // managers/admins shouldn't report to other managers from this UI.
+          setCrmReps(list.filter((m) => m.role !== "MANAGER" && m.role !== "ADMIN"));
+          // Pre-select reps currently reporting to this manager.
+          if (user.crm) {
+            setTeamMemberIds(
+              new Set(list.filter((m) => m.managerId === user.crm!.id).map((m) => m.id))
+            );
+          }
+        })
+        .catch(() => {
+          setCrmManagers([]);
+          setCrmReps([]);
+        });
+    }
+
+    if (user.partner) {
+      setPartnerCompany(user.partner.companyName);
+      setPartnerPhone(user.partner.contactPhone ?? "");
+      setPartnerRate(String(user.partner.commissionRate));
+      setPartnerActive(user.partner.isActive);
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [user?.id]);
+
+  function toggleTeamMember(repId: string) {
+    setTeamMemberIds((cur) => {
+      const next = new Set(cur);
+      if (next.has(repId)) next.delete(repId);
+      else next.add(repId);
+      return next;
+    });
+  }
+
+  async function submit() {
+    if (!user) return;
+    const body: Record<string, unknown> = {};
+
+    // Basic — only send if it actually changed.
+    if (name.trim() !== (user.name ?? "")) {
+      body.name = name.trim() || null;
+    }
+
+    if (user.hr) {
+      const hr: Record<string, unknown> = {};
+      const emp = user.hr.employee;
+      if (hrPosition !== (emp.positionEn ?? "")) hr.positionEn = hrPosition || null;
+      if (hrLevel !== (emp.level ?? "")) hr.level = hrLevel || null;
+      const newSalary = hrBaseSalary === "" ? undefined : Number(hrBaseSalary);
+      if (newSalary !== undefined && newSalary !== Number(emp.baseSalary)) {
+        hr.baseSalary = newSalary;
+      }
+      if (hrCurrency !== emp.currency) hr.currency = hrCurrency;
+      const currentMgr = emp.directManager?.id ?? "";
+      if (hrManagerId !== currentMgr) {
+        hr.directManagerId = hrManagerId || null;
+      }
+      if (Object.keys(hr).length) body.hr = hr;
+    }
+
+    if (user.crm) {
+      const crm: Record<string, unknown> = {};
+      if (crmFullName !== user.crm.fullName) crm.fullName = crmFullName.trim();
+      if (crmRole !== user.crm.role) crm.role = crmRole;
+      const newTarget = crmTarget === "" ? null : Number(crmTarget);
+      const oldTarget = user.crm.monthlyTargetEGP ? Number(user.crm.monthlyTargetEGP) : null;
+      if (newTarget !== oldTarget) crm.monthlyTargetEGP = newTarget;
+      const currentMgr = user.crm.managerId ?? "";
+      if (crmManagerId !== currentMgr) crm.managerId = crmManagerId || null;
+      if (crmActive !== user.crm.active) crm.active = crmActive;
+      // Team members only meaningful for managers/admins.
+      if (crmRole === "MANAGER" || crmRole === "ADMIN") {
+        const currentReports = new Set(
+          crmReps.filter((r) => r.managerId === user.crm!.id).map((r) => r.id)
+        );
+        const next = teamMemberIds;
+        const sameSet =
+          next.size === currentReports.size &&
+          [...next].every((id) => currentReports.has(id));
+        if (!sameSet) crm.teamMemberIds = [...next];
+      }
+      if (Object.keys(crm).length) body.crm = crm;
+    }
+
+    if (user.partner) {
+      const partner: Record<string, unknown> = {};
+      if (partnerCompany !== user.partner.companyName) partner.companyName = partnerCompany.trim();
+      if (partnerPhone !== (user.partner.contactPhone ?? "")) {
+        partner.contactPhone = partnerPhone || null;
+      }
+      const newRate = partnerRate === "" ? undefined : Number(partnerRate);
+      if (newRate !== undefined && newRate !== user.partner.commissionRate) {
+        partner.commissionRate = newRate;
+      }
+      if (partnerActive !== user.partner.isActive) partner.isActive = partnerActive;
+      if (Object.keys(partner).length) body.partner = partner;
+    }
+
+    if (Object.keys(body).length === 0) {
+      toast.info("Nothing to save — no fields changed.");
+      return;
+    }
+
+    setSaving(true);
+    try {
+      const res = await fetch(`/api/admin/users/${user.id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        toast.error(data.error ?? "Failed to update user");
+        return;
+      }
+      toast.success(`Updated ${user.email}`);
+      onSaved();
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <Dialog
+      open={!!user}
+      onOpenChange={(open) => {
+        if (!open) onClose();
+      }}
+    >
+      <DialogContent className="sm:max-w-lg max-h-[90vh] overflow-y-auto">
+        <DialogHeader>
+          <DialogTitle>Edit user</DialogTitle>
+        </DialogHeader>
+        {user && (
+          <div className="space-y-4">
+            <div className="rounded-md bg-muted/40 p-3 text-sm">
+              <p className="font-medium">{user.name ?? user.email}</p>
+              <p className="text-xs text-muted-foreground">{user.email}</p>
+              <div className="flex flex-wrap gap-1 mt-1.5">
+                {user.modules.hr && <ModuleChip kind="hr" />}
+                {user.modules.crm && <ModuleChip kind="crm" />}
+                {user.modules.partners && <ModuleChip kind="partners" />}
+              </div>
+            </div>
+
+            <Tabs value={activeTab} onValueChange={(v) => setActiveTab(v as typeof activeTab)}>
+              {/* Tailwind can't see template-string classes, so map count → fixed class. */}
+              <TabsList
+                className={cn(
+                  "grid w-full",
+                  tabs.length === 1 && "grid-cols-1",
+                  tabs.length === 2 && "grid-cols-2",
+                  tabs.length === 3 && "grid-cols-3",
+                  tabs.length === 4 && "grid-cols-4"
+                )}
+              >
+                {tabs.includes("basic") && <TabsTrigger value="basic">Basic</TabsTrigger>}
+                {tabs.includes("hr") && <TabsTrigger value="hr">HR</TabsTrigger>}
+                {tabs.includes("crm") && <TabsTrigger value="crm">CRM</TabsTrigger>}
+                {tabs.includes("partners") && <TabsTrigger value="partners">Partner</TabsTrigger>}
+              </TabsList>
+            </Tabs>
+
+            {activeTab === "basic" && (
+              <div className="space-y-3">
+                <div className="space-y-1">
+                  <Label className="text-xs">Display name</Label>
+                  <Input value={name} onChange={(e) => setName(e.target.value)} />
+                </div>
+                <div className="space-y-1">
+                  <Label className="text-xs">Email (read-only)</Label>
+                  <Input value={user.email} disabled />
+                  <p className="text-[11px] text-muted-foreground">
+                    Email is the login identifier — change it from the database directly if absolutely needed.
+                  </p>
+                </div>
+              </div>
+            )}
+
+            {activeTab === "hr" && user.hr && (
+              <div className="space-y-3">
+                <div className="grid grid-cols-2 gap-2">
+                  <div className="space-y-1">
+                    <Label className="text-xs">Position</Label>
+                    <Input value={hrPosition} onChange={(e) => setHrPosition(e.target.value)} />
+                  </div>
+                  <div className="space-y-1">
+                    <Label className="text-xs">Level</Label>
+                    <Input value={hrLevel} onChange={(e) => setHrLevel(e.target.value)} placeholder="junior / mid / senior" />
+                  </div>
+                  <div className="space-y-1">
+                    <Label className="text-xs">Base salary</Label>
+                    <Input type="number" value={hrBaseSalary} onChange={(e) => setHrBaseSalary(e.target.value)} />
+                  </div>
+                  <div className="space-y-1">
+                    <Label className="text-xs">Currency</Label>
+                    <Input value={hrCurrency} onChange={(e) => setHrCurrency(e.target.value)} />
+                  </div>
+                </div>
+                <div className="space-y-1">
+                  <Label className="text-xs">Direct manager</Label>
+                  <select
+                    value={hrManagerId}
+                    onChange={(e) => setHrManagerId(e.target.value)}
+                    className="h-9 w-full rounded-md border border-input bg-background px-2 text-sm"
+                  >
+                    <option value="">— None —</option>
+                    {hrManagers
+                      .filter((m) => m.id !== user.hr!.employee.id)
+                      .map((m) => (
+                        <option key={m.id} value={m.id}>{m.fullNameEn}</option>
+                      ))}
+                  </select>
+                </div>
+              </div>
+            )}
+
+            {activeTab === "crm" && user.crm && (
+              <div className="space-y-3">
+                <div className="space-y-1">
+                  <Label className="text-xs">Full name (CRM)</Label>
+                  <Input value={crmFullName} onChange={(e) => setCrmFullName(e.target.value)} />
+                </div>
+                <div className="grid grid-cols-2 gap-2">
+                  <div className="space-y-1">
+                    <Label className="text-xs">CRM role</Label>
+                    <select
+                      value={crmRole}
+                      onChange={(e) => setCrmRole(e.target.value)}
+                      className="h-9 w-full rounded-md border border-input bg-background px-2 text-sm"
+                    >
+                      <option value="REP">Sales rep</option>
+                      <option value="ACCOUNT_MGR">Account manager</option>
+                      <option value="ASSISTANT">Assistant</option>
+                      <option value="MANAGER">Sales manager</option>
+                      <option value="ADMIN">CRM admin</option>
+                    </select>
+                  </div>
+                  <div className="space-y-1">
+                    <Label className="text-xs">Monthly target (EGP)</Label>
+                    <Input type="number" value={crmTarget} onChange={(e) => setCrmTarget(e.target.value)} placeholder="50000" />
+                  </div>
+                  {(crmRole === "REP" || crmRole === "ACCOUNT_MGR" || crmRole === "ASSISTANT") && (
+                    <div className="space-y-1 col-span-2">
+                      <Label className="text-xs">Reports to</Label>
+                      <select
+                        value={crmManagerId}
+                        onChange={(e) => setCrmManagerId(e.target.value)}
+                        className="h-9 w-full rounded-md border border-input bg-background px-2 text-sm"
+                      >
+                        <option value="">— None —</option>
+                        {crmManagers
+                          .filter((m) => m.id !== user.crm!.id)
+                          .map((m) => (
+                            <option key={m.id} value={m.id}>{m.fullName}</option>
+                          ))}
+                      </select>
+                    </div>
+                  )}
+                  <div className="space-y-1 col-span-2 flex items-center gap-2">
+                    <input
+                      id="crm-active"
+                      type="checkbox"
+                      checked={crmActive}
+                      onChange={(e) => setCrmActive(e.target.checked)}
+                      className="h-4 w-4"
+                    />
+                    <Label htmlFor="crm-active" className="text-xs">Active in CRM (uncheck to hide from owner pickers)</Label>
+                  </div>
+                </div>
+
+                {(crmRole === "MANAGER" || crmRole === "ADMIN") && (
+                  <div className="space-y-1">
+                    <Label className="text-xs">Team members</Label>
+                    <p className="text-[11px] text-muted-foreground">
+                      Tick each rep that reports to this manager. Unticking a previously-assigned rep clears their manager.
+                    </p>
+                    <div className="rounded-md border max-h-48 overflow-y-auto divide-y">
+                      {crmReps.length === 0 ? (
+                        <p className="text-xs text-muted-foreground p-3">No reps available.</p>
+                      ) : (
+                        crmReps.map((r) => (
+                          <label key={r.id} className="flex items-center gap-2 px-3 py-1.5 text-sm hover:bg-muted/40 cursor-pointer">
+                            <input
+                              type="checkbox"
+                              checked={teamMemberIds.has(r.id)}
+                              onChange={() => toggleTeamMember(r.id)}
+                              className="h-4 w-4"
+                            />
+                            <span className="flex-1 truncate">{r.fullName}</span>
+                            <span className="text-[10px] uppercase text-muted-foreground">{r.role}</span>
+                            {r.managerId && r.managerId !== user.crm!.id && (
+                              <span className="text-[10px] text-amber-600" title="Currently reports to a different manager">
+                                reassign
+                              </span>
+                            )}
+                          </label>
+                        ))
+                      )}
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
+
+            {activeTab === "partners" && user.partner && (
+              <div className="space-y-3">
+                <div className="space-y-1">
+                  <Label className="text-xs">Partner company</Label>
+                  <Input value={partnerCompany} onChange={(e) => setPartnerCompany(e.target.value)} />
+                </div>
+                <div className="grid grid-cols-2 gap-2">
+                  <div className="space-y-1">
+                    <Label className="text-xs">Contact phone</Label>
+                    <Input value={partnerPhone} onChange={(e) => setPartnerPhone(e.target.value)} />
+                  </div>
+                  <div className="space-y-1">
+                    <Label className="text-xs">Commission rate (%)</Label>
+                    <Input type="number" value={partnerRate} onChange={(e) => setPartnerRate(e.target.value)} min={0} max={100} />
+                  </div>
+                </div>
+                <div className="flex items-center gap-2">
+                  <input
+                    id="partner-active"
+                    type="checkbox"
+                    checked={partnerActive}
+                    onChange={(e) => setPartnerActive(e.target.checked)}
+                    className="h-4 w-4"
+                  />
+                  <Label htmlFor="partner-active" className="text-xs">Active partner</Label>
+                </div>
+              </div>
+            )}
+          </div>
+        )}
+        <DialogFooter>
+          <Button variant="outline" onClick={onClose} disabled={saving}>Cancel</Button>
+          <Button onClick={submit} disabled={saving}>{saving ? "Saving…" : "Save changes"}</Button>
         </DialogFooter>
       </DialogContent>
     </Dialog>

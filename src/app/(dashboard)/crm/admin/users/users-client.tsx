@@ -81,6 +81,11 @@ export function UsersClient({
   const [entityId, setEntityId] = useState("");
   const [monthlyTarget, setMonthlyTarget] = useState("");
   const [managerId, setManagerId] = useState("");
+  // When editing a MANAGER user we let the admin pick which reps report to
+  // them right here — that's the inverse of the per-rep "Reports to" field
+  // and is how teams actually get composed in practice (one manager session
+  // → tick the 6 reps that work for them).
+  const [teamMemberIds, setTeamMemberIds] = useState<Set<string>>(new Set());
 
   const roleLabels = t.roles as Record<string, string>;
 
@@ -94,6 +99,7 @@ export function UsersClient({
     setEntityId("");
     setMonthlyTarget("");
     setManagerId("");
+    setTeamMemberIds(new Set());
     setOpen(true);
   }
 
@@ -107,6 +113,17 @@ export function UsersClient({
     setEntityId(user.entityId ?? "");
     setMonthlyTarget(user.monthlyTargetEGP ? String(Number(user.monthlyTargetEGP)) : "");
     setManagerId(user.managerId ?? "");
+    // Seed the team-members picker with the reps already pointing at this
+    // manager. The seed only matters when editing — creating a manager
+    // wouldn't have any reports yet (and the user record doesn't exist
+    // until save, so there's nothing for reps to point at).
+    setTeamMemberIds(
+      new Set(
+        users
+          .filter((u) => u.managerId === user.id)
+          .map((u) => u.id)
+      )
+    );
     setOpen(true);
   }
 
@@ -126,6 +143,21 @@ export function UsersClient({
           monthlyTargetEGP: monthlyTarget ? Number(monthlyTarget) : null,
           managerId: managerId || null,
         });
+        // When we're editing a manager, sync team membership by patching
+        // each rep's `managerId`. Compare against the seed set:
+        //   - ticked + wasn't on team before → set managerId = this user
+        //   - was on team but unticked       → clear their managerId
+        if (role === "MANAGER" || role === "ADMIN") {
+          const previousTeam = new Set(
+            users.filter((u) => u.managerId === editing.id).map((u) => u.id)
+          );
+          const additions = Array.from(teamMemberIds).filter((id) => !previousTeam.has(id));
+          const removals = Array.from(previousTeam).filter((id) => !teamMemberIds.has(id));
+          await Promise.all([
+            ...additions.map((repId) => updateUser(repId, { managerId: editing.id })),
+            ...removals.map((repId) => updateUser(repId, { managerId: null })),
+          ]);
+        }
       } else {
         await createUser({
           fullName,
@@ -409,6 +441,80 @@ export function UsersClient({
                       ))}
                   </SelectContent>
                 </Select>
+              </div>
+            )}
+
+            {/* Team members picker — only when editing a MANAGER. This is
+                the inverse of the "Reports to" field on a rep's record:
+                tick everyone who works for this manager and we sync their
+                managerId on save (additions + removals). New managers
+                don't have a user id yet so the picker is hidden on create. */}
+            {editing && (role === "MANAGER" || role === "ADMIN") && (
+              <div className="space-y-2 pt-3 border-t">
+                <div className="flex items-center justify-between">
+                  <label className="text-sm font-medium">
+                    {locale === "ar" ? "أعضاء الفريق" : "Team members"}
+                  </label>
+                  <span className="text-xs text-muted-foreground">
+                    {teamMemberIds.size}{" "}
+                    {locale === "ar" ? "مختار" : "selected"}
+                  </span>
+                </div>
+                <p className="text-xs text-muted-foreground">
+                  {locale === "ar"
+                    ? "حدد المندوبين الذين يتبعون هذا المدير. سيرى هذا المدير فرص هؤلاء فقط في لوحة المبيعات."
+                    : "Tick the reps that report to this manager. They become this manager's pipeline scope."}
+                </p>
+                <div className="max-h-48 overflow-y-auto rounded-md border divide-y">
+                  {users.filter((u) => u.active && u.id !== editing.id && (u.role === "REP" || u.role === "ACCOUNT_MGR")).length === 0 ? (
+                    <p className="px-3 py-2 text-xs text-muted-foreground">
+                      {locale === "ar" ? "لا يوجد مندوبون" : "No reps to assign"}
+                    </p>
+                  ) : (
+                    users
+                      .filter(
+                        (u) =>
+                          u.active &&
+                          u.id !== editing.id &&
+                          (u.role === "REP" || u.role === "ACCOUNT_MGR")
+                      )
+                      .map((u) => {
+                        const checked = teamMemberIds.has(u.id);
+                        const otherManager = !checked && u.managerId && u.managerId !== editing.id;
+                        return (
+                          <label
+                            key={u.id}
+                            className="flex items-center gap-2 px-3 py-2 text-sm cursor-pointer hover:bg-accent"
+                          >
+                            <input
+                              type="checkbox"
+                              checked={checked}
+                              onChange={(e) => {
+                                setTeamMemberIds((prev) => {
+                                  const next = new Set(prev);
+                                  if (e.target.checked) next.add(u.id);
+                                  else next.delete(u.id);
+                                  return next;
+                                });
+                              }}
+                              className="h-4 w-4"
+                            />
+                            <span className="flex-1 min-w-0">
+                              <span className="font-medium">{u.fullName}</span>
+                              <span className="text-xs text-muted-foreground ms-2">· {u.role}</span>
+                            </span>
+                            {otherManager && (
+                              <span className="text-[10px] text-amber-600 dark:text-amber-400">
+                                {locale === "ar"
+                                  ? "حالياً مع مدير آخر"
+                                  : "currently on another team"}
+                              </span>
+                            )}
+                          </label>
+                        );
+                      })
+                  )}
+                </div>
               </div>
             )}
 

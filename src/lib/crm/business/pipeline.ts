@@ -1,7 +1,7 @@
-import type { CrmOpportunityStage } from "@/generated/prisma";
 import type { FxRateMap } from "./fx";
 import { convertToEGP } from "./fx";
 import type { CrmCurrency } from "@/generated/prisma";
+import type { CrmOpportunityStage } from "@/types";
 
 export function computeWeightedValue(
   estimatedValueEGP: number,

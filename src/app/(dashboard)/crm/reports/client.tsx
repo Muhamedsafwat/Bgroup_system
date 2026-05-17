@@ -7,7 +7,13 @@ import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { Phone, Calendar, Users, Sparkles, Save } from "lucide-react";
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
+import { Phone, Calendar, Users, Sparkles, Save, FileText } from "lucide-react";
 import { toast } from "sonner";
 
 type Report = {
@@ -61,6 +67,7 @@ export function DailyReportsClient({ isManager }: { isManager: boolean }) {
   const [reports, setReports] = useState<Report[]>([]);
   const [totals, setTotals] = useState<Totals>({ callsCount: 0, meetingsBooked: 0, meetingsHeld: 0, newLeads: 0 });
   const [loading, setLoading] = useState(true);
+  const [openReport, setOpenReport] = useState<Report | null>(null);
 
   // Today's submission form
   const today = ymd(new Date());
@@ -199,6 +206,11 @@ export function DailyReportsClient({ isManager }: { isManager: boolean }) {
         <Total label="New leads" value={totals.newLeads} icon={Users} tile="tile-amber" />
       </div>
 
+      <p className="text-xs text-muted-foreground">
+        Tip: click any row to see the rep&apos;s full notes for that day,
+        plus the calls and meetings they logged.
+      </p>
+
       {/* Rows */}
       <Card>
         <CardHeader className="pb-2">
@@ -227,7 +239,12 @@ export function DailyReportsClient({ isManager }: { isManager: boolean }) {
                 </thead>
                 <tbody className="divide-y">
                   {reports.map((r) => (
-                    <tr key={r.id}>
+                    <tr
+                      key={r.id}
+                      onClick={() => setOpenReport(r)}
+                      className="cursor-pointer hover:bg-accent/40 transition-colors"
+                      title="Click for full details"
+                    >
                       <td className="py-2 px-2 ltr-nums">{r.reportDate.split("T")[0]}</td>
                       {isManager && <td className="py-2 px-2">{r.rep.fullName}</td>}
                       <td className="py-2 px-2 text-end ltr-nums">{r.callsCount}</td>
@@ -243,6 +260,249 @@ export function DailyReportsClient({ isManager }: { isManager: boolean }) {
           )}
         </CardContent>
       </Card>
+
+      <ReportDetailDialog
+        report={openReport}
+        isManager={isManager}
+        onClose={() => setOpenReport(null)}
+      />
+    </div>
+  );
+}
+
+/**
+ * Detail dialog. Shows the full report row (counters + untruncated notes),
+ * plus the rep's actual calls + meetings for that calendar day. The drill-
+ * down queries trust the existing /api/crm/calls and /api/crm/meetings
+ * scope filters so a regular rep only sees their own rows; a manager sees
+ * any rep's rows for the day they clicked.
+ */
+function ReportDetailDialog({
+  report,
+  isManager,
+  onClose,
+}: {
+  report: Report | null;
+  isManager: boolean;
+  onClose: () => void;
+}) {
+  type CallRow = {
+    id: string;
+    code: string;
+    callType: string;
+    outcome: string;
+    callAt: string;
+    durationMins: number;
+    contactName: string | null;
+    notes: string | null;
+    opportunity: { id: string; code: string; title: string } | null;
+  };
+  type MeetingRow = {
+    id: string;
+    code: string;
+    startAt: string;
+    endAt: string;
+    status: string;
+    contactName: string | null;
+    customerNeed: string | null;
+    opportunity: { id: string; code: string; title: string } | null;
+  };
+  const [calls, setCalls] = useState<CallRow[]>([]);
+  const [meetings, setMeetings] = useState<MeetingRow[]>([]);
+  const [loadingDrill, setLoadingDrill] = useState(false);
+
+  useEffect(() => {
+    if (!report) {
+      setCalls([]);
+      setMeetings([]);
+      return;
+    }
+    let cancelled = false;
+    setLoadingDrill(true);
+    // The report.reportDate is UTC midnight. Drill the calls/meetings that
+    // happened within that calendar day. Calls + meetings APIs accept
+    // from/to ISO bounds.
+    const day = new Date(report.reportDate);
+    const dayStart = new Date(day);
+    dayStart.setUTCHours(0, 0, 0, 0);
+    const dayEnd = new Date(dayStart);
+    dayEnd.setUTCDate(dayEnd.getUTCDate() + 1);
+
+    Promise.all([
+      fetch(
+        `/api/crm/calls?repId=${report.rep.id}&from=${dayStart.toISOString()}&to=${dayEnd.toISOString()}`
+      )
+        .then((r) => (r.ok ? r.json() : { calls: [] }))
+        .catch(() => ({ calls: [] })),
+      fetch(
+        `/api/crm/meetings?scope=all&from=${dayStart.toISOString()}&to=${dayEnd.toISOString()}`
+      )
+        .then((r) => (r.ok ? r.json() : { meetings: [] }))
+        .catch(() => ({ meetings: [] })),
+    ])
+      .then(([callData, meetingData]) => {
+        if (cancelled) return;
+        setCalls(callData.calls ?? []);
+        setMeetings(
+          (meetingData.meetings ?? []).filter(
+            (m: { scheduledBy?: { id?: string } }) =>
+              m.scheduledBy?.id === report.rep.id
+          )
+        );
+      })
+      .finally(() => !cancelled && setLoadingDrill(false));
+    return () => {
+      cancelled = true;
+    };
+  }, [report]);
+
+  return (
+    <Dialog open={!!report} onOpenChange={(open) => !open && onClose()}>
+      <DialogContent className="sm:max-w-2xl max-h-[90vh] overflow-y-auto">
+        <DialogHeader>
+          <DialogTitle className="flex items-center gap-2">
+            <FileText className="h-4 w-4 text-muted-foreground" />
+            Daily report
+            {report &&
+              ` · ${report.reportDate.split("T")[0]}${isManager ? ` · ${report.rep.fullName}` : ""}`}
+          </DialogTitle>
+        </DialogHeader>
+        {report && (
+          <div className="space-y-4">
+            {/* Counter grid */}
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+              <DetailCard label="Calls" value={report.callsCount} />
+              <DetailCard label="Booked" value={report.meetingsBooked} />
+              <DetailCard label="Held" value={report.meetingsHeld} />
+              <DetailCard label="New leads" value={report.newLeads} />
+            </div>
+
+            {/* Notes — full text, not truncated */}
+            <div>
+              <p className="text-xs uppercase tracking-wide text-muted-foreground mb-1">
+                Notes
+              </p>
+              <div className="rounded-md border bg-muted/30 p-3 text-sm whitespace-pre-wrap min-h-[3rem]">
+                {report.notes || (
+                  <span className="text-muted-foreground italic">
+                    No notes for this day.
+                  </span>
+                )}
+              </div>
+            </div>
+
+            {/* Calls drill-down */}
+            <div>
+              <p className="text-xs uppercase tracking-wide text-muted-foreground mb-1.5 flex items-center gap-1.5">
+                <Phone className="h-3 w-3" />
+                Calls logged on this day
+                {!loadingDrill && (
+                  <span className="text-foreground font-medium">({calls.length})</span>
+                )}
+              </p>
+              {loadingDrill ? (
+                <p className="text-xs text-muted-foreground py-2">Loading…</p>
+              ) : calls.length === 0 ? (
+                <p className="text-xs text-muted-foreground py-2 italic">
+                  No calls logged for this rep on this day.
+                </p>
+              ) : (
+                <div className="rounded-md border divide-y text-xs">
+                  {calls.map((c) => (
+                    <div key={c.id} className="px-3 py-2 flex items-start gap-2">
+                      <span className="font-mono text-[10px] text-muted-foreground shrink-0">
+                        {new Date(c.callAt).toLocaleTimeString(undefined, {
+                          hour: "2-digit",
+                          minute: "2-digit",
+                        })}
+                      </span>
+                      <div className="min-w-0 flex-1">
+                        <p className="font-medium">
+                          {c.contactName ?? c.opportunity?.title ?? c.code}
+                          <span className="ms-2 text-[10px] uppercase rounded bg-muted px-1 py-0.5">
+                            {c.callType} · {c.outcome}
+                          </span>
+                        </p>
+                        {c.notes && (
+                          <p className="text-muted-foreground mt-0.5">{c.notes}</p>
+                        )}
+                        {c.opportunity && (
+                          <p className="text-[10px] text-primary mt-0.5">
+                            {c.opportunity.code} — {c.opportunity.title}
+                          </p>
+                        )}
+                      </div>
+                      <span className="text-[10px] text-muted-foreground shrink-0">
+                        {c.durationMins}m
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+
+            {/* Meetings drill-down */}
+            <div>
+              <p className="text-xs uppercase tracking-wide text-muted-foreground mb-1.5 flex items-center gap-1.5">
+                <Calendar className="h-3 w-3" />
+                Meetings on this day
+                {!loadingDrill && (
+                  <span className="text-foreground font-medium">({meetings.length})</span>
+                )}
+              </p>
+              {loadingDrill ? (
+                <p className="text-xs text-muted-foreground py-2">Loading…</p>
+              ) : meetings.length === 0 ? (
+                <p className="text-xs text-muted-foreground py-2 italic">
+                  No meetings scheduled by this rep on this day.
+                </p>
+              ) : (
+                <div className="rounded-md border divide-y text-xs">
+                  {meetings.map((m) => (
+                    <div key={m.id} className="px-3 py-2 flex items-start gap-2">
+                      <span className="font-mono text-[10px] text-muted-foreground shrink-0">
+                        {new Date(m.startAt).toLocaleTimeString(undefined, {
+                          hour: "2-digit",
+                          minute: "2-digit",
+                        })}
+                      </span>
+                      <div className="min-w-0 flex-1">
+                        <p className="font-medium">
+                          {m.contactName ?? m.customerNeed ?? m.code}
+                          <span className="ms-2 text-[10px] uppercase rounded bg-muted px-1 py-0.5">
+                            {m.status.replace("_", " ")}
+                          </span>
+                        </p>
+                        {m.customerNeed && m.contactName && (
+                          <p className="text-muted-foreground mt-0.5">
+                            About: {m.customerNeed}
+                          </p>
+                        )}
+                        {m.opportunity && (
+                          <p className="text-[10px] text-primary mt-0.5">
+                            {m.opportunity.code} — {m.opportunity.title}
+                          </p>
+                        )}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          </div>
+        )}
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+function DetailCard({ label, value }: { label: string; value: number }) {
+  return (
+    <div className="rounded-md bg-muted/30 border p-2">
+      <p className="text-[10px] uppercase tracking-wide text-muted-foreground">
+        {label}
+      </p>
+      <p className="text-xl font-bold ltr-nums">{value}</p>
     </div>
   );
 }

@@ -19,8 +19,16 @@ import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Search, LayoutGrid, List, GripVertical, X } from "lucide-react";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
-import { STAGE_LABEL_EN, STAGE_LABEL_AR, SPEC_STAGES } from "@/lib/crm/stage-labels";
-import type { CrmOpportunityStage } from "@/generated/prisma";
+import { STAGE_LABEL_EN, STAGE_LABEL_AR, SPEC_STAGES, stageLabel } from "@/lib/crm/stage-labels";
+import type { CrmOpportunityStage } from "@/types";
+
+type StageConfig = {
+  stage: string;
+  labelEn: string;
+  labelAr: string;
+  probabilityPct: number;
+  displayOrder: number;
+};
 
 type Opp = {
   id: string;
@@ -55,16 +63,43 @@ const PRIORITY_DOT: Record<Opp["priority"], string> = {
   COLD: "bg-sky-500",
 };
 
-const STAGE_HUE: Partial<Record<CrmOpportunityStage, string>> = {
+// One hue per seed stage. PROPOSAL_SENT / NEGOTIATION / VERBAL_YES were
+// previously missing — they were hidden from the kanban because SPEC_STAGES
+// only listed 8 columns. Once we started rendering every admin-curated stage
+// they showed up colorless. Each Tailwind class string is listed below as a
+// safelist so Tailwind's JIT can see them even though the lookup is dynamic.
+const STAGE_HUE: Record<string, string> = {
   NEW: "from-indigo-500/20 to-indigo-500/5",
   CONTACTED: "from-sky-500/20 to-sky-500/5",
   DISCOVERY: "from-violet-500/20 to-violet-500/5",
-  TECH_MEETING: "from-amber-500/20 to-amber-500/5",
   QUALIFIED: "from-fuchsia-500/20 to-fuchsia-500/5",
+  TECH_MEETING: "from-amber-500/20 to-amber-500/5",
+  PROPOSAL_SENT: "from-orange-500/20 to-orange-500/5",
+  NEGOTIATION: "from-pink-500/20 to-pink-500/5",
+  VERBAL_YES: "from-lime-500/25 to-lime-500/5",
   WON: "from-emerald-500/30 to-emerald-500/5",
   LOST: "from-rose-500/20 to-rose-500/5",
   POSTPONED: "from-slate-500/20 to-slate-500/5",
 };
+
+// Fallback for admin-added stages (e.g. "FIELD_TRIAL", "PILOT") so they
+// don't render gray. Each candidate must be a literal class string so the
+// Tailwind JIT can compile it. Hash the stage code to pick deterministically.
+const STAGE_HUE_PALETTE: string[] = [
+  "from-teal-500/20 to-teal-500/5",
+  "from-cyan-500/20 to-cyan-500/5",
+  "from-blue-500/20 to-blue-500/5",
+  "from-purple-500/20 to-purple-500/5",
+  "from-yellow-500/25 to-yellow-500/5",
+  "from-red-500/20 to-red-500/5",
+];
+
+function hueFor(stage: string): string {
+  if (STAGE_HUE[stage]) return STAGE_HUE[stage];
+  let h = 0;
+  for (let i = 0; i < stage.length; i++) h = (h * 31 + stage.charCodeAt(i)) | 0;
+  return STAGE_HUE_PALETTE[Math.abs(h) % STAGE_HUE_PALETTE.length];
+}
 
 function formatEGP(s: string): string {
   const n = Number(s);
@@ -84,6 +119,7 @@ export function PipelineClient({ isManager }: { isManager: boolean }) {
   const [scope, setScope] = useState<"mine" | "all">(isManager ? "all" : "mine");
   const [loading, setLoading] = useState(true);
   const [activeId, setActiveId] = useState<string | null>(null);
+  const [stages, setStages] = useState<StageConfig[]>([]);
 
   const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 5 } }));
 
@@ -91,7 +127,35 @@ export function PipelineClient({ isManager }: { isManager: boolean }) {
     fetch("/api/crm/filters")
       .then((r) => (r.ok ? r.json() : null))
       .then((d) => d && setOptions(d));
+    // Pull the admin-curated stage list so column count + headers come from
+    // CrmStageConfig, not the hardcoded SPEC_STAGES. Falls back to SPEC_STAGES
+    // (mapped through the static label dict) if the API call fails so the
+    // board still renders something rather than a blank screen.
+    fetch("/api/crm/stages")
+      .then((r) => (r.ok ? r.json() : null))
+      .then((d) => {
+        if (d?.stages && Array.isArray(d.stages) && d.stages.length > 0) {
+          setStages(d.stages);
+        } else {
+          setStages(
+            SPEC_STAGES.map((s, i) => ({
+              stage: s,
+              labelEn: stageLabel(s, "en"),
+              labelAr: stageLabel(s, "ar"),
+              probabilityPct: 0,
+              displayOrder: i,
+            }))
+          );
+        }
+      });
   }, []);
+
+  // Resolver: admin-curated label first, then static dict, then humanised code.
+  function labelFor(stage: string): { en: string; ar: string } {
+    const cfg = stages.find((s) => s.stage === stage);
+    if (cfg) return { en: cfg.labelEn, ar: cfg.labelAr };
+    return { en: STAGE_LABEL_EN[stage] ?? stageLabel(stage, "en"), ar: STAGE_LABEL_AR[stage] ?? stageLabel(stage, "ar") };
+  }
 
   async function refresh() {
     setLoading(true);
@@ -137,7 +201,7 @@ export function PipelineClient({ isManager }: { isManager: boolean }) {
       setOpps(prev);
       return;
     }
-    toast.success(`Moved to ${STAGE_LABEL_EN[newStage]}`);
+    toast.success(`Moved to ${labelFor(newStage).en}`);
   }
 
   function onDragEnd(e: DragEndEvent) {
@@ -150,8 +214,12 @@ export function PipelineClient({ isManager }: { isManager: boolean }) {
     moveStage(oppId, newStage);
   }
 
-  const oppsByStage: Partial<Record<CrmOpportunityStage, Opp[]>> = {};
-  for (const s of SPEC_STAGES) oppsByStage[s] = [];
+  // Use the admin-curated stage list once it loads; while loading we fall
+  // back to SPEC_STAGES so the page isn't blank on the first paint.
+  const orderedStages: string[] =
+    stages.length > 0 ? stages.map((s) => s.stage) : (SPEC_STAGES as string[]);
+  const oppsByStage: Record<string, Opp[]> = {};
+  for (const s of orderedStages) oppsByStage[s] = [];
   for (const o of opps) {
     const arr = oppsByStage[o.stage] ?? (oppsByStage[o.stage] = []);
     arr.push(o);
@@ -253,19 +321,24 @@ export function PipelineClient({ isManager }: { isManager: boolean }) {
         >
           <div className="overflow-x-auto pb-2">
             <div className="flex gap-3 min-w-fit">
-              {SPEC_STAGES.map((stage) => (
-                <StageColumn
-                  key={stage}
-                  stage={stage}
-                  opps={oppsByStage[stage] ?? []}
-                  activeId={activeId}
-                />
-              ))}
+              {orderedStages.map((stage) => {
+                const label = labelFor(stage);
+                return (
+                  <StageColumn
+                    key={stage}
+                    stage={stage}
+                    labelEn={label.en}
+                    labelAr={label.ar}
+                    opps={oppsByStage[stage] ?? []}
+                    activeId={activeId}
+                  />
+                );
+              })}
             </div>
           </div>
         </DndContext>
       ) : (
-        <ListView opps={opps} />
+        <ListView opps={opps} labelFor={labelFor} />
       )}
     </div>
   );
@@ -273,10 +346,14 @@ export function PipelineClient({ isManager }: { isManager: boolean }) {
 
 function StageColumn({
   stage,
+  labelEn,
+  labelAr,
   opps,
   activeId,
 }: {
-  stage: CrmOpportunityStage;
+  stage: string;
+  labelEn: string;
+  labelAr: string;
   opps: Opp[];
   activeId: string | null;
 }) {
@@ -287,14 +364,14 @@ function StageColumn({
       ref={setNodeRef}
       className={cn(
         "w-72 shrink-0 rounded-2xl border bg-gradient-to-b p-3 transition-colors",
-        STAGE_HUE[stage] ?? "from-muted/40 to-muted/10",
+        hueFor(stage),
         isOver && "ring-2 ring-primary/50 -translate-y-0.5"
       )}
     >
       <div className="flex items-center justify-between mb-2">
         <div className="min-w-0">
-          <p className="text-sm font-semibold truncate">{STAGE_LABEL_EN[stage]}</p>
-          <p className="text-[10px] text-muted-foreground truncate">{STAGE_LABEL_AR[stage]}</p>
+          <p className="text-sm font-semibold truncate">{labelEn}</p>
+          <p className="text-[10px] text-muted-foreground truncate">{labelAr}</p>
         </div>
         <span className="text-xs text-muted-foreground shrink-0">
           {opps.length} · {formatEGP(String(total))} EGP
@@ -361,7 +438,13 @@ function OppCard({ opp, active }: { opp: Opp; active: boolean }) {
   );
 }
 
-function ListView({ opps }: { opps: Opp[] }) {
+function ListView({
+  opps,
+  labelFor,
+}: {
+  opps: Opp[];
+  labelFor: (stage: string) => { en: string; ar: string };
+}) {
   if (opps.length === 0) {
     return <p className="text-sm text-muted-foreground py-12 text-center">No opportunities match.</p>;
   }
@@ -392,7 +475,7 @@ function ListView({ opps }: { opps: Opp[] }) {
                   <td className="py-2 px-3 text-muted-foreground">{o.owner.fullName}</td>
                   <td className="py-2 px-3">
                     <span className="text-[10px] uppercase rounded px-1.5 py-0.5 bg-muted">
-                      {STAGE_LABEL_EN[o.stage]}
+                      {labelFor(o.stage).en}
                     </span>
                   </td>
                   <td className="py-2 px-3 text-end ltr-nums">{formatEGP(o.estimatedValueEGP)} EGP</td>
