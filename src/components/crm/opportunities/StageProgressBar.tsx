@@ -3,6 +3,7 @@
 import { useLocale } from "@/lib/i18n";
 import { cn } from "@/lib/utils";
 import { STAGE_ORDER } from "@/lib/crm/business/stage-transitions";
+import { stageLabel } from "@/lib/crm/stage-labels";
 import type { CrmOpportunityStage } from "@/types";
 
 const VISIBLE_STAGES: CrmOpportunityStage[] = [
@@ -55,7 +56,7 @@ export function StageProgressBar({ currentStage }: { currentStage: string }) {
               isFuture && "bg-muted text-muted-foreground"
             )}
           >
-            {t.stages[stage]}
+            {(t.stages as Record<string, string>)[stage] ?? stageLabel(stage)}
           </div>
         );
       })}

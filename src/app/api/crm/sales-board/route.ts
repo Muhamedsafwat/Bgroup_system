@@ -2,8 +2,9 @@ import { NextResponse } from "next/server";
 import type { Session } from "next-auth";
 import { auth } from "@/lib/auth";
 import { db } from "@/lib/db";
-import type { CrmOpportunityStage, CrmPriority, Prisma } from "@/generated/prisma";
+import type { CrmPriority, Prisma } from "@/generated/prisma";
 import { SPEC_STAGES } from "@/lib/crm/stage-labels";
+import type { CrmOpportunityStage } from "@/types";
 
 /**
  * Aggregator for the CRM sales board. Returns the data shape needed by the

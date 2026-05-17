@@ -187,6 +187,74 @@ export async function getGroupDashboardData(
     entityGroups[key].weightedValue += Number(opp.weightedValueEGP);
   }
 
+  // Pipeline by stage — needed for the forecast page's admin/manager
+  // detail view. Rolling up count + value + weighted lets us show "we have
+  // 6.3M sitting in Negotiation that should land this month" — much more
+  // actionable than the single weighted-pipeline KPI. Pull stage configs
+  // along the way to surface human-readable labels + probability + order.
+  const stageConfigRows = await db.crmStageConfig.findMany({
+    where: { isActive: true },
+    orderBy: { displayOrder: "asc" },
+    select: {
+      stage: true,
+      customLabelEn: true,
+      customLabelAr: true,
+      probabilityPct: true,
+      displayOrder: true,
+    },
+  });
+  const stageBuckets = new Map<
+    string,
+    {
+      stage: string;
+      labelEn: string;
+      labelAr: string;
+      probabilityPct: number;
+      displayOrder: number;
+      count: number;
+      totalValue: number;
+      weightedValue: number;
+    }
+  >();
+  for (const cfg of stageConfigRows) {
+    stageBuckets.set(cfg.stage, {
+      stage: cfg.stage,
+      labelEn: cfg.customLabelEn ?? cfg.stage,
+      labelAr: cfg.customLabelAr ?? cfg.stage,
+      probabilityPct: cfg.probabilityPct,
+      displayOrder: cfg.displayOrder,
+      count: 0,
+      totalValue: 0,
+      weightedValue: 0,
+    });
+  }
+  for (const opp of openOpps) {
+    let bucket = stageBuckets.get(opp.stage);
+    if (!bucket) {
+      // Defensive: opp uses a stage code that's no longer in CrmStageConfig
+      // (admin retired the stage). Still surface it so the forecast totals
+      // tie out — with a "displayOrder=9999" so retired stages sink to the
+      // bottom.
+      bucket = {
+        stage: opp.stage,
+        labelEn: opp.stage,
+        labelAr: opp.stage,
+        probabilityPct: Number(opp.probabilityPct),
+        displayOrder: 9999,
+        count: 0,
+        totalValue: 0,
+        weightedValue: 0,
+      };
+      stageBuckets.set(opp.stage, bucket);
+    }
+    bucket.count++;
+    bucket.totalValue += Number(opp.estimatedValueEGP);
+    bucket.weightedValue += Number(opp.weightedValueEGP);
+  }
+  const pipelineByStage = Array.from(stageBuckets.values())
+    .filter((b) => b.count > 0)
+    .sort((a, b) => a.displayOrder - b.displayOrder);
+
   // Alerts
   const alertableOpps = openOpps.map((o) => ({
     id: o.id,
@@ -216,6 +284,7 @@ export async function getGroupDashboardData(
     leaderboard,
     topHotOpportunities: topHot,
     pipelineByEntity: Object.values(entityGroups),
+    pipelineByStage,
     totalAlerts,
     hygieneScore: computeHygieneScore(alertableOpps),
   };

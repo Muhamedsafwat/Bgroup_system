@@ -46,6 +46,9 @@ type OpportunityFormInitial = {
   /// this. New opps store it directly on the row; legacy rows fall back
   /// to the linked CrmCompany.nameEn via the loader.
   customerCompanyName?: string | null;
+  customerContactName?: string | null;
+  customerContactPhone?: string | null;
+  customerContactEmail?: string | null;
   companyId?: string | null;
   primaryContactId?: string | null;
   entityId: string;
@@ -96,6 +99,9 @@ export function OpportunityForm({
     defaultValues: initial
       ? {
           customerCompanyName: initial.customerCompanyName ?? "",
+          customerContactName: initial.customerContactName ?? "",
+          customerContactPhone: initial.customerContactPhone ?? "",
+          customerContactEmail: initial.customerContactEmail ?? "",
           companyId: initial.companyId ?? undefined,
           primaryContactId: initial.primaryContactId ?? undefined,
           entityId: initial.entityId,
@@ -117,6 +123,9 @@ export function OpportunityForm({
         }
       : {
           customerCompanyName: "",
+          customerContactName: "",
+          customerContactPhone: "",
+          customerContactEmail: "",
           entityId: userEntityId || "",
           currency: "EGP",
           priority: "COLD",
@@ -224,6 +233,57 @@ export function OpportunityForm({
               </p>
             )}
           </div>
+
+          {/* Contact person — free-text trio. The whole point of this section
+              is so the rep records the human they're actually selling to,
+              not just a faceless company. All three are optional in case the
+              rep is logging an early lead they haven't talked to yet. */}
+          <div className="space-y-2 pt-3 border-t border-border">
+            <Label className="text-sm font-semibold">
+              {locale === "ar" ? "شخص الاتصال" : "Contact person"}
+            </Label>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+              <div>
+                <Label htmlFor="contactName" className="text-xs">
+                  {locale === "ar" ? "الاسم" : "Name"}
+                </Label>
+                <Input
+                  id="contactName"
+                  {...register("customerContactName")}
+                  placeholder={locale === "ar" ? "مثل: محمد علي" : "e.g. Sara Hassan"}
+                />
+              </div>
+              <div>
+                <Label htmlFor="contactPhone" className="text-xs">
+                  {locale === "ar" ? "رقم الهاتف" : "Phone"}
+                </Label>
+                <Input
+                  id="contactPhone"
+                  type="tel"
+                  inputMode="tel"
+                  {...register("customerContactPhone")}
+                  placeholder="+20 100 123 4567"
+                />
+              </div>
+              <div className="sm:col-span-2">
+                <Label htmlFor="contactEmail" className="text-xs">
+                  {locale === "ar" ? "البريد الإلكتروني" : "Email"}
+                </Label>
+                <Input
+                  id="contactEmail"
+                  type="email"
+                  inputMode="email"
+                  {...register("customerContactEmail")}
+                  placeholder="contact@acme.example"
+                />
+              </div>
+            </div>
+            <p className="text-[11px] text-muted-foreground">
+              {locale === "ar"
+                ? "كل الحقول اختيارية — يمكنك إضافتها لاحقًا بعد المكالمة الأولى."
+                : "All optional — fill in what you have, add the rest after the first call."}
+            </p>
+          </div>
         </CardContent>
       </Card>
 
@@ -235,16 +295,16 @@ export function OpportunityForm({
         <CardContent className="space-y-4">
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
             <div>
-              <Label>{t.forms.entity} *</Label>
+              <Label>
+                {locale === "ar"
+                  ? "الشركة التي نبيع منتجاتها *"
+                  : "Company we're selling for *"}
+              </Label>
               <Select
                 value={selectedEntityId}
                 onValueChange={(v: any) => setValue("entityId", v)}
               >
                 <SelectTrigger>
-                  {/* Radix SelectValue falls back to the raw value (a cuid)
-                      when there's no matching rendered SelectItem on mount.
-                      Resolve the display label explicitly so the trigger
-                      always shows the entity name, not its id. */}
                   <SelectValue placeholder={t.forms.selectEntity}>
                     {(() => {
                       const e = entities.find((x) => x.id === selectedEntityId);
@@ -260,6 +320,11 @@ export function OpportunityForm({
                   ))}
                 </SelectContent>
               </Select>
+              <p className="text-[11px] text-muted-foreground mt-1">
+                {locale === "ar"
+                  ? "البائع — أي شركة من شركاتنا تملك هذه الصفقة (BGroup / ByteForce…)."
+                  : "The BGroup principal whose products this customer is buying."}
+              </p>
               {errors.entityId && (
                 <p className="text-sm text-destructive mt-1">{errors.entityId.message}</p>
               )}

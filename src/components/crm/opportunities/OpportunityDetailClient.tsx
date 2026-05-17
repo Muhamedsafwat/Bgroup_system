@@ -27,6 +27,8 @@ import {
 import { StageBadge } from "@/components/crm/shared/StageBadge";
 import { PriorityBadge } from "@/components/crm/shared/PriorityBadge";
 import { EntityBadge } from "@/components/crm/shared/EntityBadge";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
 import { CurrencyDisplay } from "@/components/crm/shared/CurrencyDisplay";
 import { DateDisplay } from "@/components/crm/shared/DateDisplay";
 import { StageProgressBar } from "./StageProgressBar";
@@ -46,6 +48,7 @@ import {
   Upload,
   Workflow,
   Loader2,
+  Pencil,
 } from "lucide-react";
 import type { Locale } from "@/lib/i18n";
 
@@ -197,6 +200,21 @@ export function OpportunityDetailClient({
   };
   const owner = opp.owner as { fullName: string; fullNameAr: string | null };
   const contact = opp.primaryContact as { fullName: string; phone: string | null; email: string | null; whatsapp: string | null } | null;
+  // Prefer the linked CrmContact when set (admin-curated path). Otherwise
+  // surface the free-text contact-person fields the rep typed into the
+  // opportunity form so the detail page never looks empty just because no
+  // formal contact record exists.
+  const inlineContact =
+    !contact &&
+    (opp.customerContactName || opp.customerContactPhone || opp.customerContactEmail)
+      ? {
+          fullName: (opp.customerContactName as string | null) ?? "—",
+          phone: (opp.customerContactPhone as string | null) ?? null,
+          email: (opp.customerContactEmail as string | null) ?? null,
+          whatsapp: null,
+        }
+      : null;
+  const displayContact = contact ?? inlineContact;
   const stageChanges = (opp.stageChanges || []) as Array<{ id: string; fromStage: string | null; toStage: string; changedAt: string; durationDays: number | null }>;
   const activityLogs = (opp.activityLogs || []) as Array<{ id: string; action: string; metadata: Record<string, unknown> | null; createdAt: string; actor: { fullName: string } }>;
   const calls = (opp.calls || []) as Array<{ id: string; code: string; callType: string; outcome: string; callAt: string; notes: string | null; caller: { fullName: string } }>;
@@ -329,42 +347,19 @@ export function OpportunityDetailClient({
         {/* Overview Tab */}
         <TabsContent value="overview" className="space-y-4">
           <div className="grid md:grid-cols-2 gap-4">
-            {/* Contact Info */}
-            <Card>
-              <CardHeader>
-                <CardTitle className="text-base">{t.nav.contacts}</CardTitle>
-              </CardHeader>
-              <CardContent className="space-y-3">
-                {contact ? (
-                  <div className="space-y-2">
-                    <div className="flex items-center gap-2">
-                      <User className="h-4 w-4 text-muted-foreground" />
-                      <span className="font-medium">{contact.fullName}</span>
-                    </div>
-                    {contact.phone && (
-                      <div className="flex items-center gap-2">
-                        <Phone className="h-4 w-4 text-muted-foreground" />
-                        <span className="ltr-nums" dir="ltr">{contact.phone}</span>
-                      </div>
-                    )}
-                    {contact.email && (
-                      <div className="flex items-center gap-2">
-                        <Mail className="h-4 w-4 text-muted-foreground" />
-                        <span dir="ltr">{contact.email}</span>
-                      </div>
-                    )}
-                    {contact.whatsapp && (
-                      <div className="flex items-center gap-2">
-                        <MessageCircle className="h-4 w-4 text-muted-foreground" />
-                        <span className="ltr-nums" dir="ltr">{contact.whatsapp}</span>
-                      </div>
-                    )}
-                  </div>
-                ) : (
-                  <p className="text-sm text-muted-foreground">-</p>
-                )}
-              </CardContent>
-            </Card>
+            {/* Contact Info — inline-editable. Click the pencil to switch
+                to edit mode; the three customer-contact fields on the opp
+                are PATCHed via /api/crm/opportunities/[id]/contact and the
+                page refreshes so changes appear immediately. */}
+            <ContactCard
+              oppId={opp.id as string}
+              initialName={(opp.customerContactName as string | null) ?? displayContact?.fullName ?? ""}
+              initialPhone={(opp.customerContactPhone as string | null) ?? displayContact?.phone ?? ""}
+              initialEmail={(opp.customerContactEmail as string | null) ?? displayContact?.email ?? ""}
+              displayContact={displayContact}
+              contactsLabel={t.nav.contacts}
+              router={router}
+            />
 
             {/* Deal Info */}
             <Card>
@@ -739,5 +734,176 @@ export function OpportunityDetailClient({
         </Dialog>
       )}
     </div>
+  );
+}
+
+/**
+ * Inline-editable Contacts card. Default shows the contact info; the pencil
+ * flips it into a 3-field form (name / phone / email) backed by the
+ * `/api/crm/opportunities/[id]/contact` endpoint. We use the inline free-text
+ * fields stored directly on the opportunity row — no curated CrmContact
+ * record needed.
+ */
+function ContactCard({
+  oppId,
+  initialName,
+  initialPhone,
+  initialEmail,
+  displayContact,
+  contactsLabel,
+  router,
+}: {
+  oppId: string;
+  initialName: string;
+  initialPhone: string;
+  initialEmail: string;
+  displayContact: { fullName: string; phone: string | null; email: string | null; whatsapp: string | null } | null;
+  contactsLabel: string;
+  router: ReturnType<typeof useRouter>;
+}) {
+  const [editing, setEditing] = useState(false);
+  const [name, setName] = useState(initialName);
+  const [phone, setPhone] = useState(initialPhone);
+  const [email, setEmail] = useState(initialEmail);
+  const [saving, setSaving] = useState(false);
+
+  useEffect(() => {
+    setName(initialName);
+    setPhone(initialPhone);
+    setEmail(initialEmail);
+  }, [initialName, initialPhone, initialEmail]);
+
+  async function save() {
+    setSaving(true);
+    try {
+      const res = await fetch(`/api/crm/opportunities/${oppId}/contact`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          customerContactName: name.trim() || null,
+          customerContactPhone: phone.trim() || null,
+          customerContactEmail: email.trim() || null,
+        }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        toast.error(data.error ?? "Couldn't save contact");
+        return;
+      }
+      toast.success("Contact updated");
+      setEditing(false);
+      router.refresh();
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  function cancel() {
+    setName(initialName);
+    setPhone(initialPhone);
+    setEmail(initialEmail);
+    setEditing(false);
+  }
+
+  return (
+    <Card>
+      <CardHeader className="flex flex-row items-center justify-between gap-2">
+        <CardTitle className="text-base">{contactsLabel}</CardTitle>
+        {!editing ? (
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={() => setEditing(true)}
+            className="h-7 px-2 text-xs"
+          >
+            <Pencil className="h-3 w-3 me-1" />
+            Edit
+          </Button>
+        ) : (
+          <div className="flex items-center gap-1">
+            <Button size="sm" variant="ghost" onClick={cancel} disabled={saving} className="h-7 px-2 text-xs">
+              Cancel
+            </Button>
+            <Button size="sm" onClick={save} disabled={saving} className="h-7 px-2 text-xs">
+              {saving ? "Saving…" : "Save"}
+            </Button>
+          </div>
+        )}
+      </CardHeader>
+      <CardContent className="space-y-3">
+        {editing ? (
+          <div className="space-y-2">
+            <div className="space-y-1">
+              <Label className="text-xs">Name</Label>
+              <Input value={name} onChange={(e) => setName(e.target.value)} placeholder="e.g. Sara Hassan" />
+            </div>
+            <div className="space-y-1">
+              <Label className="text-xs">Phone</Label>
+              <Input
+                type="tel"
+                inputMode="tel"
+                value={phone}
+                onChange={(e) => setPhone(e.target.value)}
+                placeholder="+20 100 123 4567"
+                dir="ltr"
+                className="ltr-nums"
+              />
+            </div>
+            <div className="space-y-1">
+              <Label className="text-xs">Email</Label>
+              <Input
+                type="email"
+                inputMode="email"
+                value={email}
+                onChange={(e) => setEmail(e.target.value)}
+                placeholder="contact@acme.example"
+                dir="ltr"
+              />
+            </div>
+          </div>
+        ) : displayContact ? (
+          <div className="space-y-2">
+            <div className="flex items-center gap-2">
+              <User className="h-4 w-4 text-muted-foreground" />
+              <span className="font-medium">{displayContact.fullName}</span>
+            </div>
+            {displayContact.phone && (
+              <div className="flex items-center gap-2">
+                <Phone className="h-4 w-4 text-muted-foreground" />
+                <a
+                  href={`tel:${displayContact.phone}`}
+                  className="ltr-nums text-primary hover:underline"
+                  dir="ltr"
+                >
+                  {displayContact.phone}
+                </a>
+              </div>
+            )}
+            {displayContact.email && (
+              <div className="flex items-center gap-2">
+                <Mail className="h-4 w-4 text-muted-foreground" />
+                <a
+                  href={`mailto:${displayContact.email}`}
+                  className="text-primary hover:underline"
+                  dir="ltr"
+                >
+                  {displayContact.email}
+                </a>
+              </div>
+            )}
+            {displayContact.whatsapp && (
+              <div className="flex items-center gap-2">
+                <MessageCircle className="h-4 w-4 text-muted-foreground" />
+                <span className="ltr-nums" dir="ltr">{displayContact.whatsapp}</span>
+              </div>
+            )}
+          </div>
+        ) : (
+          <p className="text-sm text-muted-foreground">
+            No contact recorded yet — click <span className="font-medium">Edit</span> to add one.
+          </p>
+        )}
+      </CardContent>
+    </Card>
   );
 }

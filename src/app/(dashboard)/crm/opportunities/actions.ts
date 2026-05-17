@@ -18,8 +18,9 @@ import {
   type StageChangeInput,
 } from "@/lib/crm/validations/opportunity";
 import { revalidatePath } from "next/cache";
-import type { CrmOpportunityStage, CrmCurrency } from "@/generated/prisma";
+import type { CrmCurrency } from "@/generated/prisma";
 import type { FxRateMap } from "@/lib/crm/business/fx";
+import type { CrmOpportunityStage } from "@/types";
 
 async function getFxRates(): Promise<FxRateMap> {
   const rates = await db.crmFxRate.findMany();
@@ -206,6 +207,9 @@ export async function createOpportunity(input: CreateOpportunityInput) {
       data: {
         code,
         customerCompanyName,
+        customerContactName: parsed.customerContactName?.trim() || null,
+        customerContactPhone: parsed.customerContactPhone?.trim() || null,
+        customerContactEmail: parsed.customerContactEmail?.trim() || null,
         companyId: companyId ?? null,
         primaryContactId: parsed.primaryContactId || null,
         ownerId: session.id,

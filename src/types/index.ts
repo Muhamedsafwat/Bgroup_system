@@ -1,6 +1,5 @@
 import type {
   CrmRole,
-  CrmOpportunityStage,
   CrmPriority,
   CrmCurrency,
   CrmDealType,
@@ -8,6 +7,17 @@ import type {
   CrmCallOutcome,
   CrmNextActionType,
 } from "@/generated/prisma";
+
+/**
+ * Stage codes are free-text now (no Prisma enum). The default seed gives
+ * the 11 canonical stages, but admins can add new ones from the stage-
+ * config admin page — this type just narrows the shape, not the values.
+ *
+ * Anywhere the code branches on a specific stage (WON / LOST etc.) keeps
+ * working because string equality still matches; nothing assumes "every
+ * stage must be in this union" anymore.
+ */
+export type CrmOpportunityStage = string;
 
 // CRM types
 
@@ -109,7 +119,6 @@ export type LeaderboardEntry = {
 
 export type {
   CrmRole,
-  CrmOpportunityStage,
   CrmPriority,
   CrmCurrency,
   CrmDealType,

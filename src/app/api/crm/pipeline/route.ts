@@ -3,8 +3,9 @@ import type { Session } from "next-auth";
 import { z } from "zod";
 import { auth } from "@/lib/auth";
 import { db } from "@/lib/db";
-import { CrmOpportunityStage, type Prisma } from "@/generated/prisma";
+import { type Prisma } from "@/generated/prisma";
 import { describeZodError } from "@/lib/zod-errors";
+import type { CrmOpportunityStage } from "@/types";
 
 function isManager(session: Session) {
   return (
@@ -37,14 +38,42 @@ export async function GET(req: Request) {
   const productId = url.searchParams.get("productId");
   const q = url.searchParams.get("q")?.trim() ?? "";
 
+  // Pipeline visibility mirrors the detail-page scope so a manager never
+  // sees an opp here that they'd 404 on if they clicked it. Previously the
+  // pipeline showed everything for managers but the detail page restricted
+  // to "own + direct reports", which produced confusing 404s.
+  //
+  //   REP        → own opps only
+  //   ASSISTANT  → opps tied to a meeting they handled (matches detail scope)
+  //   MANAGER    → own + direct reports (set via CrmUserProfile.managerId)
+  //   ADMIN      → everything
+  //
+  // `scope=mine` and `repId=…` still narrow further within the role-scope.
+  const callerId = session.user.crmProfileId ?? "__none__";
+  const role = session.user.crmRole;
+  const platformAdmin = isManager(session) && !!session.user.hrRoles?.includes("super_admin");
   const where: Prisma.CrmOpportunityWhereInput = {};
-  // Visibility: rep sees own by default; managers see all unless scope=mine.
-  if (!isManager(session)) {
-    where.ownerId = session.user.crmProfileId ?? "__none__";
-  } else if (scope === "mine") {
-    where.ownerId = session.user.crmProfileId ?? "__none__";
-  } else if (repId) {
-    where.ownerId = repId;
+
+  if (role === "ADMIN" || platformAdmin) {
+    // No base filter — admin sees everything (still narrowable by repId).
+  } else if (role === "MANAGER") {
+    if (scope === "mine") {
+      where.ownerId = callerId;
+    } else if (repId) {
+      // Manager picking a specific rep — must still be in their team.
+      where.AND = [
+        { ownerId: repId },
+        { OR: [{ ownerId: callerId }, { owner: { managerId: callerId } }] },
+      ];
+    } else {
+      where.OR = [
+        { ownerId: callerId },
+        { owner: { managerId: callerId } },
+      ];
+    }
+  } else {
+    // REP / ASSISTANT / ACCOUNT_MGR / fallback — always own opps only.
+    where.ownerId = callerId;
   }
   if (companyId) where.companyId = companyId;
   if (productId) where.products = { some: { productId } };
@@ -83,7 +112,9 @@ export async function GET(req: Request) {
 
 const stageSchema = z.object({
   opportunityId: z.string().min(1),
-  newStage: z.nativeEnum(CrmOpportunityStage),
+  // Stage is admin-curated free text now, so accept any non-empty string.
+  // The opportunity-stage action verifies the value exists in CrmStageConfig.
+  newStage: z.string().min(1, "Stage code is required").max(40),
 });
 
 export async function PATCH(req: Request) {

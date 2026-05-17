@@ -1,5 +1,6 @@
-import type { CrmOpportunityStage, CrmNextActionType } from "@/generated/prisma";
+import type { CrmNextActionType } from "@/generated/prisma";
 import { isTerminalStage } from "./stage-transitions";
+import type { CrmOpportunityStage } from "@/types";
 
 type AlertableOpp = {
   id: string;

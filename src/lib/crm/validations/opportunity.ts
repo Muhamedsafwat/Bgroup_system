@@ -6,9 +6,14 @@ export const createOpportunitySchema = z.object({
   /// `companyId` FK is kept for backwards-compat with admin-curated /
   /// principal records but isn't required on create.
   customerCompanyName: z.string().trim().min(1, "Customer company name is required").max(200),
+  /// Contact info captured directly on the opp. All optional — reps often
+  /// log an opp before they've talked to a named person.
+  customerContactName: z.string().trim().max(200).optional(),
+  customerContactPhone: z.string().trim().max(40).optional(),
+  customerContactEmail: z.string().trim().max(200).optional(),
   companyId: z.string().optional(),
   primaryContactId: z.string().optional(),
-  entityId: z.string().min(1, "Entity is required"),
+  entityId: z.string().min(1, "Select the company we're selling for"),
   title: z.string().optional(),
   priority: z.enum(["HOT", "WARM", "COLD"]).optional(),
   leadSource: z.string().optional(),
@@ -39,6 +44,10 @@ export const createOpportunitySchema = z.object({
 
 export const updateOpportunitySchema = z.object({
   title: z.string().optional(),
+  customerCompanyName: z.string().trim().min(1).max(200).optional(),
+  customerContactName: z.string().trim().max(200).optional(),
+  customerContactPhone: z.string().trim().max(40).optional(),
+  customerContactEmail: z.string().trim().max(200).optional(),
   priority: z.enum(["HOT", "WARM", "COLD"]).optional(),
   leadSource: z.string().optional(),
   dealType: z
@@ -76,19 +85,9 @@ export const updateOpportunitySchema = z.object({
 });
 
 export const stageChangeSchema = z.object({
-  toStage: z.enum([
-    "NEW",
-    "CONTACTED",
-    "DISCOVERY",
-    "QUALIFIED",
-    "TECH_MEETING",
-    "PROPOSAL_SENT",
-    "NEGOTIATION",
-    "VERBAL_YES",
-    "POSTPONED",
-    "WON",
-    "LOST",
-  ]),
+  // Stage codes are admin-curated free text. The server action verifies
+  // the target stage exists in CrmStageConfig before applying it.
+  toStage: z.string().trim().min(1, "Stage is required").max(40),
   lossReasonId: z.string().optional(),
   lostToCompetitor: z.string().optional(),
   proposalUrl: z.string().optional(),

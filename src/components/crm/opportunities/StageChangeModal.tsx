@@ -3,6 +3,7 @@
 import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import { useLocale } from "@/lib/i18n";
+import { stageLabel } from "@/lib/crm/stage-labels";
 import {
   Dialog,
   DialogContent,
@@ -127,7 +128,7 @@ export function StageChangeModal({
               <SelectContent>
                 {availableStages.map((stage) => (
                   <SelectItem key={stage} value={stage}>
-                    {t.stages[stage]}
+                    {(t.stages as Record<string, string>)[stage] ?? stageLabel(stage)}
                   </SelectItem>
                 ))}
               </SelectContent>

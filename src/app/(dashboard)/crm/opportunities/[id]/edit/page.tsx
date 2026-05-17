@@ -54,6 +54,9 @@ export default async function EditOpportunityPage({
     // CrmCompany.nameEn so opps created before the schema change still
     // render meaningfully in edit mode.
     customerCompanyName: opp.customerCompanyName ?? opp.company?.nameEn ?? "",
+    customerContactName: opp.customerContactName,
+    customerContactPhone: opp.customerContactPhone,
+    customerContactEmail: opp.customerContactEmail,
     companyId: opp.companyId,
     primaryContactId: opp.primaryContactId,
     entityId: opp.entityId,

@@ -4,8 +4,7 @@ import { db } from "@/lib/db";
 import { auth } from "@/lib/auth";
 import { getOpportunities, getEntities } from "./actions";
 import { OpportunityListClient } from "@/components/crm/opportunities/OpportunityListClient";
-import type { CrmOpportunityStage } from "@/generated/prisma";
-
+import type { CrmOpportunityStage } from "@/types";
 export default async function OpportunitiesPage({
   searchParams,
 }: {
