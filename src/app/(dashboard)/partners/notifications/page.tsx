@@ -7,9 +7,12 @@ import { Button } from '@/components/partners/ui/button';
 import { EmptyState } from '@/components/partners/ui/empty-state';
 import { Skeleton } from '@/components/partners/ui/skeleton';
 import { Bell, CheckCheck, Check } from 'lucide-react';
+import { useLocale } from '@/lib/i18n';
 import clsx from 'clsx';
 
 export default function NotificationsPage() {
+  const { locale } = useLocale()
+  const isAr = locale === 'ar'
   const [notifications, setNotifications] = useState<Notification[]>([]);
   const [loading, setLoading] = useState(true);
 
@@ -40,7 +43,7 @@ export default function NotificationsPage() {
     <div className="space-y-6">
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-2xl font-bold text-foreground">Notifications</h1>
+          <h1 className="text-2xl font-bold text-foreground">{isAr ? 'الإشعارات' : 'Notifications'}</h1>
           <p className="mt-1 text-sm text-muted-foreground">
             {unreadCount > 0 ? `You have ${unreadCount} unread notification${unreadCount > 1 ? 's' : ''}` : 'You\'re all caught up'}
           </p>
@@ -58,7 +61,7 @@ export default function NotificationsPage() {
         </div>
       ) : notifications.length === 0 ? (
         <Card>
-          <EmptyState icon={Bell} title="No notifications" description="You'll see notifications here when there are updates to your leads, deals, or commissions." />
+          <EmptyState icon={Bell} title={isAr ? 'لا توجد إشعارات' : 'No notifications'} description={isAr ? 'سترى الإشعارات هنا عند وجود تحديثات لعملائك أو صفقاتك أو عمولاتك.' : "You'll see notifications here when there are updates to your leads, deals, or commissions."} />
         </Card>
       ) : (
         <div className="space-y-3">

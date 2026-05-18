@@ -4,12 +4,14 @@ import type { SessionUser } from "@/types";
  * Returns a Prisma `where` clause fragment that scopes Opportunity queries by role.
  *
  * - REP: own opportunities only.
- * - MANAGER: opportunities OWNED by the manager OR by any rep that explicitly
- *   reports to this manager via `CrmUserProfile.managerId`. Managers used to
- *   see the whole entity, which leaked deals between sibling sales managers
- *   sharing the same entity. Pinning to direct reports matches how the admin
- *   sets up coverage in CRM settings and matches the customer's mental model.
- * - ASSISTANT: read across the whole entity (tech-coordination role).
+ * - MANAGER: opportunities OWNED by the manager OR by any rep on this
+ *   manager's team. "On the team" is checked two ways and OR'd together:
+ *     - legacy single-FK `CrmUserProfile.managerId` (primary manager)
+ *     - many-to-many `CrmTeamMembership` (additional managers — the same
+ *       rep can be on multiple managers' teams)
+ *   Both are checked so legacy data keeps working while the team-members
+ *   picker now syncs the join table for new assignments.
+ * - ASSISTANT: limited to opps tied to meetings they touched.
  * - ACCOUNT_MGR: own delivery-owned WON deals only.
  * - ADMIN: everything.
  */
@@ -22,6 +24,7 @@ export function scopeOpportunityByRole(session: SessionUser) {
         OR: [
           { ownerId: session.id },
           { owner: { managerId: session.id } },
+          { owner: { managedBy: { some: { managerId: session.id } } } },
         ],
       };
     case "ASSISTANT":
@@ -51,7 +54,8 @@ export function scopeOpportunityByRole(session: SessionUser) {
 
 /**
  * Returns a Prisma `where` clause fragment for Company queries.
- * Managers see companies assigned to themselves or any direct report.
+ * Managers see companies assigned to themselves or any team member
+ * (primary or many-to-many).
  */
 export function scopeCompanyByRole(session: SessionUser) {
   switch (session.role) {
@@ -62,6 +66,7 @@ export function scopeCompanyByRole(session: SessionUser) {
         OR: [
           { assignedToId: session.id },
           { assignedTo: { managerId: session.id } },
+          { assignedTo: { managedBy: { some: { managerId: session.id } } } },
         ],
       };
     case "ASSISTANT":
@@ -78,7 +83,8 @@ export function scopeCompanyByRole(session: SessionUser) {
 
 /**
  * Returns a Prisma `where` clause fragment for Call queries.
- * Managers see calls made by themselves or any direct report.
+ * Managers see calls made by themselves or any team member (primary or
+ * many-to-many).
  */
 export function scopeCallByRole(session: SessionUser) {
   switch (session.role) {
@@ -89,6 +95,7 @@ export function scopeCallByRole(session: SessionUser) {
         OR: [
           { callerId: session.id },
           { caller: { managerId: session.id } },
+          { caller: { managedBy: { some: { managerId: session.id } } } },
         ],
       };
     case "ASSISTANT":

@@ -6,6 +6,7 @@ import { useRouter } from 'next/navigation'
 import { Eye, AlertTriangle, Clock, Loader2, CheckSquare, CalendarOff, Users as UsersIcon, TrendingUp } from 'lucide-react'
 import { useSession } from 'next-auth/react'
 import { WelcomeBanner, firstNameOf } from '@/components/shared/WelcomeHero'
+import { useLocale } from '@/lib/i18n'
 import { Button } from '@/components/hr/ui/button'
 import { Avatar, AvatarFallback } from '@/components/hr/ui/avatar'
 import { Badge } from '@/components/hr/ui/badge'
@@ -56,6 +57,8 @@ const STATUS_VARIANT: Record<string, 'success' | 'warning' | 'danger' | 'info' |
 }
 
 export default function TeamPage() {
+  const { locale } = useLocale()
+  const isAr = locale === "ar"
   const router = useRouter()
   const { data: session } = useSession()
 
@@ -103,10 +106,10 @@ export default function TeamPage() {
     <div className="space-y-6">
       <WelcomeBanner
         firstName={firstNameOf(session?.user?.name, session?.user?.email)}
-        rolePill="Team lead"
+        rolePill={isAr ? "قائد الفريق" : "Team lead"}
         pillTone="violet"
         email={session?.user?.email}
-        subtitle={`${teamMembers.length} ${teamMembers.length === 1 ? 'person reports' : 'people report'} to you`}
+        subtitle={isAr ? `${teamMembers.length} يتبعونك` : `${teamMembers.length} ${teamMembers.length === 1 ? 'person reports' : 'people report'} to you`}
       />
       {totalReports > 0 && (
         <div className="flex items-center gap-2">

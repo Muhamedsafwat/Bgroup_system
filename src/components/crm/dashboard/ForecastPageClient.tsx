@@ -151,9 +151,11 @@ export function ForecastPageClient({
       {showDetail && data.pipelineByStage && data.pipelineByStage.length > 0 && (
         <Card>
           <CardHeader>
-            <CardTitle className="text-base">Pipeline by stage</CardTitle>
+            <CardTitle className="text-base">{t.pages.pipelineByStage}</CardTitle>
             <p className="text-xs text-muted-foreground">
-              Open opportunities grouped by their current stage. Weighted value applies the stage's probability.
+              {locale === "ar"
+                ? "الفرص المفتوحة مجمّعة حسب المرحلة. القيمة المرجحة تستخدم احتمالية المرحلة."
+                : "Open opportunities grouped by their current stage. Weighted value applies the stage's probability."}
             </p>
           </CardHeader>
           <CardContent className="p-0">
@@ -161,11 +163,11 @@ export function ForecastPageClient({
               <table className="w-full text-sm">
                 <thead className="text-muted-foreground border-b">
                   <tr>
-                    <th className="text-start py-2 px-3 text-xs font-medium uppercase">Stage</th>
-                    <th className="text-end py-2 px-3 text-xs font-medium uppercase">Prob</th>
-                    <th className="text-end py-2 px-3 text-xs font-medium uppercase">Count</th>
-                    <th className="text-end py-2 px-3 text-xs font-medium uppercase">Pipeline value</th>
-                    <th className="text-end py-2 px-3 text-xs font-medium uppercase">Weighted</th>
+                    <th className="text-start py-2 px-3 text-xs font-medium uppercase">{t.cols.stage}</th>
+                    <th className="text-end py-2 px-3 text-xs font-medium uppercase">{t.cols.prob}</th>
+                    <th className="text-end py-2 px-3 text-xs font-medium uppercase">{t.cols.count}</th>
+                    <th className="text-end py-2 px-3 text-xs font-medium uppercase">{t.cols.pipelineValue}</th>
+                    <th className="text-end py-2 px-3 text-xs font-medium uppercase">{t.cols.weighted}</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y">
@@ -189,7 +191,7 @@ export function ForecastPageClient({
                 </tbody>
                 <tfoot className="border-t bg-muted/30">
                   <tr>
-                    <td className="py-2 px-3 text-xs font-semibold uppercase">Total</td>
+                    <td className="py-2 px-3 text-xs font-semibold uppercase">{t.cols.total}</td>
                     <td className="py-2 px-3" />
                     <td className="py-2 px-3 text-end ltr-nums font-semibold">
                       {data.pipelineByStage.reduce((s, r) => s + r.count, 0)}
@@ -211,9 +213,11 @@ export function ForecastPageClient({
       {showDetail && data.leaderboard.length > 0 && (
         <Card>
           <CardHeader>
-            <CardTitle className="text-base">Per-rep breakdown</CardTitle>
+            <CardTitle className="text-base">{t.pages.perRepBreakdown}</CardTitle>
             <p className="text-xs text-muted-foreground">
-              How each rep is tracking against their monthly target. Attainment is won-value ÷ target.
+              {locale === "ar"
+                ? "أداء كل مندوب مقابل هدفه الشهري. تحقيق الهدف = قيمة المربوحة ÷ الهدف."
+                : "How each rep is tracking against their monthly target. Attainment is won-value ÷ target."}
             </p>
           </CardHeader>
           <CardContent className="p-0">
@@ -221,12 +225,12 @@ export function ForecastPageClient({
               <table className="w-full text-sm">
                 <thead className="text-muted-foreground border-b">
                   <tr>
-                    <th className="text-start py-2 px-3 text-xs font-medium uppercase">Rep</th>
-                    <th className="text-end py-2 px-3 text-xs font-medium uppercase">Open</th>
-                    <th className="text-end py-2 px-3 text-xs font-medium uppercase">Pipeline (weighted)</th>
-                    <th className="text-end py-2 px-3 text-xs font-medium uppercase">Won (MTD)</th>
-                    <th className="text-end py-2 px-3 text-xs font-medium uppercase">Target</th>
-                    <th className="text-end py-2 px-3 text-xs font-medium uppercase">Attainment</th>
+                    <th className="text-start py-2 px-3 text-xs font-medium uppercase">{t.cols.rep}</th>
+                    <th className="text-end py-2 px-3 text-xs font-medium uppercase">{t.cols.open}</th>
+                    <th className="text-end py-2 px-3 text-xs font-medium uppercase">{t.cols.weighted}</th>
+                    <th className="text-end py-2 px-3 text-xs font-medium uppercase">{locale === "ar" ? "مربوحة (الشهر)" : "Won (MTD)"}</th>
+                    <th className="text-end py-2 px-3 text-xs font-medium uppercase">{t.cols.target}</th>
+                    <th className="text-end py-2 px-3 text-xs font-medium uppercase">{t.cols.attainment}</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y">
@@ -266,9 +270,11 @@ export function ForecastPageClient({
       {showDetail && data.topHotOpportunities && data.topHotOpportunities.length > 0 && (
         <Card>
           <CardHeader>
-            <CardTitle className="text-base">Hot opportunities most likely to close</CardTitle>
+            <CardTitle className="text-base">{t.pages.topHot}</CardTitle>
             <p className="text-xs text-muted-foreground">
-              HOT-priority or late-stage opps, ranked by weighted value.
+              {locale === "ar"
+                ? "الفرص بأولوية HOT أو في المراحل المتأخرة، مرتبة حسب القيمة المرجحة."
+                : "HOT-priority or late-stage opps, ranked by weighted value."}
             </p>
           </CardHeader>
           <CardContent className="p-0">
@@ -276,11 +282,11 @@ export function ForecastPageClient({
               <table className="w-full text-sm">
                 <thead className="text-muted-foreground border-b">
                   <tr>
-                    <th className="text-start py-2 px-3 text-xs font-medium uppercase">Code</th>
-                    <th className="text-start py-2 px-3 text-xs font-medium uppercase">Company</th>
-                    <th className="text-start py-2 px-3 text-xs font-medium uppercase">Owner</th>
-                    <th className="text-start py-2 px-3 text-xs font-medium uppercase">Stage</th>
-                    <th className="text-end py-2 px-3 text-xs font-medium uppercase">Weighted value</th>
+                    <th className="text-start py-2 px-3 text-xs font-medium uppercase">{t.cols.code}</th>
+                    <th className="text-start py-2 px-3 text-xs font-medium uppercase">{t.cols.company}</th>
+                    <th className="text-start py-2 px-3 text-xs font-medium uppercase">{t.cols.owner}</th>
+                    <th className="text-start py-2 px-3 text-xs font-medium uppercase">{t.cols.stage}</th>
+                    <th className="text-end py-2 px-3 text-xs font-medium uppercase">{t.cols.weightedValue}</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y">
@@ -309,17 +315,17 @@ export function ForecastPageClient({
       {showDetail && data.pipelineByEntity && data.pipelineByEntity.length > 0 && (
         <Card>
           <CardHeader>
-            <CardTitle className="text-base">Pipeline by entity</CardTitle>
+            <CardTitle className="text-base">{t.pages.pipelineByEntity}</CardTitle>
           </CardHeader>
           <CardContent className="p-0">
             <div className="overflow-x-auto">
               <table className="w-full text-sm">
                 <thead className="text-muted-foreground border-b">
                   <tr>
-                    <th className="text-start py-2 px-3 text-xs font-medium uppercase">Entity</th>
-                    <th className="text-end py-2 px-3 text-xs font-medium uppercase">Open</th>
-                    <th className="text-end py-2 px-3 text-xs font-medium uppercase">Pipeline value</th>
-                    <th className="text-end py-2 px-3 text-xs font-medium uppercase">Weighted</th>
+                    <th className="text-start py-2 px-3 text-xs font-medium uppercase">{t.cols.entity}</th>
+                    <th className="text-end py-2 px-3 text-xs font-medium uppercase">{t.cols.open}</th>
+                    <th className="text-end py-2 px-3 text-xs font-medium uppercase">{t.cols.pipelineValue}</th>
+                    <th className="text-end py-2 px-3 text-xs font-medium uppercase">{t.cols.weighted}</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y">

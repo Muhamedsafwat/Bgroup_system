@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { ChevronLeft, ChevronRight, Loader2 } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { useLocale } from "@/lib/i18n";
 import { MeetingDetailDialog } from "@/components/crm/meetings/MeetingDetailDialog";
 
 type Meeting = {
@@ -72,6 +73,8 @@ const STATUS_BG: Record<string, string> = {
 };
 
 export function WeeklyCalendarClient() {
+  const { locale } = useLocale();
+  const isAr = locale === "ar";
   const [weekStart, setWeekStart] = useState(() => startOfWeek(new Date()));
   const [meetings, setMeetings] = useState<Meeting[]>([]);
   const [loading, setLoading] = useState(true);
@@ -176,7 +179,7 @@ export function WeeklyCalendarClient() {
             <ChevronLeft className="h-4 w-4" />
           </Button>
           <Button variant="outline" size="sm" onClick={() => setWeekStart(startOfWeek(new Date()))}>
-            This week
+            {isAr ? "هذا الأسبوع" : "This week"}
           </Button>
           <Button
             variant="outline"
@@ -197,20 +200,20 @@ export function WeeklyCalendarClient() {
         <div className="flex items-center gap-3 text-[10px] text-muted-foreground">
           <span className="inline-flex items-center gap-1">
             <span className="inline-block h-2.5 w-2.5 rounded-sm bg-amber-500/40 border border-amber-500/60" />
-            Pending
+            {isAr ? "قيد الانتظار" : "Pending"}
           </span>
           <span className="inline-flex items-center gap-1">
             <span className="inline-block h-2.5 w-2.5 rounded-sm bg-emerald-500/40 border border-emerald-500/60" />
-            Approved
+            {isAr ? "معتمد" : "Approved"}
           </span>
           <span className="inline-flex items-center gap-1">
             <span className="inline-block h-2.5 w-2.5 rounded-sm bg-rose-500/40 border border-rose-500/60" />
-            Denied
+            {isAr ? "مرفوض" : "Denied"}
           </span>
           {loading && (
             <span className="flex items-center gap-1 ms-2">
               <Loader2 className="h-3 w-3 animate-spin" />
-              Loading…
+              {isAr ? "جاري التحميل..." : "Loading…"}
             </span>
           )}
         </div>
@@ -220,7 +223,7 @@ export function WeeklyCalendarClient() {
         <table className="w-full text-xs border-collapse">
           <thead className="bg-muted/40">
             <tr>
-              <th className="w-20 px-2 py-2 text-start font-medium text-muted-foreground border-b">Time</th>
+              <th className="w-20 px-2 py-2 text-start font-medium text-muted-foreground border-b">{isAr ? 'الوقت' : 'Time'}</th>
               {weekDays.map((d) => {
                 const isToday = ymd(d) === todayYmd;
                 return (

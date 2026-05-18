@@ -5,6 +5,7 @@ import { useQuery } from '@tanstack/react-query'
 import { ChevronDown, ChevronRight, Users, AlertCircle, Clock, TrendingUp } from 'lucide-react'
 import api from '@/lib/hr/api'
 import { formatDate, cn } from '@/lib/hr/utils'
+import { useLocale } from '@/lib/i18n'
 import { PageHeader } from '@/components/hr/shared/PageHeader'
 import { StatCard } from '@/components/hr/shared/StatCard'
 import { ExportButton } from '@/components/hr/shared/ExportButton'
@@ -75,6 +76,8 @@ type SortKey = keyof AttendanceReportRow
 type SortDir = 'asc' | 'desc'
 
 export default function AttendanceReportPage() {
+  const { locale } = useLocale()
+  const isAr = locale === "ar"
   const defaultRange = getMonthRange()
   const [dateFrom, setDateFrom] = useState(defaultRange.from)
   const [dateTo, setDateTo] = useState(defaultRange.to)
@@ -172,9 +175,9 @@ export default function AttendanceReportPage() {
   return (
     <div className="space-y-6">
       <PageHeader
-        title="Attendance Report"
-        description="Monthly and custom date range attendance analysis"
-        breadcrumbs={[{ label: 'Attendance' }, { label: 'Report' }]}
+        title={isAr ? 'تقرير الحضور' : 'Attendance Report'}
+        description={isAr ? 'تحليل الحضور الشهري وللفترات المخصصة' : 'Monthly and custom date range attendance analysis'}
+        breadcrumbs={[{ label: isAr ? 'الحضور' : 'Attendance' }, { label: isAr ? 'تقرير' : 'Report' }]}
         actions={
           <ExportButton
             onExportExcel={handleExportExcel}
@@ -187,21 +190,21 @@ export default function AttendanceReportPage() {
       {/* Filters */}
       <div className="bg-card p-4 rounded-lg border border-border flex flex-wrap gap-4 items-end">
         <div className="space-y-1">
-          <Label>Date From</Label>
+          <Label>{isAr ? 'من تاريخ' : 'Date From'}</Label>
           <Input type="date" value={dateFrom} onChange={e => setDateFrom(e.target.value)} className="w-40" />
         </div>
         <div className="space-y-1">
-          <Label>Date To</Label>
+          <Label>{isAr ? 'إلى تاريخ' : 'Date To'}</Label>
           <Input type="date" value={dateTo} onChange={e => setDateTo(e.target.value)} className="w-40" />
         </div>
         <div className="space-y-1">
-          <Label>Company</Label>
+          <Label>{isAr ? 'الشركة' : 'Company'}</Label>
           <Select value={company} onValueChange={(v: string) => { setCompany(v === 'all' ? '' : v); setDepartment('') }}>
             <SelectTrigger className="w-44">
-              <SelectValue placeholder="All Companies" />
+              <SelectValue placeholder={isAr ? 'كل الشركات' : 'All Companies'} />
             </SelectTrigger>
             <SelectContent>
-              <SelectItem value="all">All Companies</SelectItem>
+              <SelectItem value="all">{isAr ? 'كل الشركات' : 'All Companies'}</SelectItem>
               {companies.map((c: { id: number; name_en: string }) => (
                 <SelectItem key={c.id} value={String(c.id)}>{c.name_en}</SelectItem>
               ))}
@@ -209,13 +212,13 @@ export default function AttendanceReportPage() {
           </Select>
         </div>
         <div className="space-y-1">
-          <Label>Department</Label>
+          <Label>{isAr ? 'القسم' : 'Department'}</Label>
           <Select value={department} onValueChange={(v: string) => setDepartment(v === 'all' ? '' : v)}>
             <SelectTrigger className="w-44">
-              <SelectValue placeholder="All Departments" />
+              <SelectValue placeholder={isAr ? 'كل الأقسام' : 'All Departments'} />
             </SelectTrigger>
             <SelectContent>
-              <SelectItem value="all">All Departments</SelectItem>
+              <SelectItem value="all">{isAr ? 'كل الأقسام' : 'All Departments'}</SelectItem>
               {departments.map((d: { id: number; name_en: string }) => (
                 <SelectItem key={d.id} value={String(d.id)}>{d.name_en}</SelectItem>
               ))}
@@ -243,21 +246,21 @@ export default function AttendanceReportPage() {
           loading={isLoading}
         />
         <StatCard
-          label="Total Absences"
+          label={isAr ? "إجمالي الغياب" : "Total Absences"}
           value={isLoading ? '—' : data?.summary.total_absences ?? 0}
           icon={<AlertCircle className="h-5 w-5" />}
           color="red"
           loading={isLoading}
         />
         <StatCard
-          label="Total Late Arrivals"
+          label={isAr ? "إجمالي التأخير" : "Total Late Arrivals"}
           value={isLoading ? '—' : data?.summary.total_late ?? 0}
           icon={<Clock className="h-5 w-5" />}
           color="amber"
           loading={isLoading}
         />
         <StatCard
-          label="Total OT Hours"
+          label={isAr ? "إجمالي الساعات الإضافية" : "Total OT Hours"}
           value={isLoading ? '—' : `${data?.summary.total_ot_hours?.toFixed(1) ?? 0}h`}
           icon={<Users className="h-5 w-5" />}
           color="blue"
@@ -272,16 +275,16 @@ export default function AttendanceReportPage() {
             <TableRow className="bg-muted/50">
               <TableHead className="w-8" />
               {[
-                { key: 'employee_name' as SortKey, label: 'Name' },
-                { key: 'department_name' as SortKey, label: 'Department' },
-                { key: 'work_days' as SortKey, label: 'Work Days' },
-                { key: 'present' as SortKey, label: 'Present' },
-                { key: 'absent' as SortKey, label: 'Absent' },
-                { key: 'late' as SortKey, label: 'Late' },
-                { key: 'on_leave' as SortKey, label: 'On Leave' },
-                { key: 'total_hours' as SortKey, label: 'Total Hours' },
-                { key: 'avg_hours_per_day' as SortKey, label: 'Avg Hrs/Day' },
-                { key: 'ot_hours' as SortKey, label: 'OT Hours' },
+                { key: 'employee_name' as SortKey, label: isAr ? 'الاسم' : 'Name' },
+                { key: 'department_name' as SortKey, label: isAr ? 'القسم' : 'Department' },
+                { key: 'work_days' as SortKey, label: isAr ? 'أيام العمل' : 'Work Days' },
+                { key: 'present' as SortKey, label: isAr ? 'حاضر' : 'Present' },
+                { key: 'absent' as SortKey, label: isAr ? 'غائب' : 'Absent' },
+                { key: 'late' as SortKey, label: isAr ? 'متأخر' : 'Late' },
+                { key: 'on_leave' as SortKey, label: isAr ? 'في إجازة' : 'On Leave' },
+                { key: 'total_hours' as SortKey, label: isAr ? 'إجمالي الساعات' : 'Total Hours' },
+                { key: 'avg_hours_per_day' as SortKey, label: isAr ? 'متوسط الساعات/يوم' : 'Avg Hrs/Day' },
+                { key: 'ot_hours' as SortKey, label: isAr ? 'ساعات إضافية' : 'OT Hours' },
                 { key: 'attendance_pct' as SortKey, label: 'Attendance %' },
               ].map(col => (
                 <TableHead

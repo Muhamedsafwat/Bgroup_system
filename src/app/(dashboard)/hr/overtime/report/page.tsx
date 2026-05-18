@@ -3,6 +3,7 @@
 import React, { useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { Clock, DollarSign, TrendingUp, Award } from 'lucide-react'
+import { useLocale } from '@/lib/i18n'
 import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
   LineChart, Line, Legend,
@@ -80,6 +81,8 @@ function getMonthRange() {
 }
 
 export default function OvertimeReportPage() {
+  const { locale } = useLocale()
+  const isAr = locale === 'ar'
   const defaultRange = getMonthRange()
   const [dateFrom, setDateFrom] = useState(defaultRange.from)
   const [dateTo, setDateTo] = useState(defaultRange.to)
@@ -126,9 +129,9 @@ export default function OvertimeReportPage() {
   return (
     <div className="space-y-6">
       <PageHeader
-        title="Overtime Report"
+        title={isAr ? 'تقرير الساعات الإضافية' : 'Overtime Report'}
         description="Overtime analysis by employee and department"
-        breadcrumbs={[{ label: 'Overtime' }, { label: 'Report' }]}
+        breadcrumbs={[{ label: isAr ? 'الساعات الإضافية' : 'Overtime' }, { label: isAr ? 'تقرير' : 'Report' }]}
         actions={
           <ExportButton
             onExportExcel={handleExportExcel}
@@ -141,15 +144,15 @@ export default function OvertimeReportPage() {
       {/* Filters */}
       <div className="bg-card p-4 rounded-lg border border-border flex flex-wrap gap-4 items-end">
         <div className="space-y-1">
-          <Label>Date From</Label>
+          <Label>{isAr ? 'من تاريخ' : 'Date From'}</Label>
           <Input type="date" value={dateFrom} onChange={e => setDateFrom(e.target.value)} className="w-40" />
         </div>
         <div className="space-y-1">
-          <Label>Date To</Label>
+          <Label>{isAr ? 'إلى تاريخ' : 'Date To'}</Label>
           <Input type="date" value={dateTo} onChange={e => setDateTo(e.target.value)} className="w-40" />
         </div>
         <div className="space-y-1">
-          <Label>Company</Label>
+          <Label>{isAr ? 'الشركة' : 'Company'}</Label>
           <Select value={company} onValueChange={v => { setCompany(v === 'all' ? '' : v); setDepartment('') }}>
             <SelectTrigger className="w-44">
               <SelectValue placeholder="All Companies" />
@@ -163,7 +166,7 @@ export default function OvertimeReportPage() {
           </Select>
         </div>
         <div className="space-y-1">
-          <Label>Department</Label>
+          <Label>{isAr ? 'القسم' : 'Department'}</Label>
           <Select value={department} onValueChange={v => setDepartment(v === 'all' ? '' : v)}>
             <SelectTrigger className="w-44">
               <SelectValue placeholder="All Departments" />
@@ -263,9 +266,9 @@ export default function OvertimeReportPage() {
         <Table>
           <TableHeader>
             <TableRow className="bg-muted/50">
-              <TableHead className="font-semibold w-16">Rank</TableHead>
-              <TableHead className="font-semibold">Name</TableHead>
-              <TableHead className="font-semibold">Department</TableHead>
+              <TableHead className="font-semibold w-16">{isAr ? 'الترتيب' : 'Rank'}</TableHead>
+              <TableHead className="font-semibold">{isAr ? 'الاسم' : 'Name'}</TableHead>
+              <TableHead className="font-semibold">{isAr ? 'القسم' : 'Department'}</TableHead>
               <TableHead className="font-semibold text-right">Total Hours</TableHead>
               <TableHead className="font-semibold text-right">Total Amount</TableHead>
             </TableRow>
@@ -314,8 +317,8 @@ export default function OvertimeReportPage() {
           <Table>
             <TableHeader>
               <TableRow className="bg-muted/50">
-                <TableHead className="font-semibold">Employee</TableHead>
-                <TableHead className="font-semibold">Department</TableHead>
+                <TableHead className="font-semibold">{isAr ? 'الموظف' : 'Employee'}</TableHead>
+                <TableHead className="font-semibold">{isAr ? 'القسم' : 'Department'}</TableHead>
                 <TableHead className="font-semibold text-right">Total Hours</TableHead>
                 <TableHead className="font-semibold text-right">Total Amount</TableHead>
               </TableRow>

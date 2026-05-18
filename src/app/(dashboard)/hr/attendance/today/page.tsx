@@ -5,6 +5,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { RefreshCw, Edit2, Clock } from 'lucide-react'
 import api from '@/lib/hr/api'
 import { formatDate, cn } from '@/lib/hr/utils'
+import { useLocale } from '@/lib/i18n'
 import { PageHeader } from '@/components/hr/shared/PageHeader'
 import { Button } from '@/components/hr/ui/button'
 import { Input } from '@/components/hr/ui/input'
@@ -105,6 +106,8 @@ function StatusChip({ label, count, color }: { label: string; count: number; col
 }
 
 export default function TodayAttendancePage() {
+  const { locale } = useLocale()
+  const isAr = locale === "ar"
   const qc = useQueryClient()
   const [departmentFilter, setDepartmentFilter] = useState('')
   const [statusFilter, setStatusFilter] = useState('')
@@ -176,17 +179,20 @@ export default function TodayAttendancePage() {
   return (
     <div className="space-y-6">
       <PageHeader
-        title={isToday ? "Today's Attendance" : "Attendance"}
+        title={isToday ? (isAr ? "حضور اليوم" : "Today's Attendance") : (isAr ? "الحضور" : "Attendance")}
         description={
           isToday
-            ? `Live attendance for ${formatDate(new Date().toISOString(), 'EEEE, dd MMMM yyyy')}`
-            : `Attendance on ${formatDate(`${selectedDate}T00:00:00`, 'EEEE, dd MMMM yyyy')} (historical)`
+            ? (isAr ? `الحضور الحي لـ ${formatDate(new Date().toISOString(), 'EEEE, dd MMMM yyyy')}` : `Live attendance for ${formatDate(new Date().toISOString(), 'EEEE, dd MMMM yyyy')}`)
+            : (isAr ? `الحضور بتاريخ ${formatDate(`${selectedDate}T00:00:00`, 'EEEE, dd MMMM yyyy')} (سجل تاريخي)` : `Attendance on ${formatDate(`${selectedDate}T00:00:00`, 'EEEE, dd MMMM yyyy')} (historical)`)
         }
-        breadcrumbs={[{ label: 'Attendance' }, { label: isToday ? "Today's Live" : 'Day view' }]}
+        breadcrumbs={[
+          { label: isAr ? "الحضور" : "Attendance" },
+          { label: isToday ? (isAr ? "الحي اليوم" : "Today's Live") : (isAr ? "عرض اليوم" : "Day view") },
+        ]}
         actions={
           <Button variant="outline" size="sm" onClick={() => refetch()} disabled={isFetching} className="gap-2">
             <RefreshCw className={cn('h-4 w-4', isFetching && 'animate-spin')} />
-            Refresh
+            {isAr ? "تحديث" : "Refresh"}
           </Button>
         }
       />
@@ -197,13 +203,13 @@ export default function TodayAttendancePage() {
           Array.from({ length: 7 }).map((_, i) => <Skeleton key={i} className="h-14 w-28 rounded-lg" />)
         ) : (
           <>
-            <StatusChip label="Total" count={stats?.total ?? 0} color="bg-muted/50 border-border text-foreground" />
-            <StatusChip label="Checked In" count={stats?.checked_in ?? 0} color="bg-blue-50 border-blue-200 text-blue-700" />
-            <StatusChip label="On Time" count={stats?.on_time ?? 0} color="bg-emerald-50 border-emerald-200 text-emerald-700" />
-            <StatusChip label="Late" count={stats?.late ?? 0} color="bg-amber-50 border-amber-200 text-amber-700" />
-            <StatusChip label="Not Yet" count={stats?.not_yet ?? 0} color="bg-muted/50 border-border text-muted-foreground" />
-            <StatusChip label="Absent" count={stats?.absent ?? 0} color="bg-red-50 border-red-200 text-red-700" />
-            <StatusChip label="On Leave" count={stats?.on_leave ?? 0} color="bg-blue-50 border-blue-100 text-blue-600" />
+            <StatusChip label={isAr ? "الإجمالي" : "Total"} count={stats?.total ?? 0} color="bg-muted/50 border-border text-foreground" />
+            <StatusChip label={isAr ? "حضر" : "Checked In"} count={stats?.checked_in ?? 0} color="bg-blue-50 border-blue-200 text-blue-700" />
+            <StatusChip label={isAr ? "في الموعد" : "On Time"} count={stats?.on_time ?? 0} color="bg-emerald-50 border-emerald-200 text-emerald-700" />
+            <StatusChip label={isAr ? "متأخر" : "Late"} count={stats?.late ?? 0} color="bg-amber-50 border-amber-200 text-amber-700" />
+            <StatusChip label={isAr ? "لم يحضر بعد" : "Not Yet"} count={stats?.not_yet ?? 0} color="bg-muted/50 border-border text-muted-foreground" />
+            <StatusChip label={isAr ? "غائب" : "Absent"} count={stats?.absent ?? 0} color="bg-red-50 border-red-200 text-red-700" />
+            <StatusChip label={isAr ? "في إجازة" : "On Leave"} count={stats?.on_leave ?? 0} color="bg-blue-50 border-blue-100 text-blue-600" />
           </>
         )}
       </div>
@@ -211,7 +217,7 @@ export default function TodayAttendancePage() {
       {/* Filters */}
       <div className="flex flex-wrap gap-3 items-center bg-card p-4 rounded-lg border border-border">
         <div className="flex items-center gap-2">
-          <Label htmlFor="att-date" className="text-xs text-muted-foreground uppercase tracking-wide">Date</Label>
+          <Label htmlFor="att-date" className="text-xs text-muted-foreground uppercase tracking-wide">{isAr ? "التاريخ" : "Date"}</Label>
           <Input
             id="att-date"
             type="date"
@@ -227,17 +233,17 @@ export default function TodayAttendancePage() {
               onClick={() => setSelectedDate(todayIso)}
               className="text-xs"
             >
-              Jump to today
+              {isAr ? "اذهب إلى اليوم" : "Jump to today"}
             </Button>
           )}
         </div>
 
         <Select value={departmentFilter} onValueChange={setDepartmentFilter}>
           <SelectTrigger className="w-48">
-            <SelectValue placeholder="All Departments" />
+            <SelectValue placeholder={isAr ? "كل الأقسام" : "All Departments"} />
           </SelectTrigger>
           <SelectContent>
-            <SelectItem value="all">All Departments</SelectItem>
+            <SelectItem value="all">{isAr ? "كل الأقسام" : "All Departments"}</SelectItem>
             {departments.map(d => (
               <SelectItem key={d} value={d}>{d}</SelectItem>
             ))}
@@ -246,10 +252,10 @@ export default function TodayAttendancePage() {
 
         <Select value={statusFilter} onValueChange={setStatusFilter}>
           <SelectTrigger className="w-44">
-            <SelectValue placeholder="All Statuses" />
+            <SelectValue placeholder={isAr ? "كل الحالات" : "All Statuses"} />
           </SelectTrigger>
           <SelectContent>
-            <SelectItem value="all">All Statuses</SelectItem>
+            <SelectItem value="all">{isAr ? "كل الحالات" : "All Statuses"}</SelectItem>
             {statuses.map(s => (
               <SelectItem key={s} value={s}>{s.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase())}</SelectItem>
             ))}
@@ -257,7 +263,7 @@ export default function TodayAttendancePage() {
         </Select>
 
         <Input
-          placeholder="Search by name or ID..."
+          placeholder={isAr ? "ابحث بالاسم أو الرقم..." : "Search by name or ID..."}
           value={searchQuery}
           onChange={e => setSearchQuery(e.target.value)}
           className="w-60"
@@ -269,18 +275,18 @@ export default function TodayAttendancePage() {
         <Table>
           <TableHeader>
             <TableRow className="bg-muted/50">
-              <TableHead className="font-semibold">Employee ID</TableHead>
-              <TableHead className="font-semibold">Name</TableHead>
-              <TableHead className="font-semibold">Department</TableHead>
-              <TableHead className="font-semibold">Shift</TableHead>
-              <TableHead className="font-semibold">Expected In</TableHead>
-              <TableHead className="font-semibold">Check-In</TableHead>
-              <TableHead className="font-semibold">Expected Out</TableHead>
-              <TableHead className="font-semibold">Check-Out</TableHead>
-              <TableHead className="font-semibold">Status</TableHead>
-              <TableHead className="font-semibold">Hours</TableHead>
-              <TableHead className="font-semibold">Auto-Actions</TableHead>
-              <TableHead className="font-semibold text-center">Actions</TableHead>
+              <TableHead className="font-semibold">{isAr ? "رقم الموظف" : "Employee ID"}</TableHead>
+              <TableHead className="font-semibold">{isAr ? "الاسم" : "Name"}</TableHead>
+              <TableHead className="font-semibold">{isAr ? "القسم" : "Department"}</TableHead>
+              <TableHead className="font-semibold">{isAr ? "الوردية" : "Shift"}</TableHead>
+              <TableHead className="font-semibold">{isAr ? "حضور متوقع" : "Expected In"}</TableHead>
+              <TableHead className="font-semibold">{isAr ? "تسجيل دخول" : "Check-In"}</TableHead>
+              <TableHead className="font-semibold">{isAr ? "انصراف متوقع" : "Expected Out"}</TableHead>
+              <TableHead className="font-semibold">{isAr ? "تسجيل خروج" : "Check-Out"}</TableHead>
+              <TableHead className="font-semibold">{isAr ? "الحالة" : "Status"}</TableHead>
+              <TableHead className="font-semibold">{isAr ? "ساعات" : "Hours"}</TableHead>
+              <TableHead className="font-semibold">{isAr ? "إجراءات تلقائية" : "Auto-Actions"}</TableHead>
+              <TableHead className="font-semibold text-center">{isAr ? "إجراءات" : "Actions"}</TableHead>
             </TableRow>
           </TableHeader>
           <TableBody>

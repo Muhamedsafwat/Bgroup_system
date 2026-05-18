@@ -40,6 +40,7 @@ import {
 } from "@/components/ui/dialog";
 import { Checkbox } from "@/components/ui/checkbox";
 import { cn } from "@/lib/utils";
+import { useLocale } from "@/lib/i18n";
 
 type Rep = { id: string; fullName: string; fullNameAr: string | null };
 type Lead = {
@@ -64,16 +65,18 @@ type Lead = {
   createdAt: string;
 };
 
-const BUCKETS = [
-  { key: "ALL", label: "All", icon: Users },
-  { key: "NEW", label: "Unassigned", icon: Users },
-  { key: "ASSIGNED", label: "Assigned", icon: Send },
-  { key: "NO_ANSWER", label: "No answer", icon: Phone },
-  { key: "WAITING_LIST", label: "Waiting list", icon: Clock },
-  { key: "NOT_INTERESTED", label: "Not interested", icon: XCircle },
-  { key: "CONVERTED", label: "Converted", icon: CheckCircle2 },
-  { key: "ARCHIVED", label: "Archived", icon: Archive },
-] as const;
+// Bucket keys (stable IDs) stay module-scope; labels are resolved at render
+// time from the dictionary so the tabs swap language when the toggle flips.
+const BUCKET_KEYS: ReadonlyArray<{ key: string; icon: typeof Users }> = [
+  { key: "ALL", icon: Users },
+  { key: "NEW", icon: Users },
+  { key: "ASSIGNED", icon: Send },
+  { key: "NO_ANSWER", icon: Phone },
+  { key: "WAITING_LIST", icon: Clock },
+  { key: "NOT_INTERESTED", icon: XCircle },
+  { key: "CONVERTED", icon: CheckCircle2 },
+  { key: "ARCHIVED", icon: Archive },
+];
 
 const STATUS_BADGE: Record<string, string> = {
   NEW: "bg-blue-500/15 text-blue-700 dark:text-blue-300",
@@ -92,6 +95,7 @@ export function ColdLeadsClient({
   isManagerOrAdmin: boolean;
   reps: Rep[];
 }) {
+  const { t, locale } = useLocale();
   const [bucket, setBucket] = useState<string>("ALL");
   const [rows, setRows] = useState<Lead[]>([]);
   const [counts, setCounts] = useState<Record<string, number>>({});
@@ -103,6 +107,15 @@ export function ColdLeadsClient({
   const [industry, setIndustry] = useState("");
   const [category, setCategory] = useState("");
   const [location, setLocation] = useState("");
+  // Manager/admin can filter by which rep owns the row. Special value
+  // "ALL" → no filter, "unassigned" → only NEW-pool rows, otherwise the
+  // CrmUserProfile id. Reps don't see this control (their bucket is
+  // implicitly already their own).
+  const [assignedTo, setAssignedTo] = useState<string>("ALL");
+  // Explicit status filter alongside the bucket tabs. Tabs are still the
+  // primary way to navigate; this is a secondary refinement (e.g. combine
+  // bucket=ALL with status=ASSIGNED to inspect every assigned row).
+  const [statusFilter, setStatusFilter] = useState<string>("ALL");
 
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [pendingAction, setPendingAction] = useState(false);
@@ -122,11 +135,16 @@ export function ColdLeadsClient({
     setSelected(new Set());
     try {
       const params = new URLSearchParams();
-      if (bucket !== "ALL") params.set("status", bucket);
+      // Status precedence: the explicit dropdown wins over the bucket tab so
+      // the user can do "bucket=ALL + status=ASSIGNED" if they want. If the
+      // explicit dropdown is "ALL", fall back to the bucket value.
+      const effectiveStatus = statusFilter !== "ALL" ? statusFilter : bucket;
+      if (effectiveStatus !== "ALL") params.set("status", effectiveStatus);
       if (q) params.set("q", q);
       if (industry) params.set("industry", industry);
       if (category) params.set("category", category);
       if (location) params.set("location", location);
+      if (assignedTo !== "ALL") params.set("assignedToId", assignedTo);
       params.set("page", String(page));
       const res = await fetch(`/api/crm/cold-leads?${params.toString()}`);
       if (res.ok) {
@@ -138,7 +156,7 @@ export function ColdLeadsClient({
     } finally {
       setLoading(false);
     }
-  }, [bucket, q, industry, category, location, page]);
+  }, [bucket, q, industry, category, location, assignedTo, statusFilter, page]);
 
   useEffect(() => {
     fetchRows();
@@ -149,6 +167,8 @@ export function ColdLeadsClient({
     setIndustry("");
     setCategory("");
     setLocation("");
+    setAssignedTo("ALL");
+    setStatusFilter("ALL");
     setPage(1);
   }
 
@@ -210,11 +230,13 @@ export function ColdLeadsClient({
       // Pass the current filters so the export reflects what the user is
       // looking at. Empty filters → whole directory (within their scope).
       const params = new URLSearchParams();
-      if (bucket !== "ALL") params.set("status", bucket);
+      const effectiveStatus = statusFilter !== "ALL" ? statusFilter : bucket;
+      if (effectiveStatus !== "ALL") params.set("status", effectiveStatus);
       if (q) params.set("q", q);
       if (industry) params.set("industry", industry);
       if (category) params.set("category", category);
       if (location) params.set("location", location);
+      if (assignedTo !== "ALL") params.set("assignedToId", assignedTo);
       const res = await fetch(`/api/crm/cold-leads/export?${params.toString()}`);
       if (!res.ok) {
         const data = await res.json().catch(() => ({}));
@@ -361,28 +383,26 @@ export function ColdLeadsClient({
     <div className="space-y-4">
       <div className="flex items-start justify-between gap-3">
         <div>
-          <h1 className="text-2xl font-bold">Cold leads</h1>
+          <h1 className="text-2xl font-bold">{t.pages.coldLeads}</h1>
           <p className="text-sm text-muted-foreground mt-1">
             {isManagerOrAdmin
-              ? "Upload bulk lead lists, filter by category / industry / location, and distribute to reps."
-              : "Your call queue. Open a lead to record what happened."}
+              ? (locale === "ar" ? "ارفع قوائم العملاء، صفِّ حسب الفئة/القطاع/الموقع، ووزّع على المندوبين." : "Upload bulk lead lists, filter by category / industry / location, and distribute to reps.")
+              : (locale === "ar" ? "قائمة مكالماتك. افتح أي عميل لتسجيل ما حدث." : "Your call queue. Open a lead to record what happened.")}
           </p>
         </div>
         <div className="flex items-center gap-2">
-          {/* Export is available to anyone with read access — reps get their
-              own queue, managers get their team's, admin gets everything. */}
           <Button
             variant="outline"
             onClick={handleExport}
             disabled={pendingAction || loading}
           >
             <FileDown className="h-4 w-4 me-1.5" />
-            Export Excel
+            {t.common.export} Excel
           </Button>
           {isManagerOrAdmin && (
             <Button onClick={() => setImportOpen(true)} disabled={importing}>
               <Upload className="h-4 w-4 me-1.5" />
-              Import Excel
+              {t.common.import} Excel
             </Button>
           )}
         </div>
@@ -391,50 +411,94 @@ export function ColdLeadsClient({
       {/* Bucket tabs */}
       <Tabs value={bucket} onValueChange={(v) => { setBucket(v); setPage(1); }}>
         <TabsList className="flex-wrap h-auto">
-          {BUCKETS.map((b) => (
+          {BUCKET_KEYS.map((b) => {
+            const bucketLabel: Record<string, string> = {
+              ALL: t.pages.bucketAll,
+              NEW: t.pages.bucketUnassigned,
+              ASSIGNED: t.pages.bucketAssigned,
+              NO_ANSWER: t.pages.bucketNoAnswer,
+              WAITING_LIST: t.pages.bucketWaitingList,
+              NOT_INTERESTED: t.pages.bucketNotInterested,
+              CONVERTED: t.pages.bucketConverted,
+              ARCHIVED: t.pages.bucketArchived,
+            };
+            return (
             <TabsTrigger key={b.key} value={b.key} className="gap-1.5">
               <b.icon className="h-3.5 w-3.5" />
-              <span>{b.label}</span>
+              <span>{bucketLabel[b.key]}</span>
               <span className="text-xs text-muted-foreground">
                 {b.key === "ALL"
                   ? Object.values(counts).reduce((s, n) => s + n, 0)
                   : counts[b.key] ?? 0}
               </span>
             </TabsTrigger>
-          ))}
+          );
+          })}
         </TabsList>
       </Tabs>
 
       {/* Filter bar */}
       <Card className="p-3">
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-2">
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-2">
           <div className="relative">
             <Search className="absolute start-2.5 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
             <Input
               value={q}
               onChange={(e) => { setQ(e.target.value); setPage(1); }}
-              placeholder="Search name, phone, email…"
+              placeholder={t.pages.searchNamePhoneEmail}
               className="ps-9"
             />
           </div>
           <Input
             value={industry}
             onChange={(e) => { setIndustry(e.target.value); setPage(1); }}
-            placeholder="Industry"
+            placeholder={t.pages.industry}
           />
           <Input
             value={category}
             onChange={(e) => { setCategory(e.target.value); setPage(1); }}
-            placeholder="Category"
+            placeholder={t.pages.category}
           />
           <Input
             value={location}
             onChange={(e) => { setLocation(e.target.value); setPage(1); }}
-            placeholder="Location"
+            placeholder={locale === "ar" ? "الموقع / العنوان" : "Location / Address"}
           />
-          {(q || industry || category || location) && (
+          {/* Status dropdown — second axis alongside the bucket tabs. Lets
+              the user combine bucket=ALL with a specific status, useful for
+              quickly cross-cutting buckets. */}
+          <select
+            value={statusFilter}
+            onChange={(e) => { setStatusFilter(e.target.value); setPage(1); }}
+            className="h-9 w-full rounded-md border border-input bg-background px-2 text-sm"
+          >
+            <option value="ALL">{locale === "ar" ? "كل الحالات" : "All statuses"}</option>
+            <option value="NEW">{t.pages.bucketUnassigned}</option>
+            <option value="ASSIGNED">{t.pages.bucketAssigned}</option>
+            <option value="NO_ANSWER">{t.pages.bucketNoAnswer}</option>
+            <option value="WAITING_LIST">{t.pages.bucketWaitingList}</option>
+            <option value="NOT_INTERESTED">{t.pages.bucketNotInterested}</option>
+            <option value="CONVERTED">{t.pages.bucketConverted}</option>
+            <option value="ARCHIVED">{t.pages.bucketArchived}</option>
+          </select>
+          {/* Rep-assigned dropdown — managers/admin only. Reps already see
+              only their own rows so the filter would be meaningless. */}
+          {isManagerOrAdmin && (
+            <select
+              value={assignedTo}
+              onChange={(e) => { setAssignedTo(e.target.value); setPage(1); }}
+              className="h-9 w-full rounded-md border border-input bg-background px-2 text-sm"
+            >
+              <option value="ALL">{locale === "ar" ? "كل المندوبين" : "All reps"}</option>
+              <option value="unassigned">{locale === "ar" ? "غير معيّن" : "Unassigned"}</option>
+              {reps.map((r) => (
+                <option key={r.id} value={r.id}>{r.fullName}</option>
+              ))}
+            </select>
+          )}
+          {(q || industry || category || location || assignedTo !== "ALL" || statusFilter !== "ALL") && (
             <Button variant="ghost" onClick={clearFilters}>
-              <X className="h-4 w-4 me-1" /> Clear
+              <X className="h-4 w-4 me-1" /> {t.pages.clear}
             </Button>
           )}
         </div>
@@ -443,13 +507,13 @@ export function ColdLeadsClient({
       {/* Bulk action bar */}
       {isManagerOrAdmin && selected.size > 0 && (
         <Card className="p-3 flex items-center gap-3 bg-primary/5 border-primary/20">
-          <span className="text-sm font-medium">{selected.size} selected</span>
+          <span className="text-sm font-medium">{selected.size} {t.pages.selectedSuffix}</span>
           <div className="flex-1" />
           <Button size="sm" onClick={() => setDistributeOpen(true)} disabled={pendingAction}>
-            <Send className="h-3.5 w-3.5 me-1" /> Distribute to reps
+            <Send className="h-3.5 w-3.5 me-1" /> {t.pages.distributeToReps}
           </Button>
           <Button size="sm" variant="outline" onClick={handleResetToPool} disabled={pendingAction}>
-            <RotateCcw className="h-3.5 w-3.5 me-1" /> Send back to pool
+            <RotateCcw className="h-3.5 w-3.5 me-1" /> {t.pages.sendBackToPool}
           </Button>
           <Button
             size="sm"
@@ -458,7 +522,7 @@ export function ColdLeadsClient({
             disabled={pendingAction}
             className="text-destructive hover:text-destructive"
           >
-            <Archive className="h-3.5 w-3.5 me-1" /> Archive
+            <Archive className="h-3.5 w-3.5 me-1" /> {t.pages.archive}
           </Button>
           <Button
             size="sm"
@@ -467,7 +531,7 @@ export function ColdLeadsClient({
             disabled={pendingAction}
             className="text-destructive hover:text-destructive border-destructive/40"
           >
-            <Trash2 className="h-3.5 w-3.5 me-1" /> Delete permanently
+            <Trash2 className="h-3.5 w-3.5 me-1" /> {t.pages.deleteSelected}
           </Button>
         </Card>
       )}
@@ -486,14 +550,14 @@ export function ColdLeadsClient({
                     />
                   </th>
                 )}
-                <th className="text-start py-2 px-3 text-xs font-medium uppercase">Name</th>
-                <th className="text-start py-2 px-3 text-xs font-medium uppercase">Company</th>
-                <th className="text-start py-2 px-3 text-xs font-medium uppercase">Phone</th>
-                <th className="text-start py-2 px-3 text-xs font-medium uppercase">Industry</th>
-                <th className="text-start py-2 px-3 text-xs font-medium uppercase">Location</th>
-                <th className="text-start py-2 px-3 text-xs font-medium uppercase">Status</th>
-                <th className="text-start py-2 px-3 text-xs font-medium uppercase">Owner</th>
-                <th className="text-end py-2 px-3 text-xs font-medium uppercase">Action</th>
+                <th className="text-start py-2 px-3 text-xs font-medium uppercase">{t.common.name}</th>
+                <th className="text-start py-2 px-3 text-xs font-medium uppercase">{t.cols.company}</th>
+                <th className="text-start py-2 px-3 text-xs font-medium uppercase">{t.common.phone}</th>
+                <th className="text-start py-2 px-3 text-xs font-medium uppercase">{t.cols.industry}</th>
+                <th className="text-start py-2 px-3 text-xs font-medium uppercase">{t.cols.location}</th>
+                <th className="text-start py-2 px-3 text-xs font-medium uppercase">{t.cols.status}</th>
+                <th className="text-start py-2 px-3 text-xs font-medium uppercase">{t.cols.owner}</th>
+                <th className="text-end py-2 px-3 text-xs font-medium uppercase">{t.cols.action}</th>
               </tr>
             </thead>
             <tbody className="divide-y">
@@ -501,13 +565,13 @@ export function ColdLeadsClient({
                 <tr>
                   <td colSpan={9} className="py-12 text-center text-muted-foreground">
                     <Loader2 className="h-4 w-4 inline-block me-2 animate-spin" />
-                    Loading…
+                    {t.common.loading}
                   </td>
                 </tr>
               ) : rows.length === 0 ? (
                 <tr>
                   <td colSpan={9} className="py-12 text-center text-sm text-muted-foreground">
-                    No leads in this bucket{q || industry || category || location ? " (or matching the filters)" : ""}.
+                    {locale === "ar" ? "لا يوجد عملاء في هذا التصنيف" : "No leads in this bucket"}{q || industry || category || location ? (locale === "ar" ? " (أو مطابقة للفلاتر)" : " (or matching the filters)") : ""}.
                   </td>
                 </tr>
               ) : (
@@ -660,6 +724,7 @@ function EditLeadDialog({
   isManagerOrAdmin: boolean;
   reps: Rep[];
 }) {
+  const { locale } = useLocale();
   const [form, setForm] = useState({
     name: "",
     companyName: "",
@@ -753,7 +818,7 @@ function EditLeadDialog({
     <Dialog open={!!lead} onOpenChange={(open) => !open && onClose()}>
       <DialogContent className="sm:max-w-2xl max-h-[90vh] overflow-y-auto">
         <DialogHeader>
-          <DialogTitle>Edit cold lead</DialogTitle>
+          <DialogTitle>{locale === "ar" ? "تعديل العميل" : "Edit cold lead"}</DialogTitle>
         </DialogHeader>
         {lead && (
           <div className="space-y-3">
@@ -898,6 +963,8 @@ const TEMPLATE_OPTIONAL_COLUMNS: Array<{ key: string; label: string }> = [
 function ImportDialog({
   open,
   onOpenChange,
+  // useLocale() must be called inside this function component for the title;
+  // declared here so it's stable for the render.
   importing,
   fileRef,
   onFile,
@@ -961,7 +1028,7 @@ function ImportDialog({
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="sm:max-w-lg max-h-[90vh] overflow-y-auto">
         <DialogHeader>
-          <DialogTitle>Import cold leads</DialogTitle>
+          <DialogTitle>{useLocale().locale === "ar" ? "استيراد عملاء" : "Import cold leads"}</DialogTitle>
         </DialogHeader>
         <div className="space-y-4 text-sm">
           {/* Step 1 — download template */}

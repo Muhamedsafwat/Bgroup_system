@@ -43,6 +43,11 @@ type RoleRule = {
   prefix: string;
   platformAdminOnly?: boolean;
   allowedHrRoles?: string[];
+  /// CRM role gate for /crm/admin/* surfaces. The proxy doesn't have CRM
+  /// roles in the session by default; we read `session.user.crmRole` to
+  /// enforce. Listed roles get in, everyone else (including REPs without
+  /// the ADMIN role) is blocked. Platform admins always pass.
+  allowedCrmRoles?: ("REP" | "ACCOUNT_MGR" | "ASSISTANT" | "MANAGER" | "ADMIN")[];
   /// Optional human-readable explanation, surfaced as ?denied=... on redirect.
   reason: string;
 };
@@ -51,6 +56,29 @@ const ROLE_RULES: RoleRule[] = [
   // Platform admin surfaces
   { prefix: "/admin", platformAdminOnly: true, reason: "admin-only" },
   { prefix: "/api/admin", platformAdminOnly: true, reason: "admin-only" },
+
+  // /partners/admin/* is the platform's partner-management console — it's
+  // for super-admins or partners-admins (a partner module member without a
+  // partnerId). Regular partners (with partnerId) must NOT see commission /
+  // contract / partner directories that belong to other partners.
+  { prefix: "/partners/admin", platformAdminOnly: true, reason: "partners-admin-only" },
+  { prefix: "/api/partners/admin", platformAdminOnly: true, reason: "partners-admin-only" },
+
+  // /crm/admin/* manages catalogue, stage config, loss reasons, entities,
+  // and CRM user assignments. Only CRM ADMIN (or platform admin / MANAGER
+  // for user-team picker) should reach these. Previously every CRM member
+  // could open them, which let REPs disable stages and change other reps'
+  // managers.
+  {
+    prefix: "/crm/admin",
+    allowedCrmRoles: ["ADMIN", "MANAGER"],
+    reason: "crm-admin-only",
+  },
+  {
+    prefix: "/api/crm/admin",
+    allowedCrmRoles: ["ADMIN", "MANAGER"],
+    reason: "crm-admin-only",
+  },
 
   // HR manager / leadership surfaces (excludes /hr/employee/* and /hr/team/*)
   {
@@ -148,7 +176,8 @@ function findDeniedRule(
   pathname: string,
   modules: ("hr" | "crm" | "partners")[],
   hrRoles: string[],
-  partnerId: string | null | undefined
+  partnerId: string | null | undefined,
+  crmRole: string | null | undefined
 ): RoleRule | null {
   const rule = ROLE_RULES.find((r) => pathname === r.prefix || pathname.startsWith(r.prefix + "/"));
   if (!rule) return null;
@@ -159,6 +188,11 @@ function findDeniedRule(
     // Platform admin always passes. Otherwise need at least one of the listed roles.
     if (isAdmin(modules, hrRoles, partnerId)) return null;
     const ok = rule.allowedHrRoles.some((r) => hrRoles.includes(r));
+    return ok ? null : rule;
+  }
+  if (rule.allowedCrmRoles) {
+    if (isAdmin(modules, hrRoles, partnerId)) return null;
+    const ok = crmRole && (rule.allowedCrmRoles as string[]).includes(crmRole);
     return ok ? null : rule;
   }
   return null;
@@ -311,7 +345,7 @@ export async function proxy(request: NextRequest) {
   // "employee" can't reach them by typing the URL. The page would client-side
   // redirect on its own, but that flashes, and worse the data has already
   // been fetched by the page render. Block here.
-  const denied = findDeniedRule(pathname, modules, hrRoles, partnerId);
+  const denied = findDeniedRule(pathname, modules, hrRoles, partnerId, session.user.crmRole ?? null);
   if (denied) {
     if (pathname.startsWith("/api/")) {
       return NextResponse.json({ error: `Forbidden (${denied.reason})` }, { status: 403 });

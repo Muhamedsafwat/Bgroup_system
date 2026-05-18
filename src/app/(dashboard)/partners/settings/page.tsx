@@ -9,8 +9,11 @@ import { Badge } from '@/components/partners/ui/badge';
 import { Modal } from '@/components/partners/ui/modal';
 import { Skeleton } from '@/components/partners/ui/skeleton';
 import { Pencil, User, Building2, Shield } from 'lucide-react';
+import { useLocale } from '@/lib/i18n';
 
 export default function SettingsPage() {
+  const { locale } = useLocale()
+  const isAr = locale === 'ar'
   const { user, loading } = useAuth();
   const [showEditModal, setShowEditModal] = useState(false);
   const [formData, setFormData] = useState({ name: '', email: '' });
@@ -53,7 +56,7 @@ export default function SettingsPage() {
     <div className="space-y-6">
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-2xl font-bold text-foreground">Settings</h1>
+          <h1 className="text-2xl font-bold text-foreground">{isAr ? 'الإعدادات' : 'Settings'}</h1>
           <p className="mt-1 text-sm text-muted-foreground">Manage your account and preferences</p>
         </div>
         <Button variant="secondary" icon={Pencil} onClick={openEditModal}>Edit Profile</Button>
@@ -78,7 +81,7 @@ export default function SettingsPage() {
                 <dd className="mt-1 text-sm text-foreground">{user?.email}</dd>
               </div>
               <div>
-                <dt className="text-xs font-medium text-muted-foreground uppercase tracking-wide">Role</dt>
+                <dt className="text-xs font-medium text-muted-foreground uppercase tracking-wide">{isAr ? 'الدور' : 'Role'}</dt>
                 <dd className="mt-1"><Badge status={user?.role || 'PARTNER'} /></dd>
               </div>
             </dl>
@@ -125,7 +128,7 @@ export default function SettingsPage() {
         </Card>
       </div>
 
-      <Modal open={showEditModal} onClose={() => setShowEditModal(false)} title="Edit Profile">
+      <Modal open={showEditModal} onClose={() => setShowEditModal(false)} title={isAr ? 'تعديل الملف الشخصي' : 'Edit Profile'}>
         <form onSubmit={handleUpdate} className="space-y-4">
           {error && <div className="bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded-xl text-sm">{error}</div>}
           <Input label="Full Name" value={formData.name} onChange={(e) => setFormData({...formData, name: e.target.value})} required placeholder="Your name" />

@@ -20,6 +20,7 @@ import { Search, LayoutGrid, List, GripVertical, X } from "lucide-react";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
 import { STAGE_LABEL_EN, STAGE_LABEL_AR, SPEC_STAGES, stageLabel } from "@/lib/crm/stage-labels";
+import { useLocale } from "@/lib/i18n";
 import type { CrmOpportunityStage } from "@/types";
 
 type StageConfig = {
@@ -109,6 +110,7 @@ function formatEGP(s: string): string {
 }
 
 export function PipelineClient({ isManager }: { isManager: boolean }) {
+  const { t } = useLocale();
   const [view, setView] = useState<"board" | "list">("board");
   const [opps, setOpps] = useState<Opp[]>([]);
   const [options, setOptions] = useState<FilterOptions>({ companies: [], reps: [], products: [] });
@@ -231,25 +233,25 @@ export function PipelineClient({ isManager }: { isManager: boolean }) {
       <div className="flex flex-wrap items-center gap-2">
         <div className="relative max-w-xs flex-1 min-w-[200px]">
           <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground pointer-events-none" />
-          <Input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search title or company..." className="ps-8 h-9" />
+          <Input value={q} onChange={(e) => setQ(e.target.value)} placeholder={t.pages.searchTitleOrCompany} className="ps-8 h-9" />
         </div>
 
         {isManager && (
           <>
             <Tabs value={scope} onValueChange={(v) => setScope(v as "mine" | "all")}>
               <TabsList>
-                <TabsTrigger value="mine">Mine</TabsTrigger>
-                <TabsTrigger value="all">All reps</TabsTrigger>
+                <TabsTrigger value="mine">{t.pages.mine}</TabsTrigger>
+                <TabsTrigger value="all">{t.pages.allReps}</TabsTrigger>
               </TabsList>
             </Tabs>
             <Select value={filterRep} onValueChange={(v) => setFilterRep(v ?? "ALL")}>
               <SelectTrigger className="h-9 w-40">
-                <SelectValue placeholder="Rep">
-                  {(v) => (v === "ALL" || !v) ? "All reps" : (options.reps.find((r) => r.id === v)?.fullName ?? "Rep")}
+                <SelectValue placeholder={t.cols.rep}>
+                  {(v) => (v === "ALL" || !v) ? t.pages.allReps : (options.reps.find((r) => r.id === v)?.fullName ?? t.cols.rep)}
                 </SelectValue>
               </SelectTrigger>
               <SelectContent>
-                <SelectItem value="ALL">All reps</SelectItem>
+                <SelectItem value="ALL">{t.pages.allReps}</SelectItem>
                 {options.reps.map((r) => (
                   <SelectItem key={r.id} value={r.id}>{r.fullName}</SelectItem>
                 ))}
@@ -259,12 +261,12 @@ export function PipelineClient({ isManager }: { isManager: boolean }) {
         )}
         <Select value={filterCompany} onValueChange={(v) => setFilterCompany(v ?? "ALL")}>
           <SelectTrigger className="h-9 w-44">
-            <SelectValue placeholder="Company">
-              {(v) => (v === "ALL" || !v) ? "All companies" : (options.companies.find((c) => c.id === v)?.nameEn ?? "Company")}
+            <SelectValue placeholder={t.cols.company}>
+              {(v) => (v === "ALL" || !v) ? t.pages.allCompanies : (options.companies.find((c) => c.id === v)?.nameEn ?? t.cols.company)}
             </SelectValue>
           </SelectTrigger>
           <SelectContent>
-            <SelectItem value="ALL">All companies</SelectItem>
+            <SelectItem value="ALL">{t.pages.allCompanies}</SelectItem>
             {options.companies.map((c) => (
               <SelectItem key={c.id} value={c.id}>{c.nameEn}</SelectItem>
             ))}
@@ -272,12 +274,12 @@ export function PipelineClient({ isManager }: { isManager: boolean }) {
         </Select>
         <Select value={filterProduct} onValueChange={(v) => setFilterProduct(v ?? "ALL")}>
           <SelectTrigger className="h-9 w-44">
-            <SelectValue placeholder="Product">
-              {(v) => (v === "ALL" || !v) ? "All products" : (options.products.find((p) => p.id === v)?.nameEn ?? "Product")}
+            <SelectValue placeholder={t.pages.product}>
+              {(v) => (v === "ALL" || !v) ? t.pages.allProducts : (options.products.find((p) => p.id === v)?.nameEn ?? t.pages.product)}
             </SelectValue>
           </SelectTrigger>
           <SelectContent>
-            <SelectItem value="ALL">All products</SelectItem>
+            <SelectItem value="ALL">{t.pages.allProducts}</SelectItem>
             {options.products.map((p) => (
               <SelectItem key={p.id} value={p.id}>{p.nameEn}</SelectItem>
             ))}
@@ -297,21 +299,21 @@ export function PipelineClient({ isManager }: { isManager: boolean }) {
             }}
           >
             <X className="h-4 w-4 me-1" />
-            Clear
+            {t.pages.clear}
           </Button>
         )}
 
         <div className="flex-1" />
         <Tabs value={view} onValueChange={(v) => setView(v as "board" | "list")}>
           <TabsList>
-            <TabsTrigger value="board"><LayoutGrid className="h-3.5 w-3.5 me-1.5" />Board</TabsTrigger>
-            <TabsTrigger value="list"><List className="h-3.5 w-3.5 me-1.5" />List</TabsTrigger>
+            <TabsTrigger value="board"><LayoutGrid className="h-3.5 w-3.5 me-1.5" />{t.pages.board}</TabsTrigger>
+            <TabsTrigger value="list"><List className="h-3.5 w-3.5 me-1.5" />{t.pages.list}</TabsTrigger>
           </TabsList>
         </Tabs>
       </div>
 
       {loading ? (
-        <p className="text-sm text-muted-foreground py-12 text-center">Loading...</p>
+        <p className="text-sm text-muted-foreground py-12 text-center">{t.common.loading}</p>
       ) : view === "board" ? (
         <DndContext
           sensors={sensors}
@@ -359,6 +361,7 @@ function StageColumn({
 }) {
   const { setNodeRef, isOver } = useDroppable({ id: stage });
   const total = opps.reduce((acc, o) => acc + Number(o.weightedValueEGP), 0);
+  const { t } = useLocale();
   return (
     <div
       ref={setNodeRef}
@@ -380,7 +383,7 @@ function StageColumn({
       <div className="space-y-2 min-h-[6rem]">
         {opps.length === 0 ? (
           <div className="text-[10px] text-muted-foreground italic text-center py-6">
-            Drop here
+            {t.pages.dropHere}
           </div>
         ) : (
           opps.map((o) => <OppCard key={o.id} opp={o} active={activeId === o.id} />)
@@ -445,8 +448,9 @@ function ListView({
   opps: Opp[];
   labelFor: (stage: string) => { en: string; ar: string };
 }) {
+  const { t, locale } = useLocale();
   if (opps.length === 0) {
-    return <p className="text-sm text-muted-foreground py-12 text-center">No opportunities match.</p>;
+    return <p className="text-sm text-muted-foreground py-12 text-center">{t.pages.noOpportunitiesMatch}</p>;
   }
   return (
     <Card>
@@ -455,13 +459,13 @@ function ListView({
           <table className="w-full text-sm">
             <thead className="text-muted-foreground border-b">
               <tr>
-                <th className="text-start py-2 px-3 text-xs font-medium uppercase">Code</th>
-                <th className="text-start py-2 px-3 text-xs font-medium uppercase">Title</th>
-                <th className="text-start py-2 px-3 text-xs font-medium uppercase">Company</th>
-                <th className="text-start py-2 px-3 text-xs font-medium uppercase">Owner</th>
-                <th className="text-start py-2 px-3 text-xs font-medium uppercase">Stage</th>
-                <th className="text-end py-2 px-3 text-xs font-medium uppercase">Value</th>
-                <th className="text-end py-2 px-3 text-xs font-medium uppercase">Prob</th>
+                <th className="text-start py-2 px-3 text-xs font-medium uppercase">{t.cols.code}</th>
+                <th className="text-start py-2 px-3 text-xs font-medium uppercase">{t.cols.title}</th>
+                <th className="text-start py-2 px-3 text-xs font-medium uppercase">{t.cols.company}</th>
+                <th className="text-start py-2 px-3 text-xs font-medium uppercase">{t.cols.owner}</th>
+                <th className="text-start py-2 px-3 text-xs font-medium uppercase">{t.cols.stage}</th>
+                <th className="text-end py-2 px-3 text-xs font-medium uppercase">{t.cols.value}</th>
+                <th className="text-end py-2 px-3 text-xs font-medium uppercase">{t.cols.prob}</th>
               </tr>
             </thead>
             <tbody className="divide-y">
@@ -475,7 +479,7 @@ function ListView({
                   <td className="py-2 px-3 text-muted-foreground">{o.owner.fullName}</td>
                   <td className="py-2 px-3">
                     <span className="text-[10px] uppercase rounded px-1.5 py-0.5 bg-muted">
-                      {labelFor(o.stage).en}
+                      {locale === "ar" ? labelFor(o.stage).ar : labelFor(o.stage).en}
                     </span>
                   </td>
                   <td className="py-2 px-3 text-end ltr-nums">{formatEGP(o.estimatedValueEGP)} EGP</td>

@@ -4,6 +4,7 @@ import React, { useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { useRouter } from 'next/navigation'
 import { Eye, Download, FileSpreadsheet } from 'lucide-react'
+import { useLocale } from '@/lib/i18n'
 import { PageHeader } from '@/components/hr/shared/PageHeader'
 import { DataTable, type Column } from '@/components/hr/shared/DataTable'
 import { Button } from '@/components/hr/ui/button'
@@ -44,6 +45,8 @@ function downloadFile(url: string, filename: string) {
 }
 
 export default function PayrollHistoryPage() {
+  const { locale } = useLocale();
+  const isAr = locale === 'ar';
   const router = useRouter()
   const [companyId, setCompanyId] = useState<string>('')
   const [filterMonth, setFilterMonth] = useState(0)
@@ -203,7 +206,7 @@ export default function PayrollHistoryPage() {
       <PageHeader
         title="Payroll History"
         description="Browse and download past payroll periods"
-        breadcrumbs={[{ label: 'Payroll', href: '/payroll' }, { label: 'History' }]}
+        breadcrumbs={[{ label: isAr ? 'الرواتب' : 'Payroll', href: '/payroll' }, { label: isAr ? 'السجل' : 'History' }]}
       />
 
       {/* Filters */}

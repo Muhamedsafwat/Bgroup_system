@@ -3,6 +3,7 @@
 import React, { useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { FileText, Loader2, Download } from 'lucide-react'
+import { useLocale } from '@/lib/i18n'
 import { PageHeader } from '@/components/hr/shared/PageHeader'
 import { Button } from '@/components/hr/ui/button'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/hr/ui/select'
@@ -35,6 +36,8 @@ const PDF_SECTIONS = [
 ]
 
 export default function PdfReportPage() {
+  const { locale } = useLocale()
+  const isAr = locale === 'ar'
   const { toast } = useToast()
   const now = new Date()
 
@@ -107,9 +110,9 @@ export default function PdfReportPage() {
   return (
     <div className="space-y-6">
       <PageHeader
-        title="PDF Report Generation"
+        title={isAr ? 'إنشاء تقرير PDF' : 'PDF Report Generation'}
         description="Generate a comprehensive payroll PDF report for any period"
-        breadcrumbs={[{ label: 'Reports', href: '/reports' }, { label: 'PDF Report' }]}
+        breadcrumbs={[{ label: isAr ? 'التقارير' : 'Reports', href: '/reports' }, { label: isAr ? 'تقرير PDF' : 'PDF Report' }]}
       />
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
@@ -120,7 +123,7 @@ export default function PdfReportPage() {
             <h2 className="text-base font-semibold text-foreground mb-4">Report Parameters</h2>
             <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
               <div className="space-y-1.5">
-                <label className="text-sm font-medium text-muted-foreground">Company</label>
+                <label className="text-sm font-medium text-muted-foreground">{isAr ? 'الشركة' : 'Company'}</label>
                 <Select value={companyId} onValueChange={setCompanyId}>
                   <SelectTrigger>
                     <SelectValue />
@@ -135,7 +138,7 @@ export default function PdfReportPage() {
               </div>
 
               <div className="space-y-1.5">
-                <label className="text-sm font-medium text-muted-foreground">Month</label>
+                <label className="text-sm font-medium text-muted-foreground">{isAr ? 'الشهر' : 'Month'}</label>
                 <Select value={String(month)} onValueChange={(v) => setMonth(Number(v))}>
                   <SelectTrigger>
                     <SelectValue />
@@ -149,7 +152,7 @@ export default function PdfReportPage() {
               </div>
 
               <div className="space-y-1.5">
-                <label className="text-sm font-medium text-muted-foreground">Year</label>
+                <label className="text-sm font-medium text-muted-foreground">{isAr ? 'السنة' : 'Year'}</label>
                 <Select value={String(year)} onValueChange={(v) => setYear(Number(v))}>
                   <SelectTrigger>
                     <SelectValue />
@@ -274,7 +277,7 @@ export default function PdfReportPage() {
           </div>
 
           <div className="bg-muted/50 rounded-lg border border-border p-4 text-xs text-muted-foreground space-y-2">
-            <p className="font-semibold text-foreground">Notes</p>
+            <p className="font-semibold text-foreground">{isAr ? 'ملاحظات' : 'Notes'}</p>
             <p>PDF generation may take 10-30 seconds depending on the number of employees and selected sections.</p>
             <p>The PDF is generated server-side and downloaded directly to your browser.</p>
           </div>

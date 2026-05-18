@@ -10,6 +10,7 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Save, UserPlus, Briefcase, Handshake, Users as UsersIcon } from "lucide-react";
 import { toast } from "sonner";
+import { useLocale } from "@/lib/i18n";
 
 type Company = { id: string; nameEn: string };
 type Dept = { id: string; nameEn: string; companyId: string };
@@ -32,6 +33,8 @@ export function NewUserForm({
   hrRoles: string[];
 }) {
   const router = useRouter();
+  const { locale } = useLocale();
+  const isAr = locale === "ar";
 
   // Core
   const [email, setEmail] = useState("");
@@ -171,7 +174,7 @@ export function NewUserForm({
         <CardHeader className="pb-2">
           <CardTitle className="text-base flex items-center gap-2">
             <UserPlus className="h-4 w-4 text-primary" />
-            Account
+            {isAr ? 'الحساب' : 'Account'}
           </CardTitle>
         </CardHeader>
         <CardContent className="grid grid-cols-1 md:grid-cols-3 gap-3">
@@ -210,7 +213,7 @@ export function NewUserForm({
             <label className="flex items-center gap-2 rounded-md border px-3 py-1.5 cursor-pointer hover:bg-muted/40">
               <Checkbox checked={includePartner} onCheckedChange={(v) => setIncludePartner(!!v)} />
               <Handshake className="h-4 w-4 text-amber-600" />
-              <span className="text-sm font-medium">Partner</span>
+              <span className="text-sm font-medium">{isAr ? 'شريك' : 'Partner'}</span>
             </label>
           </div>
           <p className="text-xs text-muted-foreground mt-2">
@@ -270,7 +273,7 @@ export function NewUserForm({
               </Select>
             </div>
             <div>
-              <Label>Department</Label>
+              <Label>{isAr ? 'القسم' : 'Department'}</Label>
               <Select value={departmentId} onValueChange={(v) => setDepartmentId(v ?? "")} disabled={!companyId}>
                 <SelectTrigger>
                   <SelectValue placeholder={companyId ? "Select department" : "Pick company first"}>
@@ -389,10 +392,10 @@ export function NewUserForm({
       )}
 
       <div className="flex justify-end gap-2">
-        <Button variant="outline" onClick={() => router.back()} disabled={saving}>Cancel</Button>
+        <Button variant="outline" onClick={() => router.back()} disabled={saving}>{isAr ? "إلغاء" : "Cancel"}</Button>
         <Button onClick={submit} disabled={saving}>
           <Save className="h-4 w-4 me-1.5" />
-          {saving ? "Creating..." : "Create user"}
+          {saving ? (isAr ? "جاري الإنشاء..." : "Creating...") : (isAr ? "إنشاء مستخدم" : "Create user")}
         </Button>
       </div>
     </div>

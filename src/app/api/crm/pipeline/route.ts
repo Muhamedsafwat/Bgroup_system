@@ -52,37 +52,56 @@ export async function GET(req: Request) {
   const callerId = session.user.crmProfileId ?? "__none__";
   const role = session.user.crmRole;
   const platformAdmin = isManager(session) && !!session.user.hrRoles?.includes("super_admin");
-  const where: Prisma.CrmOpportunityWhereInput = {};
+
+  // Build the filter as an AND-stack so each clause stays independent and we
+  // don't clobber `where.OR` when both role-scope and search-q want to use
+  // it. Previously the q-search OR overwrote the role-scope OR (manager
+  // visibility) and the repId filter was silently ignored for admins.
+  const and: Prisma.CrmOpportunityWhereInput[] = [];
 
   if (role === "ADMIN" || platformAdmin) {
-    // No base filter — admin sees everything (still narrowable by repId).
+    // No base filter — admin sees everything (still narrowable by repId below).
   } else if (role === "MANAGER") {
     if (scope === "mine") {
-      where.ownerId = callerId;
-    } else if (repId) {
-      // Manager picking a specific rep — must still be in their team.
-      where.AND = [
-        { ownerId: repId },
-        { OR: [{ ownerId: callerId }, { owner: { managerId: callerId } }] },
-      ];
+      and.push({ ownerId: callerId });
     } else {
-      where.OR = [
-        { ownerId: callerId },
-        { owner: { managerId: callerId } },
-      ];
+      // Manager's team-scope: own opps OR team-member opps. "Team member"
+      // covers both the primary `managerId` link AND the many-to-many
+      // `managedBy` join — a rep on multiple managers' teams shows up for
+      // every one of them.
+      and.push({
+        OR: [
+          { ownerId: callerId },
+          { owner: { managerId: callerId } },
+          { owner: { managedBy: { some: { managerId: callerId } } } },
+        ],
+      });
     }
   } else {
     // REP / ASSISTANT / ACCOUNT_MGR / fallback — always own opps only.
-    where.ownerId = callerId;
+    and.push({ ownerId: callerId });
   }
-  if (companyId) where.companyId = companyId;
-  if (productId) where.products = { some: { productId } };
+
+  // Rep filter now works for every role that's allowed to use it. Reps can't
+  // change it (the UI hides it for them); managers can pick a specific report
+  // and the role-scope above still keeps them inside their team; admins can
+  // pick anyone — previously the admin branch dropped the filter on the floor.
+  if (repId) {
+    and.push({ ownerId: repId });
+  }
+  if (companyId) and.push({ companyId });
+  if (productId) and.push({ products: { some: { productId } } });
   if (q) {
-    where.OR = [
-      { title: { contains: q, mode: "insensitive" } },
-      { company: { nameEn: { contains: q, mode: "insensitive" } } },
-    ];
+    and.push({
+      OR: [
+        { title: { contains: q, mode: "insensitive" } },
+        { company: { nameEn: { contains: q, mode: "insensitive" } } },
+        { customerCompanyName: { contains: q, mode: "insensitive" } },
+      ],
+    });
   }
+
+  const where: Prisma.CrmOpportunityWhereInput = and.length ? { AND: and } : {};
 
   const opportunities = await db.crmOpportunity.findMany({
     where,

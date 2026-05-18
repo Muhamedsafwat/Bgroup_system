@@ -6,6 +6,7 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Loader2, Search, Users, Briefcase, Handshake, ShieldCheck, Plus, KeyRound, Copy, Layers, Pencil } from "lucide-react";
+import { useLocale } from "@/lib/i18n";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import {
@@ -64,6 +65,9 @@ type AdminUser = {
 
 type FilterKind = "all" | "employees" | "sales" | "partners" | "admins";
 
+// Defined at module scope as a fallback if a stale render hits before
+// `useLocale()` resolves. The real labels come from the per-render map
+// inside AdminUsersClient so they swap on locale toggle.
 const KIND_LABEL: Record<FilterKind, string> = {
   all: "All",
   employees: "Employees",
@@ -89,6 +93,17 @@ export function AdminUsersClient() {
   const [resetTarget, setResetTarget] = useState<AdminUser | null>(null);
   const [grantTarget, setGrantTarget] = useState<AdminUser | null>(null);
   const [editTarget, setEditTarget] = useState<AdminUser | null>(null);
+  const { t, locale } = useLocale();
+
+  // Per-render label map so the tab labels swap when the toggle flips.
+  const kindLabel: Record<FilterKind, string> = {
+    all: locale === "ar" ? "الكل" : "All",
+    employees: locale === "ar" ? "الموظفون" : "Employees",
+    sales: locale === "ar" ? "مندوبو المبيعات" : "Sales reps",
+    partners: locale === "ar" ? "الشركاء" : "Partners",
+    admins: locale === "ar" ? "المسؤولون" : "Admins",
+  };
+  void KIND_LABEL; // module-scope fallback retained for type-stability
 
   // After an edit lands we want fresh state without forcing the admin to
   // hard-refresh. Same pattern as the grant-module flow above.
@@ -128,12 +143,12 @@ export function AdminUsersClient() {
       <div className="flex flex-wrap items-center gap-2">
         <div className="relative max-w-xs flex-1 min-w-[220px]">
           <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground pointer-events-none" />
-          <Input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search name / email / company..." className="ps-8 h-9" />
+          <Input value={q} onChange={(e) => setQ(e.target.value)} placeholder={locale === "ar" ? "ابحث بالاسم / البريد / الشركة..." : "Search name / email / company..."} className="ps-8 h-9" />
         </div>
         <Tabs value={filter} onValueChange={(v) => setFilter(v as FilterKind)}>
           <TabsList>
             {(["all", "employees", "sales", "partners", "admins"] as FilterKind[]).map((k) => (
-              <TabsTrigger key={k} value={k}>{KIND_LABEL[k]}</TabsTrigger>
+              <TabsTrigger key={k} value={k}>{kindLabel[k]}</TabsTrigger>
             ))}
           </TabsList>
         </Tabs>
@@ -145,14 +160,14 @@ export function AdminUsersClient() {
           className="ms-auto inline-flex items-center gap-1 rounded-md bg-primary text-primary-foreground px-3 h-9 text-sm font-medium hover:opacity-90"
         >
           <Plus className="h-4 w-4" />
-          New user
+          {locale === "ar" ? "مستخدم جديد" : "New user"}
         </Link>
       </div>
 
       {loading ? (
         <div className="flex items-center justify-center py-12 text-muted-foreground">
           <Loader2 className="h-4 w-4 me-2 animate-spin" />
-          Loading users...
+          {t.common.loading}
         </div>
       ) : (
         <Card>
@@ -161,13 +176,13 @@ export function AdminUsersClient() {
               <table className="w-full text-sm">
                 <thead className="text-muted-foreground border-b">
                   <tr>
-                    <th className="text-start py-2 px-3 text-xs font-medium uppercase">User</th>
-                    <th className="text-start py-2 px-3 text-xs font-medium uppercase">Modules</th>
-                    <th className="text-start py-2 px-3 text-xs font-medium uppercase">HR profile</th>
-                    <th className="text-start py-2 px-3 text-xs font-medium uppercase">CRM</th>
-                    <th className="text-start py-2 px-3 text-xs font-medium uppercase">Partner</th>
-                    <th className="text-end py-2 px-3 text-xs font-medium uppercase">Created</th>
-                    <th className="text-end py-2 px-3 text-xs font-medium uppercase">Actions</th>
+                    <th className="text-start py-2 px-3 text-xs font-medium uppercase">{locale === "ar" ? "المستخدم" : "User"}</th>
+                    <th className="text-start py-2 px-3 text-xs font-medium uppercase">{locale === "ar" ? "الوحدات" : "Modules"}</th>
+                    <th className="text-start py-2 px-3 text-xs font-medium uppercase">{locale === "ar" ? "ملف الموارد البشرية" : "HR profile"}</th>
+                    <th className="text-start py-2 px-3 text-xs font-medium uppercase">{locale === "ar" ? "CRM" : "CRM"}</th>
+                    <th className="text-start py-2 px-3 text-xs font-medium uppercase">{locale === "ar" ? "شريك" : "Partner"}</th>
+                    <th className="text-end py-2 px-3 text-xs font-medium uppercase">{locale === "ar" ? "تاريخ الإنشاء" : "Created"}</th>
+                    <th className="text-end py-2 px-3 text-xs font-medium uppercase">{t.common.actions}</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y">
@@ -249,10 +264,10 @@ export function AdminUsersClient() {
                             size="sm"
                             className="h-7 px-2 text-xs"
                             onClick={() => setEditTarget(u)}
-                            title="Edit name, role, target, and team"
+                            title={locale === "ar" ? "تعديل الاسم والدور والهدف والفريق" : "Edit name, role, target, and team"}
                           >
                             <Pencil className="h-3.5 w-3.5 me-1" />
-                            Edit
+                            {t.common.edit}
                           </Button>
                           {/* Only show "Add module" when the user is missing
                               at least one — once they have all three there's
@@ -263,10 +278,10 @@ export function AdminUsersClient() {
                               size="sm"
                               className="h-7 px-2 text-xs"
                               onClick={() => setGrantTarget(u)}
-                              title="Grant another module to this user"
+                              title={locale === "ar" ? "إضافة وحدة أخرى لهذا المستخدم" : "Grant another module to this user"}
                             >
                               <Layers className="h-3.5 w-3.5 me-1" />
-                              Add module
+                              {locale === "ar" ? "إضافة وحدة" : "Add module"}
                             </Button>
                           )}
                           <Button
@@ -274,10 +289,10 @@ export function AdminUsersClient() {
                             size="sm"
                             className="h-7 px-2 text-xs"
                             onClick={() => setResetTarget(u)}
-                            title="Reset this user's password"
+                            title={locale === "ar" ? "إعادة تعيين كلمة مرور المستخدم" : "Reset this user's password"}
                           >
                             <KeyRound className="h-3.5 w-3.5 me-1" />
-                            Reset password
+                            {locale === "ar" ? "إعادة تعيين كلمة المرور" : "Reset password"}
                           </Button>
                         </div>
                       </td>
@@ -286,7 +301,7 @@ export function AdminUsersClient() {
                   {filtered.length === 0 && (
                     <tr>
                       <td colSpan={7} className="py-12 text-center text-sm text-muted-foreground">
-                        No users match.
+                        {locale === "ar" ? "لا يوجد مستخدمون مطابقون." : "No users match."}
                       </td>
                     </tr>
                   )}
@@ -787,9 +802,10 @@ function GrantModuleDialog({
  * fields the admin actually changed — empty tabs send nothing for that block.
  *
  * For MANAGER/ADMIN CRM users a "Team members" multi-select appears, seeded
- * from the current direct reports (other CrmUserProfile rows whose managerId
- * is this user's profile id). Toggling a rep on/off rewrites their managerId
- * via the same PATCH (`crm.teamMemberIds`).
+ * from this manager's `CrmTeamMembership` rows. A rep can be on multiple
+ * managers' teams, so toggling a rep on/off only affects THIS manager's
+ * membership row — other managers' relationships with the same rep are
+ * untouched. The PATCH endpoint syncs the join table from `crm.teamMemberIds`.
  */
 function EditUserDialog({
   user,
@@ -825,8 +841,8 @@ function EditUserDialog({
   const [crmTarget, setCrmTarget] = useState("");
   const [crmManagerId, setCrmManagerId] = useState("");
   const [crmActive, setCrmActive] = useState(true);
-  const [crmManagers, setCrmManagers] = useState<{ id: string; fullName: string; role: string; managerId: string | null }[]>([]);
-  const [crmReps, setCrmReps] = useState<{ id: string; fullName: string; role: string; managerId: string | null }[]>([]);
+  const [crmManagers, setCrmManagers] = useState<{ id: string; fullName: string; role: string; managerId: string | null; managedByIds: string[] }[]>([]);
+  const [crmReps, setCrmReps] = useState<{ id: string; fullName: string; role: string; managerId: string | null; managedByIds: string[] }[]>([]);
   const [teamMemberIds, setTeamMemberIds] = useState<Set<string>>(new Set());
 
   // Partner
@@ -867,16 +883,21 @@ function EditUserDialog({
       fetch("/api/crm/admin/users")
         .then((r) => (r.ok ? r.json() : { users: [] }))
         .then((data) => {
-          const list: Array<{ id: string; fullName: string; role: string; managerId: string | null }> =
+          const list: Array<{ id: string; fullName: string; role: string; managerId: string | null; managedByIds?: string[] }> =
             Array.isArray(data) ? data : data.users ?? data.data ?? [];
-          setCrmManagers(list.filter((m) => m.role === "MANAGER" || m.role === "ADMIN"));
+          const normalized = list.map((m) => ({ ...m, managedByIds: m.managedByIds ?? [] }));
+          setCrmManagers(normalized.filter((m) => m.role === "MANAGER" || m.role === "ADMIN"));
           // Anyone who is REP/ACCOUNT_MGR/ASSISTANT can be a team member;
           // managers/admins shouldn't report to other managers from this UI.
-          setCrmReps(list.filter((m) => m.role !== "MANAGER" && m.role !== "ADMIN"));
-          // Pre-select reps currently reporting to this manager.
+          setCrmReps(normalized.filter((m) => m.role !== "MANAGER" && m.role !== "ADMIN"));
+          // Pre-select reps that have THIS manager in their managedByIds.
+          // A rep can be on multiple managers' teams; we only check the M2M
+          // join here, the legacy single-FK managerId is no longer the source
+          // of truth for team composition.
           if (user.crm) {
+            const myId = user.crm.id;
             setTeamMemberIds(
-              new Set(list.filter((m) => m.managerId === user.crm!.id).map((m) => m.id))
+              new Set(normalized.filter((m) => m.managedByIds.includes(myId)).map((m) => m.id))
             );
           }
         })
@@ -940,10 +961,12 @@ function EditUserDialog({
       const currentMgr = user.crm.managerId ?? "";
       if (crmManagerId !== currentMgr) crm.managerId = crmManagerId || null;
       if (crmActive !== user.crm.active) crm.active = crmActive;
-      // Team members only meaningful for managers/admins.
+      // Team members only meaningful for managers/admins. Diff against the
+      // M2M join (managedByIds), not the legacy single-FK managerId.
       if (crmRole === "MANAGER" || crmRole === "ADMIN") {
+        const myId = user.crm!.id;
         const currentReports = new Set(
-          crmReps.filter((r) => r.managerId === user.crm!.id).map((r) => r.id)
+          crmReps.filter((r) => r.managedByIds.includes(myId)).map((r) => r.id)
         );
         const next = teamMemberIds;
         const sameSet =
@@ -1145,29 +1168,37 @@ function EditUserDialog({
                   <div className="space-y-1">
                     <Label className="text-xs">Team members</Label>
                     <p className="text-[11px] text-muted-foreground">
-                      Tick each rep that reports to this manager. Unticking a previously-assigned rep clears their manager.
+                      Tick each rep that reports to this manager. A rep can be on multiple managers&apos; teams — toggling here only affects this manager&apos;s team.
                     </p>
                     <div className="rounded-md border max-h-48 overflow-y-auto divide-y">
                       {crmReps.length === 0 ? (
                         <p className="text-xs text-muted-foreground p-3">No reps available.</p>
                       ) : (
-                        crmReps.map((r) => (
-                          <label key={r.id} className="flex items-center gap-2 px-3 py-1.5 text-sm hover:bg-muted/40 cursor-pointer">
-                            <input
-                              type="checkbox"
-                              checked={teamMemberIds.has(r.id)}
-                              onChange={() => toggleTeamMember(r.id)}
-                              className="h-4 w-4"
-                            />
-                            <span className="flex-1 truncate">{r.fullName}</span>
-                            <span className="text-[10px] uppercase text-muted-foreground">{r.role}</span>
-                            {r.managerId && r.managerId !== user.crm!.id && (
-                              <span className="text-[10px] text-amber-600" title="Currently reports to a different manager">
-                                reassign
-                              </span>
-                            )}
-                          </label>
-                        ))
+                        crmReps.map((r) => {
+                          const otherManagerCount = r.managedByIds.filter(
+                            (id) => id !== user.crm!.id
+                          ).length;
+                          return (
+                            <label key={r.id} className="flex items-center gap-2 px-3 py-1.5 text-sm hover:bg-muted/40 cursor-pointer">
+                              <input
+                                type="checkbox"
+                                checked={teamMemberIds.has(r.id)}
+                                onChange={() => toggleTeamMember(r.id)}
+                                className="h-4 w-4"
+                              />
+                              <span className="flex-1 truncate">{r.fullName}</span>
+                              <span className="text-[10px] uppercase text-muted-foreground">{r.role}</span>
+                              {otherManagerCount > 0 && (
+                                <span
+                                  className="text-[10px] text-muted-foreground"
+                                  title={`Also on ${otherManagerCount} other manager${otherManagerCount === 1 ? "'s" : "s'"} team`}
+                                >
+                                  +{otherManagerCount}
+                                </span>
+                              )}
+                            </label>
+                          );
+                        })
                       )}
                     </div>
                   </div>

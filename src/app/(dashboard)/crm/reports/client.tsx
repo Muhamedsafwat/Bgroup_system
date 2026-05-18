@@ -15,6 +15,7 @@ import {
 } from "@/components/ui/dialog";
 import { Phone, Calendar, Users, Sparkles, Save, FileText } from "lucide-react";
 import { toast } from "sonner";
+import { useLocale } from "@/lib/i18n";
 
 type Report = {
   id: string;
@@ -62,6 +63,7 @@ function windowDates(mode: WindowMode): { from: string; to: string; label: strin
 }
 
 export function DailyReportsClient({ isManager }: { isManager: boolean }) {
+  const { t, locale } = useLocale();
   const [windowMode, setWindowMode] = useState<WindowMode>("this-week");
   const [scope, setScope] = useState<"mine" | "all">(isManager ? "all" : "mine");
   const [reports, setReports] = useState<Report[]>([]);
@@ -182,10 +184,10 @@ export function DailyReportsClient({ isManager }: { isManager: boolean }) {
       <div className="flex flex-wrap items-center justify-between gap-2">
         <Tabs value={windowMode} onValueChange={(v) => setWindowMode(v as WindowMode)}>
           <TabsList>
-            <TabsTrigger value="this-week">This week</TabsTrigger>
-            <TabsTrigger value="this-month">This month</TabsTrigger>
-            <TabsTrigger value="last-30">Last 30 days</TabsTrigger>
-            <TabsTrigger value="ytd">Year to date</TabsTrigger>
+            <TabsTrigger value="this-week">{t.pages.thisWeek}</TabsTrigger>
+            <TabsTrigger value="this-month">{t.pages.thisMonth}</TabsTrigger>
+            <TabsTrigger value="last-30">{locale === "ar" ? "آخر 30 يومًا" : "Last 30 days"}</TabsTrigger>
+            <TabsTrigger value="ytd">{locale === "ar" ? "منذ بداية السنة" : "Year to date"}</TabsTrigger>
           </TabsList>
         </Tabs>
         {isManager && (
@@ -215,7 +217,17 @@ export function DailyReportsClient({ isManager }: { isManager: boolean }) {
       <Card>
         <CardHeader className="pb-2">
           <CardTitle className="text-base">
-            {win.label} — {reports.length} report{reports.length === 1 ? "" : "s"}
+            {/* Resolve the window label per locale at render time so flipping
+                the toggle updates it without remounting the page. */}
+            {(() => {
+              const arLabel: Record<typeof windowMode, string> = {
+                "this-week": "هذا الأسبوع",
+                "this-month": "هذا الشهر",
+                "last-30": "آخر 30 يومًا",
+                "ytd": "منذ بداية السنة",
+              };
+              return locale === "ar" ? arLabel[windowMode] : win.label;
+            })()} — {reports.length} {locale === "ar" ? (reports.length === 1 ? "تقرير" : "تقرير") : (reports.length === 1 ? "report" : "reports")}
           </CardTitle>
         </CardHeader>
         <CardContent>

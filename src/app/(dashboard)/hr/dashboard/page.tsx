@@ -38,6 +38,7 @@ import { Badge } from '@/components/hr/ui/badge'
 import { Button } from '@/components/hr/ui/button'
 import { Skeleton } from '@/components/hr/ui/skeleton'
 import { formatDate, formatCurrency } from '@/lib/hr/utils'
+import { useLocale } from '@/lib/i18n'
 import type {
   DashboardMetrics,
   AttendanceWidget,
@@ -254,6 +255,8 @@ function RecentIncidentsWidget({ incidents }: { incidents: Incident[] }) {
 // ─── Main Dashboard Page ──────────────────────────────────────────────────────
 
 export default function DashboardPage() {
+  const { locale } = useLocale()
+  const isAr = locale === "ar"
   const { currentCompany, roles, user } = useAuth()
   const router = useRouter()
 
@@ -353,10 +356,12 @@ export default function DashboardPage() {
     <div className="space-y-6">
       <WelcomeBanner
         firstName={firstNameOf(user?.full_name, user?.email)}
-        rolePill={isSuperAdmin ? 'Platform admin' : 'HR manager'}
+        rolePill={isAr ? (isSuperAdmin ? 'أدمن المنصة' : 'مدير الموارد البشرية') : (isSuperAdmin ? 'Platform admin' : 'HR manager')}
         pillTone="indigo"
         email={user?.email ?? undefined}
-        subtitle={`Overview for ${currentCompany?.name_en || 'all companies'} · ${formatDate(new Date())}`}
+        subtitle={isAr
+          ? `نظرة عامة على ${currentCompany?.name_en || 'كل الشركات'} · ${formatDate(new Date())}`
+          : `Overview for ${currentCompany?.name_en || 'all companies'} · ${formatDate(new Date())}`}
       />
 
       {/* ── HR Manager Action Queue ──
@@ -378,21 +383,21 @@ export default function DashboardPage() {
               onClick={() => router.push('/hr/overtime/pending')}
               className="text-left rounded-lg bg-card border border-amber-200 hover:border-amber-400 transition-colors p-3 group"
             >
-              <p className="text-[11px] uppercase tracking-wider text-amber-700 font-semibold mb-1">Overtime</p>
+              <p className="text-[11px] uppercase tracking-wider text-amber-700 font-semibold mb-1">{isAr ? "الساعات الإضافية" : "Overtime"}</p>
               <p className="text-2xl font-bold text-foreground group-hover:text-amber-700 transition-colors">
                 {metricsQuery.isLoading ? '…' : (metrics?.pending_overtime ?? 0)}
               </p>
-              <p className="text-xs text-muted-foreground mt-0.5">Pending approval</p>
+              <p className="text-xs text-muted-foreground mt-0.5">{isAr ? "قيد الاعتماد" : "Pending approval"}</p>
             </button>
             <button
               onClick={() => router.push('/hr/incidents/all?status=pending')}
               className="text-left rounded-lg bg-card border border-amber-200 hover:border-amber-400 transition-colors p-3 group"
             >
-              <p className="text-[11px] uppercase tracking-wider text-amber-700 font-semibold mb-1">Incidents</p>
+              <p className="text-[11px] uppercase tracking-wider text-amber-700 font-semibold mb-1">{isAr ? "المخالفات" : "Incidents"}</p>
               <p className="text-2xl font-bold text-foreground group-hover:text-amber-700 transition-colors">
                 {incidentsQuery.isLoading ? '…' : incidents.filter((i) => (i as { status?: string }).status === 'pending').length}
               </p>
-              <p className="text-xs text-muted-foreground mt-0.5">Awaiting decision</p>
+              <p className="text-xs text-muted-foreground mt-0.5">{isAr ? "بانتظار القرار" : "Awaiting decision"}</p>
             </button>
             <button
               onClick={() => router.push('/hr/employees?filter=probation_ending_30d')}
@@ -408,7 +413,7 @@ export default function DashboardPage() {
               onClick={() => router.push('/hr/employees?filter=contract_expiring_30d')}
               className="text-left rounded-lg bg-card border border-amber-200 hover:border-amber-400 transition-colors p-3 group"
             >
-              <p className="text-[11px] uppercase tracking-wider text-amber-700 font-semibold mb-1">Contracts</p>
+              <p className="text-[11px] uppercase tracking-wider text-amber-700 font-semibold mb-1">{isAr ? 'العقود' : 'Contracts'}</p>
               <p className="text-2xl font-bold text-foreground group-hover:text-amber-700 transition-colors">
                 {alertsQuery.isLoading ? '…' : alerts.filter((a) => a.type === 'contract_expiry').length}
               </p>
