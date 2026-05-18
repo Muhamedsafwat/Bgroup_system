@@ -7,6 +7,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import api from '@/lib/hr/api'
 import { useAuth } from '@/contexts/hr/AuthContext'
 import { formatDate, formatCurrency, cn } from '@/lib/hr/utils'
+import { useLocale } from '@/lib/i18n'
 import Link from 'next/link'
 import { Plus } from 'lucide-react'
 import { PageHeader } from '@/components/hr/shared/PageHeader'
@@ -84,6 +85,8 @@ function getStatusLabel(status: string) {
 }
 
 export default function AllIncidentsPage() {
+  const { locale } = useLocale()
+  const isAr = locale === "ar"
   const qc = useQueryClient()
   const { roles } = useAuth()
   const canApproveOrDismiss = roles.some(r => ['super_admin', 'hr_manager', 'ceo', 'accountant'].includes(r))
@@ -189,9 +192,12 @@ export default function AllIncidentsPage() {
   return (
     <div className="space-y-6">
       <PageHeader
-        title="All Incidents"
+        title={isAr ? "كل المخالفات" : "All Incidents"}
         description="View and manage all disciplinary incidents"
-        breadcrumbs={[{ label: 'Incidents' }, { label: 'All Incidents' }]}
+        breadcrumbs={[
+          { label: isAr ? "المخالفات" : "Incidents" },
+          { label: isAr ? "كل المخالفات" : "All Incidents" },
+        ]}
         actions={
           <div className="flex items-center gap-2">
             <Link
@@ -213,21 +219,21 @@ export default function AllIncidentsPage() {
       {/* Filters */}
       <div className="bg-card p-4 rounded-lg border border-border flex flex-wrap gap-3 items-end">
         <div className="space-y-1">
-          <Label>Date From</Label>
+          <Label>{isAr ? "من تاريخ" : "Date From"}</Label>
           <Input type="date" value={dateFrom} onChange={e => setDateFrom(e.target.value)} className="w-36" />
         </div>
         <div className="space-y-1">
-          <Label>Date To</Label>
+          <Label>{isAr ? "إلى تاريخ" : "Date To"}</Label>
           <Input type="date" value={dateTo} onChange={e => setDateTo(e.target.value)} className="w-36" />
         </div>
         <div className="space-y-1">
-          <Label>Company</Label>
+          <Label>{isAr ? "الشركة" : "Company"}</Label>
           <Select value={company} onValueChange={v => { setCompany(v === 'all' ? '' : v); setDepartment('') }}>
             <SelectTrigger className="w-40">
-              <SelectValue placeholder="All" />
+              <SelectValue placeholder={isAr ? "الكل" : "All"} />
             </SelectTrigger>
             <SelectContent>
-              <SelectItem value="all">All Companies</SelectItem>
+              <SelectItem value="all">{isAr ? "كل الشركات" : "All Companies"}</SelectItem>
               {companies.map((c: { id: number; name_en: string }) => (
                 <SelectItem key={c.id} value={String(c.id)}>{c.name_en}</SelectItem>
               ))}
@@ -235,13 +241,13 @@ export default function AllIncidentsPage() {
           </Select>
         </div>
         <div className="space-y-1">
-          <Label>Department</Label>
+          <Label>{isAr ? "القسم" : "Department"}</Label>
           <Select value={department} onValueChange={v => setDepartment(v === 'all' ? '' : v)}>
             <SelectTrigger className="w-40">
-              <SelectValue placeholder="All" />
+              <SelectValue placeholder={isAr ? "الكل" : "All"} />
             </SelectTrigger>
             <SelectContent>
-              <SelectItem value="all">All Departments</SelectItem>
+              <SelectItem value="all">{isAr ? "كل الأقسام" : "All Departments"}</SelectItem>
               {departments.map((d: { id: number; name_en: string }) => (
                 <SelectItem key={d.id} value={String(d.id)}>{d.name_en}</SelectItem>
               ))}
@@ -249,22 +255,22 @@ export default function AllIncidentsPage() {
           </Select>
         </div>
         <div className="space-y-1">
-          <Label>Employee</Label>
+          <Label>{isAr ? "الموظف" : "Employee"}</Label>
           <Input
-            placeholder="Search..."
+            placeholder={isAr ? "بحث..." : "Search..."}
             value={employeeSearch}
             onChange={e => setEmployeeSearch(e.target.value)}
             className="w-40"
           />
         </div>
         <div className="space-y-1">
-          <Label>Category</Label>
+          <Label>{isAr ? "الفئة" : "Category"}</Label>
           <Select value={category} onValueChange={v => setCategory(v === 'all' ? '' : v)}>
             <SelectTrigger className="w-40">
-              <SelectValue placeholder="All" />
+              <SelectValue placeholder={isAr ? "الكل" : "All"} />
             </SelectTrigger>
             <SelectContent>
-              <SelectItem value="all">All Categories</SelectItem>
+              <SelectItem value="all">{isAr ? "كل الفئات" : "All Categories"}</SelectItem>
               {categoryList.map((c: { id: number; name: string }) => (
                 <SelectItem key={c.id} value={String(c.id)}>{c.name}</SelectItem>
               ))}
@@ -272,16 +278,16 @@ export default function AllIncidentsPage() {
           </Select>
         </div>
         <div className="space-y-1">
-          <Label>Status</Label>
+          <Label>{isAr ? "الحالة" : "Status"}</Label>
           <Select value={status} onValueChange={v => setStatus(v === 'all' ? '' : v)}>
             <SelectTrigger className="w-36">
-              <SelectValue placeholder="All" />
+              <SelectValue placeholder={isAr ? "الكل" : "All"} />
             </SelectTrigger>
             <SelectContent>
-              <SelectItem value="all">All Statuses</SelectItem>
-              <SelectItem value="pending">Pending</SelectItem>
-              <SelectItem value="applied">Applied</SelectItem>
-              <SelectItem value="dismissed">Dismissed</SelectItem>
+              <SelectItem value="all">{isAr ? "كل الحالات" : "All Statuses"}</SelectItem>
+              <SelectItem value="pending">{isAr ? "قيد الانتظار" : "Pending"}</SelectItem>
+              <SelectItem value="applied">{isAr ? "مطبّق" : "Applied"}</SelectItem>
+              <SelectItem value="dismissed">{isAr ? "مرفوض" : "Dismissed"}</SelectItem>
             </SelectContent>
           </Select>
         </div>
@@ -292,17 +298,17 @@ export default function AllIncidentsPage() {
         <Table>
           <TableHeader>
             <TableRow className="bg-muted/50">
-              <TableHead className="font-semibold">Date</TableHead>
-              <TableHead className="font-semibold">Employee</TableHead>
-              <TableHead className="font-semibold">Company</TableHead>
-              <TableHead className="font-semibold">Category</TableHead>
-              <TableHead className="font-semibold">Violation</TableHead>
-              <TableHead className="font-semibold text-center">Offense #</TableHead>
-              <TableHead className="font-semibold">Action</TableHead>
-              <TableHead className="font-semibold text-right">Amount</TableHead>
-              <TableHead className="font-semibold">Status</TableHead>
-              <TableHead className="font-semibold">Reported By</TableHead>
-              <TableHead className="font-semibold">Approved By</TableHead>
+              <TableHead className="font-semibold">{isAr ? "التاريخ" : "Date"}</TableHead>
+              <TableHead className="font-semibold">{isAr ? "الموظف" : "Employee"}</TableHead>
+              <TableHead className="font-semibold">{isAr ? "الشركة" : "Company"}</TableHead>
+              <TableHead className="font-semibold">{isAr ? "الفئة" : "Category"}</TableHead>
+              <TableHead className="font-semibold">{isAr ? "المخالفة" : "Violation"}</TableHead>
+              <TableHead className="font-semibold text-center">{isAr ? "رقم المخالفة" : "Offense #"}</TableHead>
+              <TableHead className="font-semibold">{isAr ? "الإجراء" : "Action"}</TableHead>
+              <TableHead className="font-semibold text-right">{isAr ? "المبلغ" : "Amount"}</TableHead>
+              <TableHead className="font-semibold">{isAr ? "الحالة" : "Status"}</TableHead>
+              <TableHead className="font-semibold">{isAr ? "أبلغ بواسطة" : "Reported By"}</TableHead>
+              <TableHead className="font-semibold">{isAr ? "اعتُمد بواسطة" : "Approved By"}</TableHead>
             </TableRow>
           </TableHeader>
           <TableBody>
@@ -399,7 +405,7 @@ export default function AllIncidentsPage() {
                   <p className="font-bold text-red-700">{formatCurrency(selectedIncident.deduction_amount)}</p>
                 </div>
                 <div>
-                  <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-1">Status</p>
+                  <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-1">{isAr ? "الحالة" : "Status"}</p>
                   <Badge variant={getStatusVariant(selectedIncident.status)}>{getStatusLabel(selectedIncident.status)}</Badge>
                 </div>
                 <div>

@@ -5,6 +5,7 @@ import { describeError } from "@/lib/zod-errors";
 import React, { useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { Plus, Edit2, Trash2, Users } from 'lucide-react'
+import { useLocale } from '@/lib/i18n'
 import api from '@/lib/hr/api'
 import { cn } from '@/lib/hr/utils'
 import { PageHeader } from '@/components/hr/shared/PageHeader'
@@ -107,6 +108,8 @@ const INT_TO_OFF_DAY: Record<number, string> = { 4: 'friday', 5: 'saturday', 6: 
 // ─── Shifts Tab ───────────────────────────────────────────────────────────────
 
 function ShiftsTab() {
+  const { locale } = useLocale()
+  const isAr = locale === 'ar'
   const qc = useQueryClient()
   const [shiftDialog, setShiftDialog] = useState(false)
   const [editingShift, setEditingShift] = useState<Shift | null>(null)
@@ -215,14 +218,14 @@ function ShiftsTab() {
         <Table>
           <TableHeader>
             <TableRow className="bg-muted/50">
-              <TableHead className="font-semibold">Name</TableHead>
-              <TableHead className="font-semibold">Start Time</TableHead>
-              <TableHead className="font-semibold">End Time</TableHead>
-              <TableHead className="font-semibold">Grace Period</TableHead>
-              <TableHead className="font-semibold">Daily Hours</TableHead>
-              <TableHead className="font-semibold">Off Day</TableHead>
-              <TableHead className="font-semibold">Default</TableHead>
-              <TableHead className="font-semibold text-center">Actions</TableHead>
+              <TableHead className="font-semibold">{isAr ? 'الاسم' : 'Name'}</TableHead>
+              <TableHead className="font-semibold">{isAr ? 'وقت البدء' : 'Start Time'}</TableHead>
+              <TableHead className="font-semibold">{isAr ? 'وقت الانتهاء' : 'End Time'}</TableHead>
+              <TableHead className="font-semibold">{isAr ? 'فترة السماح' : 'Grace Period'}</TableHead>
+              <TableHead className="font-semibold">{isAr ? 'ساعات يومية' : 'Daily Hours'}</TableHead>
+              <TableHead className="font-semibold">{isAr ? 'إجازة' : 'Off Day'}</TableHead>
+              <TableHead className="font-semibold">{isAr ? 'افتراضي' : 'Default'}</TableHead>
+              <TableHead className="font-semibold text-center">{isAr ? 'إجراءات' : 'Actions'}</TableHead>
             </TableRow>
           </TableHeader>
           <TableBody>
@@ -639,12 +642,14 @@ function AutoRulesTab() {
 // ─── Page ─────────────────────────────────────────────────────────────────────
 
 export default function AttendanceSettingsPage() {
+  const { locale } = useLocale()
+  const isAr = locale === 'ar'
   return (
     <div className="space-y-6">
       <PageHeader
         title="Attendance Settings"
         description="Configure shifts and auto-detection rules"
-        breadcrumbs={[{ label: 'Attendance' }, { label: 'Settings' }]}
+        breadcrumbs={[{ label: isAr ? 'الحضور' : 'Attendance' }, { label: isAr ? 'الإعدادات' : 'Settings' }]}
       />
 
       <Tabs defaultValue="shifts">

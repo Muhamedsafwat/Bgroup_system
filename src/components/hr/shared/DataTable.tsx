@@ -76,8 +76,9 @@ export function DataTable<T extends { id?: number | string }>({
   onSort,
   sortKey,
   sortDirection,
-  emptyTitle = 'No data found',
-  emptyDescription = 'No records match your current filters.',
+  // No defaults — EmptyState falls back to localized strings from t.states.
+  emptyTitle,
+  emptyDescription,
   rowClassName,
   onRowClick,
   pageSizeOptions = PAGE_SIZES,

@@ -54,6 +54,8 @@ import {
 import { signOut } from "next-auth/react";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Separator } from "@/components/ui/separator";
+import { useLocale } from "@/lib/i18n";
+import type { Dictionary } from "@/lib/i18n";
 
 interface NavItem {
   href: string;
@@ -67,9 +69,13 @@ interface NavSection {
   items: NavItem[];
 }
 
+// Each nav builder takes the sidebar slice of the dictionary so labels swap
+// automatically when the user flips the language toggle.
+type SidebarT = Dictionary["sidebar"];
+
 // ─── HR Navigation ─────────────────────────────────────────────────
 
-function getHrNav(roles: string[]): NavSection[] {
+function getHrNav(roles: string[], t: SidebarT): NavSection[] {
   const isAdmin = roles.includes("super_admin") || roles.includes("hr_manager");
   const isCEO = roles.includes("ceo");
   const isTeamLead = roles.includes("team_lead");
@@ -79,37 +85,30 @@ function getHrNav(roles: string[]): NavSection[] {
   const sections: NavSection[] = [];
 
   if (isAdmin) {
-    // HR module entries only — anything under /admin/* belongs in the Admin
-    // module and is reached by switching modules. Keeping admin links here
-    // duplicates them, blurs the module boundary, and trips the proxy when
-    // a non-admin HR manager lands on them via the sidebar.
     sections.push({
       items: [
-        { href: "/hr/dashboard", label: "Dashboard", icon: LayoutDashboard },
-        { href: "/hr/employees", label: "Employees", icon: Users },
-        { href: "/hr/org-chart", label: "Org chart", icon: Users },
-        { href: "/tasks", label: "Tasks", icon: ListTodo },
+        { href: "/hr/dashboard", label: t.dashboard, icon: LayoutDashboard },
+        { href: "/hr/employees", label: t.employees, icon: Users },
+        { href: "/hr/org-chart", label: t.orgChart, icon: Users },
+        { href: "/tasks", label: t.tasks, icon: ListTodo },
       ],
     });
     sections.push({
-      title: "Management",
+      title: t.sectionManagement,
       items: [
-        { href: "/hr/attendance/today", label: "Attendance", icon: Clock },
-        { href: "/hr/calendar", label: "Time-off", icon: Clock },
-        { href: "/hr/overtime/pending", label: "Overtime", icon: Timer },
-        { href: "/hr/incidents/all", label: "Incidents", icon: AlertTriangle },
-        { href: "/hr/bonuses/all", label: "Bonuses", icon: Gift },
-        { href: "/hr/payroll/monthly", label: "Payroll", icon: Wallet },
+        { href: "/hr/attendance/today", label: t.attendance, icon: Clock },
+        { href: "/hr/calendar", label: t.timeOff, icon: Clock },
+        { href: "/hr/overtime/pending", label: t.overtime, icon: Timer },
+        { href: "/hr/incidents/all", label: t.incidents, icon: AlertTriangle },
+        { href: "/hr/bonuses/all", label: t.bonuses, icon: Gift },
+        { href: "/hr/payroll/monthly", label: t.payroll, icon: Wallet },
       ],
     });
     sections.push({
-      title: "Reports",
+      title: t.sectionReports,
       items: [
-        { href: "/hr/reports/excel", label: "Reports", icon: FileBarChart },
-        // Settings consolidated under /admin/settings — the per-module
-        // settings entry was a duplicate. Switching modules to "Admin" gets
-        // you everything (HR + CRM + Partners + Users) in one place.
-        { href: "/admin/settings", label: "Settings", icon: Settings },
+        { href: "/hr/reports/excel", label: t.reports, icon: FileBarChart },
+        { href: "/admin/settings", label: t.settings, icon: Settings },
       ],
     });
   }
@@ -117,39 +116,35 @@ function getHrNav(roles: string[]): NavSection[] {
   if (isCEO) {
     sections.push({
       items: [
-        { href: "/hr/management", label: "Overview", icon: LayoutDashboard },
-        { href: "/hr/employees", label: "Employees", icon: Users },
-        { href: "/hr/payroll/monthly", label: "Payroll", icon: Wallet },
+        { href: "/hr/management", label: t.overview, icon: LayoutDashboard },
+        { href: "/hr/employees", label: t.employees, icon: Users },
+        { href: "/hr/payroll/monthly", label: t.payroll, icon: Wallet },
       ],
     });
   }
 
   if (isTeamLead) {
     sections.push({
-      items: [
-        { href: "/hr/team", label: "My Team", icon: Users },
-      ],
+      items: [{ href: "/hr/team", label: t.myTeam, icon: Users }],
     });
   }
 
   if (isAccountant) {
     sections.push({
-      items: [
-        { href: "/hr/accountant", label: "Payroll", icon: Wallet },
-      ],
+      items: [{ href: "/hr/accountant", label: t.payroll, icon: Wallet }],
     });
   }
 
   if (isEmployee) {
     sections.push({
       items: [
-        { href: "/hr/employee/home", label: "Home", icon: LayoutDashboard },
-        { href: "/hr/employee/tasks", label: "My Tasks", icon: ListTodo },
-        { href: "/hr/employee/attendance", label: "My Attendance", icon: Clock },
-        { href: "/hr/employee/overtime", label: "My Overtime", icon: Timer },
-        { href: "/hr/employee/salary", label: "My Salary", icon: Wallet },
-        { href: "/hr/employee/incidents", label: "My Incidents", icon: AlertTriangle },
-        { href: "/hr/employee/profile", label: "Profile", icon: UserCog },
+        { href: "/hr/employee/home", label: t.home, icon: LayoutDashboard },
+        { href: "/hr/employee/tasks", label: t.myTasks, icon: ListTodo },
+        { href: "/hr/employee/attendance", label: t.myAttendance, icon: Clock },
+        { href: "/hr/employee/overtime", label: t.myOvertime, icon: Timer },
+        { href: "/hr/employee/salary", label: t.mySalary, icon: Wallet },
+        { href: "/hr/employee/incidents", label: t.myIncidents, icon: AlertTriangle },
+        { href: "/hr/employee/profile", label: t.profile, icon: UserCog },
       ],
     });
   }
@@ -159,51 +154,40 @@ function getHrNav(roles: string[]): NavSection[] {
 
 // ─── CRM Navigation ──────────────────────────────────────���─────────
 
-function getCrmNav(crmRole?: string): NavSection[] {
+function getCrmNav(crmRole: string | undefined, t: SidebarT): NavSection[] {
   const sections: NavSection[] = [];
   const isManager = crmRole === "MANAGER" || crmRole === "ADMIN";
 
-  // ASSISTANT is intentionally narrow: meetings + their own tasks + their
-  // personal dashboard. The full pipeline/opportunities/companies/etc.
-  // surfaces are blocked by the proxy too, so even URL-typing won't get
-  // them through. Post-meeting they can open ONE specific opportunity
-  // (the one tied to a meeting they handled) via the meeting detail.
   if (crmRole === "ASSISTANT") {
     sections.push({
-      title: "Work",
+      title: t.sectionWork,
       items: [
-        { href: "/crm/my", label: "My day", icon: LayoutDashboard },
-        { href: "/crm/meetings", label: "Meetings & calendar", icon: CalendarCheck },
-        { href: "/tasks", label: "My tasks", icon: ClipboardList },
+        { href: "/crm/my", label: t.myDay, icon: LayoutDashboard },
+        { href: "/crm/meetings", label: t.meetingsCalendar, icon: CalendarCheck },
+        { href: "/tasks", label: t.myTasks, icon: ClipboardList },
       ],
     });
     return sections;
   }
 
   const workItems = [
-    { href: "/crm/sales-board", label: "Dashboard", icon: BarChart3 },
-    { href: "/crm/pipeline", label: "Pipeline", icon: TrendingUp },
-    { href: "/crm/opportunities", label: "Opportunities", icon: TrendingUp },
-    { href: "/crm/cold-leads", label: "Cold leads", icon: Phone },
-    // Companies is a curated vendor / principal directory — only admin
-    // + sales manager see it. Reps capture the customer's company name
-    // as free text on the opportunity itself.
+    { href: "/crm/sales-board", label: t.salesDashboard, icon: BarChart3 },
+    { href: "/crm/pipeline", label: t.pipeline, icon: TrendingUp },
+    { href: "/crm/opportunities", label: t.opportunities, icon: TrendingUp },
+    { href: "/crm/cold-leads", label: t.coldLeads, icon: Phone },
     ...(isManager
-      ? [{ href: "/crm/companies", label: "Companies", icon: Building2 }]
+      ? [{ href: "/crm/companies", label: t.companies, icon: Building2 }]
       : []),
-    { href: "/crm/contacts", label: "Contacts", icon: Contact },
-    { href: "/crm/meetings", label: "Meetings & calendar", icon: CalendarCheck },
-    { href: "/crm/reports", label: "Daily reports", icon: ClipboardList },
+    { href: "/crm/contacts", label: t.contacts, icon: Contact },
+    { href: "/crm/meetings", label: t.meetingsCalendar, icon: CalendarCheck },
+    { href: "/crm/reports", label: t.dailyReports, icon: ClipboardList },
   ];
-  sections.push({ title: "Work", items: workItems });
+  sections.push({ title: t.sectionWork, items: workItems });
 
   if (crmRole === "ADMIN") {
-    // Single Settings entry → /admin/settings (consolidated landing).
     sections.push({
-      title: "Admin",
-      items: [
-        { href: "/admin/settings", label: "Settings", icon: Settings },
-      ],
+      title: t.sectionAdmin,
+      items: [{ href: "/admin/settings", label: t.settings, icon: Settings }],
     });
   }
 
@@ -212,19 +196,19 @@ function getCrmNav(crmRole?: string): NavSection[] {
 
 // ─── Partners Navigation ───────────────────────────────────────────
 
-function getPartnersNav(isAdmin: boolean): NavSection[] {
+function getPartnersNav(isAdmin: boolean, t: SidebarT): NavSection[] {
   if (isAdmin) {
     return [
       {
         items: [
-          { href: "/partners/dashboard", label: "Dashboard", icon: LayoutDashboard },
-          { href: "/partners/admin/partners", label: "Partners", icon: Users },
-          { href: "/partners/admin/contracts", label: "Contracts", icon: FileText },
-          { href: "/partners/admin/invoices", label: "Invoices", icon: Receipt },
-          { href: "/partners/admin/commissions", label: "Commissions", icon: DollarSign },
-          { href: "/partners/services", label: "Services", icon: Briefcase },
-          { href: "/tasks", label: "Tasks", icon: ListTodo },
-          { href: "/partners/admin/audit-logs", label: "Audit Logs", icon: ClipboardList },
+          { href: "/partners/dashboard", label: t.dashboard, icon: LayoutDashboard },
+          { href: "/partners/admin/partners", label: t.partners, icon: Users },
+          { href: "/partners/admin/contracts", label: t.contracts, icon: FileText },
+          { href: "/partners/admin/invoices", label: t.invoices, icon: Receipt },
+          { href: "/partners/admin/commissions", label: t.commissions, icon: DollarSign },
+          { href: "/partners/services", label: t.services, icon: Briefcase },
+          { href: "/tasks", label: t.tasks, icon: ListTodo },
+          { href: "/partners/admin/audit-logs", label: t.auditLogs, icon: ClipboardList },
         ],
       },
     ];
@@ -233,21 +217,21 @@ function getPartnersNav(isAdmin: boolean): NavSection[] {
   return [
     {
       items: [
-        { href: "/partners/dashboard", label: "Dashboard", icon: LayoutDashboard },
-        { href: "/partners/leads", label: "Leads", icon: Users },
-        { href: "/partners/clients", label: "Clients", icon: UserCheck },
-        { href: "/partners/deals", label: "Deals", icon: Handshake },
-        { href: "/partners/contracts", label: "Contracts", icon: FileText },
-        { href: "/partners/invoices", label: "Invoices", icon: Receipt },
-        { href: "/partners/commissions", label: "Commissions", icon: DollarSign },
-        { href: "/partners/services", label: "Services", icon: Briefcase },
-        { href: "/tasks", label: "My Tasks", icon: ListTodo },
+        { href: "/partners/dashboard", label: t.dashboard, icon: LayoutDashboard },
+        { href: "/partners/leads", label: t.leads, icon: Users },
+        { href: "/partners/clients", label: t.clients, icon: UserCheck },
+        { href: "/partners/deals", label: t.deals, icon: Handshake },
+        { href: "/partners/contracts", label: t.contracts, icon: FileText },
+        { href: "/partners/invoices", label: t.invoices, icon: Receipt },
+        { href: "/partners/commissions", label: t.commissions, icon: DollarSign },
+        { href: "/partners/services", label: t.services, icon: Briefcase },
+        { href: "/tasks", label: t.myTasks, icon: ListTodo },
       ],
     },
     {
       items: [
-        { href: "/partners/notifications", label: "Notifications", icon: Bell },
-        { href: "/partners/settings", label: "Settings", icon: Settings },
+        { href: "/partners/notifications", label: t.notifications, icon: Bell },
+        { href: "/partners/settings", label: t.settings, icon: Settings },
       ],
     },
   ];
@@ -255,38 +239,38 @@ function getPartnersNav(isAdmin: boolean): NavSection[] {
 
 // ─── Admin Navigation ─────────────────────────────────────────────
 
-function getAdminNav(): NavSection[] {
+function getAdminNav(t: SidebarT): NavSection[] {
   return [
     {
       items: [
-        { href: "/admin", label: "Admin home", icon: LayoutDashboard },
-        { href: "/admin/board", label: "Group board", icon: BarChart3 },
+        { href: "/admin", label: t.adminHome, icon: LayoutDashboard },
+        { href: "/admin/board", label: t.groupBoard, icon: BarChart3 },
       ],
     },
     {
-      title: "People",
+      title: t.sectionPeople,
       items: [
-        { href: "/admin/users", label: "All users", icon: Users },
-        { href: "/admin/partners", label: "Partners", icon: Handshake },
-        { href: "/hr/employees", label: "Employees", icon: Users },
-        { href: "/hr/org-chart", label: "Org chart", icon: Users },
+        { href: "/admin/users", label: t.allUsers, icon: Users },
+        { href: "/admin/partners", label: t.partners, icon: Handshake },
+        { href: "/hr/employees", label: t.employees, icon: Users },
+        { href: "/hr/org-chart", label: t.orgChart, icon: Users },
       ],
     },
     {
-      title: "Dashboards",
+      title: t.sectionDashboards,
       items: [
-        { href: "/hr/dashboard", label: "HR dashboard", icon: LayoutDashboard },
-        { href: "/crm/sales-board", label: "CRM dashboard", icon: TrendingUp },
-        { href: "/partners/dashboard", label: "Partners dashboard", icon: Handshake },
+        { href: "/hr/dashboard", label: t.hrDashboard, icon: LayoutDashboard },
+        { href: "/crm/sales-board", label: t.crmDashboard, icon: TrendingUp },
+        { href: "/partners/dashboard", label: t.partnersDashboard, icon: Handshake },
       ],
     },
     {
-      title: "Catalogue & settings",
+      title: t.sectionCatalogue,
       items: [
-        { href: "/admin/settings", label: "All settings", icon: Settings },
-        { href: "/crm/products", label: "Products & services", icon: Package },
-        { href: "/admin/onboarding-templates", label: "Onboarding templates", icon: ClipboardList },
-        { href: "/admin/workflows-sequential", label: "Workflows", icon: Layers },
+        { href: "/admin/settings", label: t.allSettings, icon: Settings },
+        { href: "/crm/products", label: t.productsServices, icon: Package },
+        { href: "/admin/onboarding-templates", label: t.onboardingTemplates, icon: ClipboardList },
+        { href: "/admin/workflows-sequential", label: t.workflows, icon: Layers },
       ],
     },
   ];
@@ -299,6 +283,8 @@ export function Sidebar() {
   const { data: session } = useSession();
   const [collapsed, setCollapsed] = useState(false);
   const [accountOpen, setAccountOpen] = useState(false);
+  const { t } = useLocale();
+  const tSidebar = t.sidebar;
 
   const modules = session?.user?.modules || [];
 
@@ -334,18 +320,19 @@ export function Sidebar() {
     detectedExt ??
     (modules.includes(lastModule) ? lastModule : (modules[0] as "hr" | "crm" | "partners" | undefined) ?? "hr");
 
-  // Get nav sections for active module.
+  // Get nav sections for active module — translation slice is passed in
+  // so the labels swap instantly when the user clicks the LocaleToggle.
   let sections: NavSection[] = [];
   if (activeModule === "admin") {
-    sections = getAdminNav();
+    sections = getAdminNav(tSidebar);
   } else if (activeModule === "hr") {
     const hrRoles = session?.user?.hrRoles || [];
-    sections = getHrNav(hrRoles);
+    sections = getHrNav(hrRoles, tSidebar);
   } else if (activeModule === "crm") {
-    sections = getCrmNav(session?.user?.crmRole);
+    sections = getCrmNav(session?.user?.crmRole, tSidebar);
   } else if (activeModule === "partners") {
     const isPartnersAdmin = !session?.user?.partnerId;
-    sections = getPartnersNav(isPartnersAdmin);
+    sections = getPartnersNav(isPartnersAdmin, tSidebar);
   }
 
   function isActive(href: string) {
@@ -452,7 +439,7 @@ export function Sidebar() {
               "flex items-center gap-3 mb-2 w-full rounded-lg p-1.5 hover:bg-sidebar-accent text-start transition-colors",
               collapsed && "justify-center"
             )}
-            title={collapsed ? (session.user.name ?? session.user.email ?? "Account") : "Account"}
+            title={collapsed ? (session.user.name ?? session.user.email ?? tSidebar.account) : tSidebar.account}
           >
             <div className="h-8 w-8 rounded-full bg-muted flex items-center justify-center text-sm font-medium shrink-0 overflow-hidden">
               {session.user.image ? (
@@ -476,10 +463,10 @@ export function Sidebar() {
             "flex items-center gap-3 px-3 py-2 rounded-lg text-sm w-full text-muted-foreground hover:text-destructive hover:bg-destructive/10 transition-colors",
             collapsed && "justify-center px-2"
           )}
-          title={collapsed ? "Logout" : undefined}
+          title={collapsed ? tSidebar.logout : undefined}
         >
           <LogOut className="h-5 w-5 shrink-0" />
-          {!collapsed && <span>Logout</span>}
+          {!collapsed && <span>{tSidebar.logout}</span>}
         </button>
       </div>
       <SidebarAccountDialog open={accountOpen} onOpenChange={setAccountOpen} />

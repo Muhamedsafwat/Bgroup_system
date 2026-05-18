@@ -11,6 +11,7 @@ import {
   ShieldCheck,
   ChevronDown,
 } from "lucide-react";
+import { useLocale } from "@/lib/i18n";
 
 interface ModuleInfo {
   id: "hr" | "crm" | "partners" | "admin";
@@ -22,12 +23,14 @@ interface ModuleInfo {
   adminOnly?: boolean;
 }
 
-const MODULES: ModuleInfo[] = [
-  { id: "admin", label: "Admin", icon: ShieldCheck, defaultRoute: "/admin", color: "text-rose-600", adminOnly: true },
-  { id: "hr", label: "HR System", icon: Users, defaultRoute: "/hr/dashboard", color: "text-indigo-600" },
-  { id: "crm", label: "CRM", icon: TrendingUp, defaultRoute: "/crm/sales-board", color: "text-emerald-600" },
-  { id: "partners", label: "Partners", icon: Handshake, defaultRoute: "/partners/dashboard", color: "text-amber-600" },
-];
+function getModules(isAr: boolean): ModuleInfo[] {
+  return [
+    { id: "admin", label: isAr ? "الإدارة" : "Admin", icon: ShieldCheck, defaultRoute: "/admin", color: "text-rose-600", adminOnly: true },
+    { id: "hr", label: isAr ? "نظام الموارد البشرية" : "HR System", icon: Users, defaultRoute: "/hr/dashboard", color: "text-indigo-600" },
+    { id: "crm", label: isAr ? "CRM" : "CRM", icon: TrendingUp, defaultRoute: "/crm/sales-board", color: "text-emerald-600" },
+    { id: "partners", label: isAr ? "الشركاء" : "Partners", icon: Handshake, defaultRoute: "/partners/dashboard", color: "text-amber-600" },
+  ];
+}
 
 export function ModuleSwitcher({ collapsed }: { collapsed: boolean }) {
   const { data: session } = useSession();
@@ -35,6 +38,8 @@ export function ModuleSwitcher({ collapsed }: { collapsed: boolean }) {
   const router = useRouter();
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
+  const { locale } = useLocale();
+  const MODULES = getModules(locale === "ar");
 
   const userModules = session?.user?.modules || [];
   const isPlatformAdmin =

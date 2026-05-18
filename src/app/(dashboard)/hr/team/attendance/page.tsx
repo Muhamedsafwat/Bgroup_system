@@ -3,6 +3,7 @@
 import React, { useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { RefreshCw, Upload, Loader2 } from 'lucide-react'
+import { useLocale } from '@/lib/i18n'
 import { PageHeader } from '@/components/hr/shared/PageHeader'
 import { Button } from '@/components/hr/ui/button'
 import { Badge } from '@/components/hr/ui/badge'
@@ -50,6 +51,8 @@ const STATUS_CONFIG: Record<string, { variant: 'success' | 'warning' | 'danger' 
 }
 
 export default function TeamAttendancePage() {
+  const { locale } = useLocale()
+  const isAr = locale === 'ar'
   const { toast } = useToast()
   const queryClient = useQueryClient()
   const now = new Date()
@@ -91,9 +94,9 @@ export default function TeamAttendancePage() {
   return (
     <div className="space-y-6">
       <PageHeader
-        title="Team Attendance"
+        title={isAr ? 'حضور الفريق' : 'Team Attendance'}
         description="Monitor your team's attendance and punctuality"
-        breadcrumbs={[{ label: 'Team', href: '/team' }, { label: 'Attendance' }]}
+        breadcrumbs={[{ label: isAr ? 'الفريق' : 'Team', href: '/team' }, { label: isAr ? 'الحضور' : 'Attendance' }]}
         actions={
           <div className="flex items-center gap-2">
             <Button
@@ -104,7 +107,7 @@ export default function TeamAttendancePage() {
               disabled={viewMode !== 'today' || todayLoading}
             >
               <RefreshCw className="h-4 w-4" />
-              Refresh
+              {isAr ? 'تحديث' : 'Refresh'}
             </Button>
           </div>
         }
@@ -122,7 +125,7 @@ export default function TeamAttendancePage() {
             )}
             onClick={() => setViewMode('today')}
           >
-            Today
+            {isAr ? 'اليوم' : 'Today'}
           </button>
           <button
             className={cn(
@@ -133,7 +136,7 @@ export default function TeamAttendancePage() {
             )}
             onClick={() => setViewMode('monthly')}
           >
-            Monthly
+            {isAr ? 'شهري' : 'Monthly'}
           </button>
         </div>
 

@@ -7,6 +7,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Button } from "@/components/ui/button";
 import { Loader2, TrendingUp, Flame, Calendar, Users, X, ArrowUpRight } from "lucide-react";
 import { STAGE_LABEL_EN, STAGE_LABEL_AR, SPEC_STAGES } from "@/lib/crm/stage-labels";
+import { useLocale } from "@/lib/i18n";
 
 type Board = {
   scope: "team" | "mine";
@@ -49,6 +50,8 @@ const SERVICE_BARS = [
 ];
 
 export function SalesBoardClient() {
+  const { locale } = useLocale();
+  const isAr = locale === "ar";
   const [data, setData] = useState<Board | null>(null);
   const [options, setOptions] = useState<FilterOptions>({ companies: [], reps: [], products: [] });
   const [filterCompany, setFilterCompany] = useState<string>("ALL");
@@ -268,12 +271,12 @@ export function SalesBoardClient() {
         </CardHeader>
         <CardContent>
           <div className="grid grid-cols-2 md:grid-cols-6 gap-3">
-            <MiniStat label="Total" value={data.meetings.total} />
-            <MiniStat label="Today" value={data.meetings.today} />
-            <MiniStat label="This week" value={data.meetings.thisWeek} />
-            <MiniStat label="Confirmed" value={data.meetings.confirmed} />
-            <MiniStat label="Done" value={data.meetings.done} />
-            <MiniStat label="Cancelled" value={data.meetings.cancelled} />
+            <MiniStat label={isAr ? "الإجمالي" : "Total"} value={data.meetings.total} />
+            <MiniStat label={isAr ? "اليوم" : "Today"} value={data.meetings.today} />
+            <MiniStat label={isAr ? "هذا الأسبوع" : "This week"} value={data.meetings.thisWeek} />
+            <MiniStat label={isAr ? "مؤكدة" : "Confirmed"} value={data.meetings.confirmed} />
+            <MiniStat label={isAr ? "مكتملة" : "Done"} value={data.meetings.done} />
+            <MiniStat label={isAr ? "ملغاة" : "Cancelled"} value={data.meetings.cancelled} />
           </div>
         </CardContent>
       </Card>

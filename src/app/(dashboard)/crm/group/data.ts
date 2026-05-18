@@ -19,7 +19,11 @@ function repTargetList(session: SessionUser) {
       return { id: session.id };
     case "MANAGER":
       return {
-        OR: [{ id: session.id }, { managerId: session.id }],
+        OR: [
+          { id: session.id },
+          { managerId: session.id },
+          { managedBy: { some: { managerId: session.id } } },
+        ],
         active: true,
       };
     case "ASSISTANT":

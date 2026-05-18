@@ -1,6 +1,7 @@
 "use server";
 
 import { db } from "@/lib/db";
+import { auth } from "@/lib/auth";
 import { getRequiredSession } from "@/lib/crm/session";
 import { revalidatePath } from "next/cache";
 import { z } from "zod";
@@ -26,10 +27,14 @@ const productUpdateSchema = productCreateSchema.partial();
 
 async function requireProductAdmin() {
   const session = await getRequiredSession();
-  if (session.role !== "ADMIN") {
-    throw new Error("Unauthorized: Admin access required");
-  }
-  return session;
+  // Allow CRM ADMIN OR platform super_admin to manage the product catalogue.
+  // Without the platform-admin escape hatch, a super_admin without an
+  // explicit CRM ADMIN profile is shown the page but can't create products
+  // — which is what made the "Add product" button look broken.
+  if (session.role === "ADMIN") return session;
+  const raw = await auth();
+  if (raw?.user?.hrRoles?.includes("super_admin")) return session;
+  throw new Error("Unauthorized: Admin access required");
 }
 
 export type ProductFilters = {

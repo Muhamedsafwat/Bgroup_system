@@ -11,6 +11,7 @@ import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Plus, AlertTriangle, CheckCircle2, Clock, X, Search } from "lucide-react";
 import { toast } from "sonner";
+import { useLocale } from "@/lib/i18n";
 import { WeeklyCalendarClient } from "./calendar/client";
 
 type Meeting = {
@@ -65,6 +66,8 @@ function formatDateTime(iso: string): string {
 }
 
 export function MeetingsClient() {
+  const { locale } = useLocale();
+  const isAr = locale === "ar";
   const [meetings, setMeetings] = useState<Meeting[]>([]);
   const [pending, setPending] = useState<Meeting[]>([]);
   const [loading, setLoading] = useState(true);
@@ -183,11 +186,11 @@ export function MeetingsClient() {
       <Tabs defaultValue={isApprover && pending.length > 0 ? "queue" : "calendar"} className="space-y-3">
         <div className="flex items-center justify-between">
           <TabsList>
-            <TabsTrigger value="calendar">Weekly calendar</TabsTrigger>
-            <TabsTrigger value="list">List ({upcoming.length} upcoming)</TabsTrigger>
+            <TabsTrigger value="calendar">{isAr ? "تقويم أسبوعي" : "Weekly calendar"}</TabsTrigger>
+            <TabsTrigger value="list">{isAr ? `قائمة (${upcoming.length} قادمة)` : `List (${upcoming.length} upcoming)`}</TabsTrigger>
             {isApprover && (
               <TabsTrigger value="queue" className="relative">
-                Approval queue
+                {isAr ? "قائمة المراجعة" : "Approval queue"}
                 {pending.length > 0 && (
                   <span className="ms-1.5 inline-flex h-5 min-w-5 items-center justify-center rounded-full bg-amber-500 text-white text-[10px] font-semibold px-1">
                     {pending.length}
@@ -198,7 +201,7 @@ export function MeetingsClient() {
           </TabsList>
           <Button size="sm" onClick={() => setBookOpen(true)}>
             <Plus className="h-4 w-4 me-1.5" />
-            Book meeting
+            {isAr ? "حجز اجتماع" : "Book meeting"}
           </Button>
         </div>
 
@@ -209,13 +212,13 @@ export function MeetingsClient() {
         <TabsContent value="list" className="space-y-4">
           <Card>
             <CardHeader className="pb-2">
-              <CardTitle className="text-base">Upcoming ({upcoming.length})</CardTitle>
+              <CardTitle className="text-base">{isAr ? `قادمة (${upcoming.length})` : `Upcoming (${upcoming.length})`}</CardTitle>
             </CardHeader>
             <CardContent>
               {loading ? (
-                <p className="text-sm text-muted-foreground text-center py-6">Loading...</p>
+                <p className="text-sm text-muted-foreground text-center py-6">{isAr ? "جاري التحميل..." : "Loading..."}</p>
               ) : upcoming.length === 0 ? (
-                <p className="text-sm text-muted-foreground text-center py-6">No upcoming meetings.</p>
+                <p className="text-sm text-muted-foreground text-center py-6">{isAr ? "لا توجد اجتماعات قادمة." : "No upcoming meetings."}</p>
               ) : (
                 <ul className="divide-y">
                   {upcoming.map((m) => (
@@ -234,7 +237,7 @@ export function MeetingsClient() {
           {past.length > 0 && (
             <Card>
               <CardHeader className="pb-2">
-                <CardTitle className="text-base text-muted-foreground">Past / done ({past.length})</CardTitle>
+                <CardTitle className="text-base text-muted-foreground">{isAr ? `سابقة / مكتملة (${past.length})` : `Past / done (${past.length})`}</CardTitle>
               </CardHeader>
               <CardContent>
                 <ul className="divide-y opacity-70">
@@ -258,7 +261,7 @@ export function MeetingsClient() {
               <CardHeader className="pb-2">
                 <CardTitle className="text-base flex items-center gap-2">
                   <Clock className="h-4 w-4 text-amber-600" />
-                  Pending approval ({pending.length})
+                  {isAr ? "قيد الانتظار" : "Pending approval"} ({pending.length})
                 </CardTitle>
                 <p className="text-xs text-muted-foreground mt-1">
                   Meeting requests from sales reps. Check with the tech team, then
@@ -405,23 +408,33 @@ function BookDialog({
   onOpenChange: (open: boolean) => void;
   onCreated: () => void;
 }) {
+  const { locale } = useLocale();
+  const isAr = locale === "ar";
   const [date, setDate] = useState<string>(() => new Date().toISOString().split("T")[0]);
   const [time, setTime] = useState<string>("10:00");
   const [duration, setDuration] = useState(30);
   const [meetingType, setMeetingType] = useState("DEMO");
+  // Booking is now tied to one of the rep's OWN opportunities — the previous
+  // contact picker meant reps could book a meeting against any directory
+  // contact, which broke the "every meeting belongs to an opportunity"
+  // assumption the post-meeting outcome flow relies on.
+  const [opportunityId, setOpportunityId] = useState<string | null>(null);
   const [contactName, setContactName] = useState("");
   const [contactPhone, setContactPhone] = useState("");
   const [contactCompanyId, setContactCompanyId] = useState<string | null>(null);
-  const [contactSearch, setContactSearch] = useState("");
-  const [showContactPicker, setShowContactPicker] = useState(true);
-  const [contactResults, setContactResults] = useState<Array<{
+  const [oppSearch, setOppSearch] = useState("");
+  const [showOppPicker, setShowOppPicker] = useState(true);
+  const [oppResults, setOppResults] = useState<Array<{
     id: string;
-    fullName: string;
-    phone: string | null;
-    whatsapp: string | null;
-    company: { id: string; nameEn: string; nameAr: string | null } | null;
+    code: string;
+    title: string;
+    stage: string;
+    customerCompanyName: string | null;
+    customerContactName: string | null;
+    customerContactPhone: string | null;
+    company: { id: string; nameEn: string } | null;
   }>>([]);
-  const [searchingContacts, setSearchingContacts] = useState(false);
+  const [searchingOpps, setSearchingOpps] = useState(false);
   const [customerNeed, setCustomerNeed] = useState("");
   const [needs, setNeeds] = useState<Array<{ labelEn: string }>>([]);
   const [notes, setNotes] = useState("");
@@ -446,69 +459,80 @@ function BookDialog({
   useEffect(() => {
     if (open) {
       setConflictMsg(null);
+      setOpportunityId(null);
       setContactName("");
       setContactPhone("");
       setContactCompanyId(null);
-      setContactSearch("");
-      setShowContactPicker(true);
-      setContactResults([]);
+      setOppSearch("");
+      setShowOppPicker(true);
+      setOppResults([]);
       setNotes("");
     }
   }, [open]);
 
-  // Debounced contact search — fires whenever the picker is visible and the
-  // search box changes. Empty query still hits the endpoint to show recent
-  // primary contacts so the picker isn't blank on open.
+  // Debounced opportunity search — fires whenever the picker is visible and
+  // the search box changes. Empty query still hits the endpoint to show the
+  // rep's most recently updated open opps so the picker isn't blank on open.
   useEffect(() => {
-    if (!open || !showContactPicker) return;
+    if (!open || !showOppPicker) return;
     const ctrl = new AbortController();
     const timer = setTimeout(async () => {
-      setSearchingContacts(true);
+      setSearchingOpps(true);
       try {
         const r = await fetch(
-          `/api/crm/contacts/search?q=${encodeURIComponent(contactSearch.trim())}`,
+          `/api/crm/opportunities/mine?q=${encodeURIComponent(oppSearch.trim())}`,
           { signal: ctrl.signal }
         );
         if (r.ok) {
           const d = await r.json();
-          setContactResults(d.contacts ?? []);
+          setOppResults(d.opportunities ?? []);
         }
       } catch {
         /* aborted */
       } finally {
-        setSearchingContacts(false);
+        setSearchingOpps(false);
       }
     }, 200);
     return () => {
       ctrl.abort();
       clearTimeout(timer);
     };
-  }, [contactSearch, open, showContactPicker]);
+  }, [oppSearch, open, showOppPicker]);
 
-  function selectContact(c: {
+  function selectOpp(o: {
     id: string;
-    fullName: string;
-    phone: string | null;
-    whatsapp: string | null;
+    code: string;
+    title: string;
+    customerCompanyName: string | null;
+    customerContactName: string | null;
+    customerContactPhone: string | null;
     company: { id: string; nameEn: string } | null;
   }) {
-    setContactName(c.fullName);
-    setContactPhone(c.phone ?? c.whatsapp ?? "");
-    setContactCompanyId(c.company?.id ?? null);
-    setShowContactPicker(false);
+    setOpportunityId(o.id);
+    // Use the contact captured on the opp itself; fall back to the opp title
+    // so the meeting label is never empty (admin can still edit before save).
+    setContactName(o.customerContactName?.trim() || o.title);
+    setContactPhone(o.customerContactPhone?.trim() || "");
+    setContactCompanyId(o.company?.id ?? null);
+    setShowOppPicker(false);
   }
 
-  function clearContact() {
+  function clearOpp() {
+    setOpportunityId(null);
     setContactName("");
     setContactPhone("");
     setContactCompanyId(null);
-    setShowContactPicker(true);
-    setContactSearch("");
+    setShowOppPicker(true);
+    setOppSearch("");
   }
 
   async function submit() {
+    if (!opportunityId) {
+      toast.error(isAr ? "اختر فرصة من قائمتك" : "Pick one of your opportunities");
+      return;
+    }
     if (!contactName.trim()) {
-      toast.error("Contact name is required");
+      toast.error(isAr ? "اسم جهة الاتصال مطلوب" : "Contact name is required");
       return;
     }
     setSaving(true);
@@ -522,6 +546,7 @@ function BookDialog({
           startAt,
           durationMinutes: duration,
           meetingType,
+          opportunityId,
           companyId: contactCompanyId,
           contactName: contactName.trim(),
           contactPhone: contactPhone.trim() || null,
@@ -550,7 +575,7 @@ function BookDialog({
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="sm:max-w-md">
         <DialogHeader>
-          <DialogTitle>Book a technical meeting</DialogTitle>
+          <DialogTitle>{isAr ? "حجز اجتماع فني" : "Book a technical meeting"}</DialogTitle>
         </DialogHeader>
         <div className="space-y-3">
           {conflictMsg && (
@@ -565,7 +590,7 @@ function BookDialog({
               <Input type="date" value={date} onChange={(e) => setDate(e.target.value)} />
             </div>
             <div>
-              <Label>Time</Label>
+              <Label>{isAr ? 'الوقت' : 'Time'}</Label>
               <Input type="time" step={1800} value={time} onChange={(e) => setTime(e.target.value)} />
             </div>
             <div>
@@ -592,47 +617,59 @@ function BookDialog({
             </div>
           </div>
           <div>
-            <Label>Contact</Label>
-            {showContactPicker ? (
+            <Label>{isAr ? "الفرصة" : "Opportunity"}</Label>
+            {showOppPicker ? (
               <div className="space-y-2">
                 <div className="relative">
                   <Search className="absolute start-2.5 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
                   <Input
-                    value={contactSearch}
-                    onChange={(e) => setContactSearch(e.target.value)}
-                    placeholder="Search contacts by name, phone, or email…"
+                    value={oppSearch}
+                    onChange={(e) => setOppSearch(e.target.value)}
+                    placeholder={isAr ? "ابحث في فرصك بالاسم أو الكود أو الشركة…" : "Search your opportunities by name, code, or company…"}
                     className="ps-9"
                     autoFocus
                   />
                 </div>
                 <div className="max-h-52 overflow-y-auto rounded-md border border-border divide-y">
-                  {searchingContacts && (
-                    <p className="p-3 text-xs text-muted-foreground">Searching…</p>
+                  {searchingOpps && (
+                    <p className="p-3 text-xs text-muted-foreground">{isAr ? "جاري البحث…" : "Searching…"}</p>
                   )}
-                  {!searchingContacts && contactResults.length === 0 && (
+                  {!searchingOpps && oppResults.length === 0 && (
                     <p className="p-3 text-xs text-muted-foreground">
-                      No contacts found. Add the contact under{" "}
-                      <a className="text-primary hover:underline" href="/crm/contacts/new" target="_blank" rel="noreferrer">
-                        Contacts
-                      </a>{" "}
-                      first.
+                      {isAr ? (
+                        <>لا توجد فرص مفتوحة. أنشئ فرصة من{" "}
+                          <a className="text-primary hover:underline" href="/crm/opportunities/new" target="_blank" rel="noreferrer">الفرص</a>{" "}
+                          أولًا.
+                        </>
+                      ) : (
+                        <>No open opportunities found. Create one under{" "}
+                          <a className="text-primary hover:underline" href="/crm/opportunities/new" target="_blank" rel="noreferrer">Opportunities</a>{" "}
+                          first.
+                        </>
+                      )}
                     </p>
                   )}
-                  {!searchingContacts &&
-                    contactResults.map((c) => (
-                      <button
-                        type="button"
-                        key={c.id}
-                        onClick={() => selectContact(c)}
-                        className="block w-full text-start px-3 py-2 hover:bg-accent transition-colors"
-                      >
-                        <span className="block text-sm font-medium truncate">{c.fullName}</span>
-                        <span className="block text-xs text-muted-foreground">
-                          {c.phone || c.whatsapp || "no phone"}
-                          {c.company && <> · {c.company.nameEn}</>}
-                        </span>
-                      </button>
-                    ))}
+                  {!searchingOpps &&
+                    oppResults.map((o) => {
+                      const companyLabel = o.customerCompanyName ?? o.company?.nameEn ?? null;
+                      return (
+                        <button
+                          type="button"
+                          key={o.id}
+                          onClick={() => selectOpp(o)}
+                          className="block w-full text-start px-3 py-2 hover:bg-accent transition-colors"
+                        >
+                          <span className="block text-sm font-medium truncate">
+                            {o.title}
+                            <span className="text-muted-foreground font-normal ms-2 text-[10px] font-mono">{o.code}</span>
+                          </span>
+                          <span className="block text-xs text-muted-foreground truncate">
+                            {companyLabel ?? (isAr ? "بدون شركة" : "no company")}
+                            {o.customerContactName && <> · {o.customerContactName}</>}
+                          </span>
+                        </button>
+                      );
+                    })}
                 </div>
               </div>
             ) : (
@@ -640,15 +677,39 @@ function BookDialog({
                 <div className="min-w-0">
                   <p className="text-sm font-medium truncate">{contactName}</p>
                   <p className="text-xs text-muted-foreground truncate">
-                    {contactPhone || "no phone on file"}
+                    {contactPhone || (isAr ? "لا يوجد رقم مسجل" : "no phone on file")}
                   </p>
                 </div>
-                <Button type="button" size="sm" variant="ghost" onClick={clearContact}>
+                <Button type="button" size="sm" variant="ghost" onClick={clearOpp}>
                   <X className="h-4 w-4" />
                 </Button>
               </div>
             )}
           </div>
+
+          {/* Contact name/phone — auto-filled from the chosen opportunity but
+              the rep can override before booking (e.g. the contact captured
+              on the opp is stale or a different person is attending). */}
+          {!showOppPicker && (
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <Label>{isAr ? "اسم جهة الاتصال" : "Contact name"}</Label>
+                <Input
+                  value={contactName}
+                  onChange={(e) => setContactName(e.target.value)}
+                  placeholder={isAr ? "اسم من سيحضر الاجتماع" : "Who's attending"}
+                />
+              </div>
+              <div>
+                <Label>{isAr ? "هاتف جهة الاتصال" : "Contact phone"}</Label>
+                <Input
+                  value={contactPhone}
+                  onChange={(e) => setContactPhone(e.target.value)}
+                  placeholder={isAr ? "اختياري" : "optional"}
+                />
+              </div>
+            </div>
+          )}
           <div>
             <Label>Customer need</Label>
             <Select value={customerNeed || undefined} onValueChange={(v) => setCustomerNeed(v ?? "")}>

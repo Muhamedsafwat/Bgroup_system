@@ -6,6 +6,7 @@ import React, { useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { Plus, Pencil, Trash2, Calculator } from 'lucide-react'
 import { PageHeader } from '@/components/hr/shared/PageHeader'
+import { useLocale } from '@/lib/i18n'
 import { ConfirmDialog } from '@/components/hr/shared/ConfirmDialog'
 import { Button } from '@/components/hr/ui/button'
 import { Badge } from '@/components/hr/ui/badge'
@@ -62,6 +63,8 @@ const APPROVAL_OPTIONS = [
 ]
 
 export default function OvertimePolicyPage() {
+  const { locale } = useLocale()
+  const isAr = locale === 'ar'
   const queryClient = useQueryClient()
 
   const [dialogOpen, setDialogOpen] = useState(false)
@@ -133,7 +136,7 @@ export default function OvertimePolicyPage() {
       <PageHeader
         title="Overtime Policies"
         description="Configure overtime types, multipliers and approval requirements"
-        breadcrumbs={[{ label: 'Settings', href: '/settings' }, { label: 'Overtime Policy' }]}
+        breadcrumbs={[{ label: isAr ? 'الإعدادات' : 'Settings', href: '/settings' }, { label: isAr ? 'سياسة الإضافي' : 'Overtime Policy' }]}
         actions={
           <Button size="sm" className="gap-1.5 bg-emerald-600 hover:bg-emerald-700 text-white" onClick={openAdd}>
             <Plus className="h-4 w-4" />Add Policy

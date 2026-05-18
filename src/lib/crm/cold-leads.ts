@@ -21,7 +21,11 @@ export function scopeColdLeadsByRole(session: SessionUser): Prisma.CrmColdLeadWh
       return {
         OR: [
           { assignedToId: session.id },
+          // Both reporting paths: primary single-FK manager AND
+          // many-to-many memberships. A rep on multiple managers' teams
+          // shows up for every one of them.
           { assignedTo: { managerId: session.id } },
+          { assignedTo: { managedBy: { some: { managerId: session.id } } } },
           // Managers also see the unassigned pool so they can distribute.
           { assignedToId: null },
         ],

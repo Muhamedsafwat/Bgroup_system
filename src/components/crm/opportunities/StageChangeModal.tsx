@@ -25,8 +25,6 @@ import { changeStage, getLossReasons } from "@/app/(dashboard)/crm/opportunities
 import {
   canTransition,
   getTransitionRequirements,
-  ACTIVE_STAGES,
-  TERMINAL_STAGES,
 } from "@/lib/crm/business/stage-transitions";
 import { toast } from "sonner";
 import type { CrmOpportunityStage } from "@/types";
@@ -56,18 +54,27 @@ export function StageChangeModal({
   const [contractUrl, setContractUrl] = useState("");
   const [loading, setLoading] = useState(false);
   const [lossReasons, setLossReasons] = useState<Array<{ id: string; labelEn: string; labelAr: string }>>([]);
+  // Pull the admin-curated stage list. The kanban already uses this; the rep
+  // stage dropdown used to use the hardcoded ACTIVE_STAGES + TERMINAL_STAGES,
+  // which meant a rep could pick a stage that admin had disabled and the opp
+  // would vanish from the pipeline (no column matched).
+  const [stagesFromConfig, setStagesFromConfig] = useState<Array<{ stage: string; labelEn: string; labelAr: string }>>([]);
 
   useEffect(() => {
     if (open) {
       getLossReasons().then(setLossReasons);
+      fetch("/api/crm/stages")
+        .then((r) => (r.ok ? r.json() : { stages: [] }))
+        .then((d) => setStagesFromConfig(d.stages ?? []))
+        .catch(() => setStagesFromConfig([]));
     }
   }, [open]);
 
-  const allStages = [...ACTIVE_STAGES, ...TERMINAL_STAGES] as CrmOpportunityStage[];
-  const availableStages = allStages.filter((s) => {
-    const result = canTransition(currentStage as CrmOpportunityStage, s);
-    return result.allowed;
-  });
+  // Available stages = admin-curated active stages, filtered by the
+  // transition matrix from the current stage. Both gates apply.
+  const availableStages = stagesFromConfig
+    .map((s) => s.stage as CrmOpportunityStage)
+    .filter((s) => canTransition(currentStage as CrmOpportunityStage, s).allowed);
 
   const requirements = selectedStage
     ? getTransitionRequirements(selectedStage as CrmOpportunityStage)
@@ -126,11 +133,15 @@ export function StageChangeModal({
                 <SelectValue placeholder={t.forms.selectStage} />
               </SelectTrigger>
               <SelectContent>
-                {availableStages.map((stage) => (
-                  <SelectItem key={stage} value={stage}>
-                    {(t.stages as Record<string, string>)[stage] ?? stageLabel(stage)}
-                  </SelectItem>
-                ))}
+                {availableStages.map((stage) => {
+                  const cfg = stagesFromConfig.find((s) => s.stage === stage);
+                  const label = cfg
+                    ? (locale === "ar" ? cfg.labelAr : cfg.labelEn)
+                    : ((t.stages as Record<string, string>)[stage] ?? stageLabel(stage));
+                  return (
+                    <SelectItem key={stage} value={stage}>{label}</SelectItem>
+                  );
+                })}
               </SelectContent>
             </Select>
           </div>

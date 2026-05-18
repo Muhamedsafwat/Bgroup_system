@@ -6,6 +6,7 @@ import React, { useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import api from '@/lib/hr/api'
 import { formatDate, formatCurrency } from '@/lib/hr/utils'
+import { useLocale } from '@/lib/i18n'
 import { PageHeader } from '@/components/hr/shared/PageHeader'
 import { ExportButton } from '@/components/hr/shared/ExportButton'
 import { Button } from '@/components/hr/ui/button'
@@ -69,6 +70,8 @@ function getStatusVariant(status: string): 'warning' | 'success' | 'danger' | 'd
 }
 
 export default function AllBonusesPage() {
+  const { locale } = useLocale()
+  const isAr = locale === "ar"
   const qc = useQueryClient()
   const [dateFrom, setDateFrom] = useState('')
   const [dateTo, setDateTo] = useState('')
@@ -150,9 +153,12 @@ export default function AllBonusesPage() {
   return (
     <div className="space-y-6">
       <PageHeader
-        title="All Bonuses"
+        title={isAr ? "كل المكافآت" : "All Bonuses"}
         description="View and manage all awarded bonuses"
-        breadcrumbs={[{ label: 'Bonuses' }, { label: 'All Bonuses' }]}
+        breadcrumbs={[
+          { label: isAr ? "المكافآت" : "Bonuses" },
+          { label: isAr ? "كل المكافآت" : "All Bonuses" },
+        ]}
         actions={
           <ExportButton
             onExportExcel={handleExportExcel}
@@ -173,13 +179,13 @@ export default function AllBonusesPage() {
           <Input type="date" value={dateTo} onChange={e => setDateTo(e.target.value)} className="w-36" />
         </div>
         <div className="space-y-1">
-          <Label>Company</Label>
+          <Label>{isAr ? "الشركة" : "Company"}</Label>
           <Select value={company} onValueChange={v => { setCompany(v === 'all' ? '' : v); setDepartment('') }}>
             <SelectTrigger className="w-40">
-              <SelectValue placeholder="All" />
+              <SelectValue placeholder={isAr ? "الكل" : "All"} />
             </SelectTrigger>
             <SelectContent>
-              <SelectItem value="all">All Companies</SelectItem>
+              <SelectItem value="all">{isAr ? "كل الشركات" : "All Companies"}</SelectItem>
               {companies.map((c: { id: number; name_en: string }) => (
                 <SelectItem key={c.id} value={String(c.id)}>{c.name_en}</SelectItem>
               ))}
@@ -187,13 +193,13 @@ export default function AllBonusesPage() {
           </Select>
         </div>
         <div className="space-y-1">
-          <Label>Department</Label>
+          <Label>{isAr ? "القسم" : "Department"}</Label>
           <Select value={department} onValueChange={v => setDepartment(v === 'all' ? '' : v)}>
             <SelectTrigger className="w-40">
-              <SelectValue placeholder="All" />
+              <SelectValue placeholder={isAr ? "الكل" : "All"} />
             </SelectTrigger>
             <SelectContent>
-              <SelectItem value="all">All Departments</SelectItem>
+              <SelectItem value="all">{isAr ? "كل الأقسام" : "All Departments"}</SelectItem>
               {departments.map((d: { id: number; name_en: string }) => (
                 <SelectItem key={d.id} value={String(d.id)}>{d.name_en}</SelectItem>
               ))}
@@ -201,25 +207,25 @@ export default function AllBonusesPage() {
           </Select>
         </div>
         <div className="space-y-1">
-          <Label>Employee</Label>
+          <Label>{isAr ? "الموظف" : "Employee"}</Label>
           <Input
-            placeholder="Search..."
+            placeholder={isAr ? "بحث..." : "Search..."}
             value={employeeSearch}
             onChange={e => setEmployeeSearch(e.target.value)}
             className="w-40"
           />
         </div>
         <div className="space-y-1">
-          <Label>Status</Label>
+          <Label>{isAr ? "الحالة" : "Status"}</Label>
           <Select value={status} onValueChange={v => setStatus(v === 'all' ? '' : v)}>
             <SelectTrigger className="w-36">
-              <SelectValue placeholder="All" />
+              <SelectValue placeholder={isAr ? "الكل" : "All"} />
             </SelectTrigger>
             <SelectContent>
-              <SelectItem value="all">All Statuses</SelectItem>
-              <SelectItem value="pending">Pending</SelectItem>
-              <SelectItem value="applied">Applied</SelectItem>
-              <SelectItem value="dismissed">Dismissed</SelectItem>
+              <SelectItem value="all">{isAr ? "كل الحالات" : "All Statuses"}</SelectItem>
+              <SelectItem value="pending">{isAr ? "قيد الانتظار" : "Pending"}</SelectItem>
+              <SelectItem value="applied">{isAr ? "مطبّق" : "Applied"}</SelectItem>
+              <SelectItem value="dismissed">{isAr ? "مرفوض" : "Dismissed"}</SelectItem>
             </SelectContent>
           </Select>
         </div>
@@ -230,15 +236,15 @@ export default function AllBonusesPage() {
         <Table>
           <TableHeader>
             <TableRow className="bg-muted/50">
-              <TableHead className="font-semibold">Date</TableHead>
-              <TableHead className="font-semibold">Employee</TableHead>
-              <TableHead className="font-semibold">Company</TableHead>
-              <TableHead className="font-semibold">Category</TableHead>
-              <TableHead className="font-semibold">Bonus Name</TableHead>
-              <TableHead className="font-semibold text-right">Amount</TableHead>
-              <TableHead className="font-semibold">Status</TableHead>
-              <TableHead className="font-semibold">Submitted By</TableHead>
-              <TableHead className="font-semibold">Approved By</TableHead>
+              <TableHead className="font-semibold">{isAr ? "التاريخ" : "Date"}</TableHead>
+              <TableHead className="font-semibold">{isAr ? "الموظف" : "Employee"}</TableHead>
+              <TableHead className="font-semibold">{isAr ? "الشركة" : "Company"}</TableHead>
+              <TableHead className="font-semibold">{isAr ? "الفئة" : "Category"}</TableHead>
+              <TableHead className="font-semibold">{isAr ? "اسم المكافأة" : "Bonus Name"}</TableHead>
+              <TableHead className="font-semibold text-right">{isAr ? "المبلغ" : "Amount"}</TableHead>
+              <TableHead className="font-semibold">{isAr ? "الحالة" : "Status"}</TableHead>
+              <TableHead className="font-semibold">{isAr ? "قُدّم بواسطة" : "Submitted By"}</TableHead>
+              <TableHead className="font-semibold">{isAr ? "اعتُمد بواسطة" : "Approved By"}</TableHead>
             </TableRow>
           </TableHeader>
           <TableBody>
@@ -323,7 +329,7 @@ export default function AllBonusesPage() {
                   <p className="font-bold text-emerald-700 text-lg">{formatCurrency(selectedBonus.bonus_amount)}</p>
                 </div>
                 <div>
-                  <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-1">Status</p>
+                  <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-1">{isAr ? "الحالة" : "Status"}</p>
                   <Badge variant={getStatusVariant(selectedBonus.status)}>{selectedBonus.status}</Badge>
                 </div>
                 <div>

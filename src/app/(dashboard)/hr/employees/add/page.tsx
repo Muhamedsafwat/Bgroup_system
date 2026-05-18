@@ -7,6 +7,7 @@ import { useForm, Controller } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
 import { z } from 'zod'
 import { ArrowLeft, Save, Camera, User2, Plus } from 'lucide-react'
+import { useLocale } from '@/lib/i18n'
 import { PageHeader } from '@/components/hr/shared/PageHeader'
 import { Card } from '@/components/hr/ui/card'
 import { Button } from '@/components/hr/ui/button'
@@ -112,6 +113,8 @@ function FieldWrapper({ label, error, children, className }: {
 // ─── Main Component ──────────────────────────────────────────────────────────
 
 export default function AddEmployeePage() {
+  const { locale } = useLocale()
+  const isAr = locale === 'ar'
   const router = useRouter()
   const { toast } = useToast()
   const [addAnother, setAddAnother] = useState(false)
@@ -209,15 +212,15 @@ export default function AddEmployeePage() {
   return (
     <div className="space-y-6 max-w-5xl">
       <PageHeader
-        title="Add Employee"
-        description="Create a new employee profile and account"
+        title={isAr ? 'إضافة موظف' : 'Add Employee'}
+        description={isAr ? 'إنشاء ملف موظف جديد وحسابه' : 'Create a new employee profile and account'}
         breadcrumbs={[
-          { label: 'Employees', href: '/hr/employees' },
-          { label: 'Add Employee' },
+          { label: isAr ? 'الموظفون' : 'Employees', href: '/hr/employees' },
+          { label: isAr ? 'إضافة موظف' : 'Add Employee' },
         ]}
         actions={
           <Button variant="outline" size="sm" onClick={() => router.push('/hr/employees')}>
-            <ArrowLeft className="h-4 w-4 mr-1" /> Back
+            <ArrowLeft className="h-4 w-4 mr-1" /> {isAr ? 'رجوع' : 'Back'}
           </Button>
         }
       />
@@ -311,7 +314,7 @@ export default function AddEmployeePage() {
             <Input type="email" {...register('personal_email')} placeholder="personal@email.com" />
           </FieldWrapper>
 
-          <FieldWrapper label="Address" error={errors.address?.message} className="sm:col-span-2">
+          <FieldWrapper label={isAr ? 'العنوان' : 'Address'} error={errors.address?.message} className="sm:col-span-2">
             <Textarea {...register('address')} placeholder="Full address..." rows={2} />
           </FieldWrapper>
 
@@ -576,7 +579,7 @@ export default function AddEmployeePage() {
             variant="ghost"
             onClick={() => router.push('/hr/employees')}
           >
-            Cancel
+            {isAr ? 'إلغاء' : 'Cancel'}
           </Button>
         </div>
       </form>

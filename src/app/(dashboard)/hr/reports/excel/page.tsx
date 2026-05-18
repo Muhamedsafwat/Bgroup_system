@@ -3,6 +3,7 @@
 import React, { useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { FileSpreadsheet, Download, Loader2 } from 'lucide-react'
+import { useLocale } from '@/lib/i18n'
 import { PageHeader } from '@/components/hr/shared/PageHeader'
 import { Button } from '@/components/hr/ui/button'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/hr/ui/select'
@@ -44,6 +45,8 @@ interface PreviewRow {
 }
 
 export default function ExcelExportPage() {
+  const { locale } = useLocale()
+  const isAr = locale === 'ar'
   const { toast } = useToast()
   const now = new Date()
 
@@ -109,9 +112,9 @@ export default function ExcelExportPage() {
   return (
     <div className="space-y-6">
       <PageHeader
-        title="Excel Export"
+        title={isAr ? 'تصدير Excel' : 'Excel Export'}
         description="Export payroll data to Excel spreadsheet"
-        breadcrumbs={[{ label: 'Reports', href: '/reports' }, { label: 'Excel Export' }]}
+        breadcrumbs={[{ label: isAr ? 'التقارير' : 'Reports', href: '/reports' }, { label: isAr ? 'تصدير Excel' : 'Excel Export' }]}
       />
 
       {/* Controls */}
@@ -119,7 +122,7 @@ export default function ExcelExportPage() {
         <h2 className="text-base font-semibold text-foreground mb-4">Export Parameters</h2>
         <div className="flex flex-wrap items-end gap-4">
           <div className="space-y-1.5 min-w-[200px]">
-            <label className="text-sm font-medium text-muted-foreground">Company</label>
+            <label className="text-sm font-medium text-muted-foreground">{isAr ? 'الشركة' : 'Company'}</label>
             <Select value={companyId} onValueChange={setCompanyId}>
               <SelectTrigger>
                 <SelectValue />
@@ -134,7 +137,7 @@ export default function ExcelExportPage() {
           </div>
 
           <div className="space-y-1.5">
-            <label className="text-sm font-medium text-muted-foreground">Month</label>
+            <label className="text-sm font-medium text-muted-foreground">{isAr ? 'الشهر' : 'Month'}</label>
             <Select value={String(month)} onValueChange={(v) => setMonth(Number(v))}>
               <SelectTrigger className="w-36">
                 <SelectValue />
@@ -148,7 +151,7 @@ export default function ExcelExportPage() {
           </div>
 
           <div className="space-y-1.5">
-            <label className="text-sm font-medium text-muted-foreground">Year</label>
+            <label className="text-sm font-medium text-muted-foreground">{isAr ? 'السنة' : 'Year'}</label>
             <Select value={String(year)} onValueChange={(v) => setYear(Number(v))}>
               <SelectTrigger className="w-28">
                 <SelectValue />

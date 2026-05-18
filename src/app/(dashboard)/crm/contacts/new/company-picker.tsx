@@ -7,6 +7,7 @@ import { Search } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
+import { useLocale } from "@/lib/i18n";
 
 type Company = { id: string; nameEn: string; nameAr: string | null };
 
@@ -17,6 +18,8 @@ type Company = { id: string; nameEn: string; nameAr: string | null };
  */
 export function NewContactCompanyPicker({ companies }: { companies: Company[] }) {
   const router = useRouter();
+  const { locale } = useLocale();
+  const isAr = locale === "ar";
   const [q, setQ] = useState("");
   const filtered = useMemo(() => {
     const needle = q.trim().toLowerCase();
@@ -68,7 +71,7 @@ export function NewContactCompanyPicker({ companies }: { companies: Company[] })
         </div>
         <div className="flex justify-end">
           <Link href="/crm/contacts">
-            <Button variant="ghost" size="sm">Cancel</Button>
+            <Button variant="ghost" size="sm">{isAr ? 'إلغاء' : 'Cancel'}</Button>
           </Link>
         </div>
       </CardContent>

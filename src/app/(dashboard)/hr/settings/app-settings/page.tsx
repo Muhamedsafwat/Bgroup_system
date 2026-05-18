@@ -4,6 +4,7 @@ import React, { useState, useEffect } from 'react'
 import { useQuery, useMutation } from '@tanstack/react-query'
 import { ChevronDown, ChevronRight, Save, Loader2 } from 'lucide-react'
 import { PageHeader } from '@/components/hr/shared/PageHeader'
+import { useLocale } from '@/lib/i18n'
 import { Button } from '@/components/hr/ui/button'
 import { useToast } from '@/components/hr/ui/toast'
 import api from '@/lib/hr/api'
@@ -55,6 +56,8 @@ const SECTIONS: SettingsSection[] = [
 ]
 
 export default function AppSettingsPage() {
+  const { locale } = useLocale()
+  const isAr = locale === 'ar'
   const { toast } = useToast()
 
   const [expandedSections, setExpandedSections] = useState<Set<string>>(
@@ -183,7 +186,7 @@ export default function AppSettingsPage() {
       <PageHeader
         title="App Settings"
         description="System-wide configuration for HR operations"
-        breadcrumbs={[{ label: 'Settings', href: '/settings' }, { label: 'App Settings' }]}
+        breadcrumbs={[{ label: isAr ? 'الإعدادات' : 'Settings', href: '/settings' }, { label: isAr ? 'إعدادات التطبيق' : 'App Settings' }]}
         actions={
           <Button
             className={cn(

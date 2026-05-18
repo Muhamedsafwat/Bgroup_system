@@ -5,6 +5,7 @@ import { describeError } from "@/lib/zod-errors";
 import React, { useState, useRef, useEffect } from 'react'
 import { useQuery, useMutation } from '@tanstack/react-query'
 import { Check, ChevronRight, User, Gift, FileText, Send } from 'lucide-react'
+import { useLocale } from '@/lib/i18n'
 import api from '@/lib/hr/api'
 import { formatDate, formatCurrency, cn } from '@/lib/hr/utils'
 import { PageHeader } from '@/components/hr/shared/PageHeader'
@@ -91,6 +92,8 @@ function StepIndicator({ currentStep }: { currentStep: number }) {
 }
 
 export default function AwardBonusPage() {
+  const { locale } = useLocale()
+  const isAr = locale === 'ar'
   const [step, setStep] = useState(1)
   const [employeeSearch, setEmployeeSearch] = useState('')
   const [showDropdown, setShowDropdown] = useState(false)
@@ -184,7 +187,7 @@ export default function AwardBonusPage() {
   if (submittedId) {
     return (
       <div className="space-y-6">
-        <PageHeader title="Award Bonus" breadcrumbs={[{ label: 'Bonuses' }, { label: 'Award' }]} />
+        <PageHeader title={isAr ? 'منح مكافأة' : 'Award Bonus'} breadcrumbs={[{ label: isAr ? 'المكافآت' : 'Bonuses' }, { label: isAr ? 'منح' : 'Award' }]} />
         <div className="bg-card rounded-xl border border-border p-12 text-center max-w-lg mx-auto">
           <div className="h-16 w-16 rounded-full bg-emerald-100 flex items-center justify-center mx-auto mb-4">
             <Check className="h-8 w-8 text-emerald-600" />
@@ -212,9 +215,9 @@ export default function AwardBonusPage() {
   return (
     <div className="space-y-6">
       <PageHeader
-        title="Award Bonus"
+        title={isAr ? 'منح مكافأة' : 'Award Bonus'}
         description="Award a bonus to an employee using the 4-step guided process"
-        breadcrumbs={[{ label: 'Bonuses' }, { label: 'Award Bonus' }]}
+        breadcrumbs={[{ label: isAr ? 'المكافآت' : 'Bonuses' }, { label: isAr ? 'منح مكافأة' : 'Award Bonus' }]}
       />
 
       <div className="max-w-2xl mx-auto">

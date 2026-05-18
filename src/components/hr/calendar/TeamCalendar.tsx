@@ -7,6 +7,7 @@ import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
 import { cn } from "@/lib/utils";
+import { useLocale } from "@/lib/i18n";
 import type { LeaveOnCalendar } from "@/app/api/hr/calendar/leaves/route";
 
 const CONFLICT_THRESHOLD = 3; // 3+ people from same department off on the same day
@@ -50,6 +51,8 @@ async function fetchLeaves(from: string, to: string): Promise<LeaveOnCalendar[]>
 }
 
 export function TeamCalendar() {
+  const { locale } = useLocale();
+  const isAr = locale === "ar";
   const [cursor, setCursor] = useState<Date>(() => startOfMonth(new Date()));
 
   // Render 6 weeks starting from the Monday before/at the 1st of the cursor month.
@@ -139,11 +142,11 @@ export function TeamCalendar() {
             className="h-9"
             onClick={() => setCursor(startOfMonth(new Date()))}
           >
-            Today
+            {isAr ? "اليوم" : "Today"}
           </Button>
         </div>
         <span className="text-xs text-muted-foreground">
-          {leaves.length} leave{leaves.length === 1 ? "" : "s"} in view
+          {isAr ? `${leaves.length} إجازة في النطاق` : `${leaves.length} leave${leaves.length === 1 ? "" : "s"} in view`}
         </span>
       </div>
 

@@ -1,5 +1,6 @@
 import { auth } from "@/lib/auth";
 import { redirect } from "next/navigation";
+import { getServerT } from "@/lib/i18n/server";
 import { WelcomeHero, type WelcomeTile } from "@/components/shared/WelcomeHero";
 import { firstNameOf, type Tone } from "@/lib/welcome";
 
@@ -7,6 +8,9 @@ import { firstNameOf, type Tone } from "@/lib/welcome";
  * Welcome / quick-actions landing page. The visual treatment is shared with
  * every per-module home page via <WelcomeHero /> so the look stays consistent
  * everywhere the user lands.
+ *
+ * Persona labels + shortcut chips live here. They take an `isAr` flag so the
+ * page can render fully in Arabic when the user has the AR locale cookie.
  */
 
 type RolePersona = {
@@ -17,10 +21,12 @@ type RolePersona = {
   shortcuts: { href: string; label: string }[];
 };
 
-const COMMON_TOURS: { href: string; label: string }[] = [
-  { href: "/tasks", label: "My tasks" },
-  { href: "/today", label: "Today" },
-];
+function commonTours(isAr: boolean) {
+  return [
+    { href: "/tasks", label: isAr ? "مهامي" : "My tasks" },
+    { href: "/today", label: isAr ? "اليوم" : "Today" },
+  ];
+}
 
 function personaFor(args: {
   modules: ("hr" | "crm" | "partners")[];
@@ -28,26 +34,28 @@ function personaFor(args: {
   crmRole?: string | null;
   partnerId?: string | null;
   isPlatformAdmin: boolean;
+  isAr: boolean;
 }): RolePersona {
-  const { modules, hrRoles, crmRole, partnerId, isPlatformAdmin } = args;
+  const { modules, hrRoles, crmRole, partnerId, isPlatformAdmin, isAr } = args;
+  const tours = commonTours(isAr);
 
   if (isPlatformAdmin) {
     return {
-      pillLabel: "Platform admin",
+      pillLabel: isAr ? "أدمن المنصة" : "Platform admin",
       pillTone: "indigo",
       actions: [
-        { href: "/admin", label: "Admin home", description: "Board · users · settings", icon: "LayoutDashboard", tone: "indigo" },
-        { href: "/admin/users", label: "All users", description: "Every account in one place", icon: "Users", tone: "rose" },
-        { href: "/admin/board", label: "Group board", description: "Cross-module KPIs", icon: "TrendingUp", tone: "emerald" },
-        { href: "/admin/settings", label: "Settings", description: "Taxonomy · workflows", icon: "FileText", tone: "amber" },
-        { href: "/admin/workflows-sequential", label: "Workflows", description: "Configure + trigger", icon: "Workflow", tone: "violet" },
-        { href: "/admin/users/new", label: "Add a user", description: "One form, any module", icon: "Plus", tone: "sky" },
+        { href: "/admin", label: isAr ? "الإدارة - الرئيسية" : "Admin home", description: isAr ? "لوحة · مستخدمون · إعدادات" : "Board · users · settings", icon: "LayoutDashboard", tone: "indigo" },
+        { href: "/admin/users", label: isAr ? "جميع المستخدمين" : "All users", description: isAr ? "كل حساب في مكان واحد" : "Every account in one place", icon: "Users", tone: "rose" },
+        { href: "/admin/board", label: isAr ? "لوحة المجموعة" : "Group board", description: isAr ? "مؤشرات عبر الوحدات" : "Cross-module KPIs", icon: "TrendingUp", tone: "emerald" },
+        { href: "/admin/settings", label: isAr ? "الإعدادات" : "Settings", description: isAr ? "التصنيفات · سير العمل" : "Taxonomy · workflows", icon: "FileText", tone: "amber" },
+        { href: "/admin/workflows-sequential", label: isAr ? "سير العمل" : "Workflows", description: isAr ? "ضبط + تشغيل" : "Configure + trigger", icon: "Workflow", tone: "violet" },
+        { href: "/admin/users/new", label: isAr ? "إضافة مستخدم" : "Add a user", description: isAr ? "نموذج واحد، أي وحدة" : "One form, any module", icon: "Plus", tone: "sky" },
       ],
       shortcuts: [
-        { href: "/hr/dashboard", label: "Open HR" },
-        { href: "/crm/sales-board", label: "Open CRM" },
-        { href: "/partners/dashboard", label: "Open Partners" },
-        ...COMMON_TOURS,
+        { href: "/hr/dashboard", label: isAr ? "فتح الموارد البشرية" : "Open HR" },
+        { href: "/crm/sales-board", label: isAr ? "فتح الـ CRM" : "Open CRM" },
+        { href: "/partners/dashboard", label: isAr ? "فتح الشركاء" : "Open Partners" },
+        ...tours,
       ],
     };
   }
@@ -55,83 +63,81 @@ function personaFor(args: {
   if (modules.includes("crm")) {
     if (crmRole === "MANAGER") {
       return {
-        pillLabel: "Sales manager",
+        pillLabel: isAr ? "مدير مبيعات" : "Sales manager",
         pillTone: "indigo",
         actions: [
-          { href: "/crm/group", label: "Team pipeline", description: "Health · forecast · leaderboard", icon: "TrendingUp", tone: "indigo" },
-          { href: "/crm/opportunities", label: "Opportunities", description: "Reassign · start workflows", icon: "Briefcase", tone: "rose" },
-          { href: "/crm/meetings", label: "Meetings", description: "Schedule + review", icon: "Calendar", tone: "emerald" },
-          { href: "/crm/group/forecast", label: "Forecast", description: "This quarter's view", icon: "TrendingUp", tone: "amber" },
-          { href: "/crm/opportunities/new", label: "New opportunity", description: "Log a lead for your team", icon: "Plus", tone: "sky" },
-          { href: "/crm/admin/users", label: "My reps", description: "Manage the team", icon: "Users", tone: "violet" },
+          { href: "/crm/group", label: isAr ? "بايبلاين الفريق" : "Team pipeline", description: isAr ? "صحة · توقعات · ترتيب" : "Health · forecast · leaderboard", icon: "TrendingUp", tone: "indigo" },
+          { href: "/crm/opportunities", label: isAr ? "الفرص" : "Opportunities", description: isAr ? "إعادة تعيين · بدء سير عمل" : "Reassign · start workflows", icon: "Briefcase", tone: "rose" },
+          { href: "/crm/meetings", label: isAr ? "الاجتماعات" : "Meetings", description: isAr ? "جدولة + مراجعة" : "Schedule + review", icon: "Calendar", tone: "emerald" },
+          { href: "/crm/group/forecast", label: isAr ? "التوقعات" : "Forecast", description: isAr ? "هذا الربع" : "This quarter's view", icon: "TrendingUp", tone: "amber" },
+          { href: "/crm/opportunities/new", label: isAr ? "فرصة جديدة" : "New opportunity", description: isAr ? "سجّل عميلًا لفريقك" : "Log a lead for your team", icon: "Plus", tone: "sky" },
+          { href: "/crm/admin/users", label: isAr ? "مندوبيّ" : "My reps", description: isAr ? "إدارة الفريق" : "Manage the team", icon: "Users", tone: "violet" },
         ],
-        shortcuts: [{ href: "/crm/my", label: "Switch to rep view" }, ...COMMON_TOURS],
+        shortcuts: [{ href: "/crm/my", label: isAr ? "التحول لعرض المندوب" : "Switch to rep view" }, ...tours],
       };
     }
     if (crmRole === "ASSISTANT") {
-      // Lean ASSISTANT persona: meetings + tasks + their day-overview. They
-      // get to a specific opportunity ONLY via a meeting they're tied to;
-      // pipeline-style tiles were misleading because the proxy now blocks
-      // those routes for this role.
       return {
-        pillLabel: "Assistant",
+        pillLabel: isAr ? "مساعد" : "Assistant",
         pillTone: "amber",
-        question: "What needs your sign-off today?",
+        question: isAr ? "ماذا يحتاج موافقتك اليوم؟" : "What needs your sign-off today?",
         actions: [
-          { href: "/crm/meetings", label: "Approval queue", description: "Pending meeting requests", icon: "Calendar", tone: "amber" },
-          { href: "/crm/meetings", label: "Meetings & calendar", description: "Today's schedule", icon: "CalendarCheck", tone: "emerald" },
-          { href: "/crm/my", label: "My day", description: "What's happening with your meetings", icon: "LayoutDashboard", tone: "indigo" },
-          { href: "/tasks", label: "My tasks", description: "Things assigned to me", icon: "ListTodo", tone: "rose" },
+          { href: "/crm/meetings", label: isAr ? "قائمة الاعتماد" : "Approval queue", description: isAr ? "طلبات اجتماعات قيد الانتظار" : "Pending meeting requests", icon: "Calendar", tone: "amber" },
+          { href: "/crm/meetings", label: isAr ? "الاجتماعات والتقويم" : "Meetings & calendar", description: isAr ? "جدول اليوم" : "Today's schedule", icon: "CalendarCheck", tone: "emerald" },
+          { href: "/crm/my", label: isAr ? "يومي" : "My day", description: isAr ? "ما يجري مع اجتماعاتك" : "What's happening with your meetings", icon: "LayoutDashboard", tone: "indigo" },
+          { href: "/tasks", label: isAr ? "مهامي" : "My tasks", description: isAr ? "المهام المسندة إليّ" : "Things assigned to me", icon: "ListTodo", tone: "rose" },
         ],
-        shortcuts: COMMON_TOURS,
+        shortcuts: tours,
       };
     }
     if (crmRole === "ADMIN" && !isPlatformAdmin) {
       return {
-        pillLabel: "CRM admin",
+        pillLabel: isAr ? "أدمن CRM" : "CRM admin",
         pillTone: "indigo",
         actions: [
-          { href: "/crm/sales-board", label: "Sales board", description: "Org-wide pipeline", icon: "TrendingUp", tone: "indigo" },
-          { href: "/admin/settings", label: "Settings", description: "Users · taxonomy · products", icon: "FileText", tone: "amber" },
-          { href: "/admin/users", label: "Users", description: "Add · edit · assign", icon: "Users", tone: "rose" },
-          { href: "/crm/opportunities", label: "Opportunities", description: "Every deal in the system", icon: "Briefcase", tone: "emerald" },
+          { href: "/crm/sales-board", label: isAr ? "لوحة المبيعات" : "Sales board", description: isAr ? "بايبلاين على مستوى المؤسسة" : "Org-wide pipeline", icon: "TrendingUp", tone: "indigo" },
+          { href: "/admin/settings", label: isAr ? "الإعدادات" : "Settings", description: isAr ? "مستخدمون · تصنيفات · منتجات" : "Users · taxonomy · products", icon: "FileText", tone: "amber" },
+          { href: "/admin/users", label: isAr ? "المستخدمون" : "Users", description: isAr ? "إضافة · تعديل · تعيين" : "Add · edit · assign", icon: "Users", tone: "rose" },
+          { href: "/crm/opportunities", label: isAr ? "الفرص" : "Opportunities", description: isAr ? "كل صفقة في النظام" : "Every deal in the system", icon: "Briefcase", tone: "emerald" },
         ],
-        shortcuts: COMMON_TOURS,
+        shortcuts: tours,
       };
     }
     return {
-      pillLabel: crmRole === "ACCOUNT_MGR" ? "Account manager" : "Sales rep",
+      pillLabel: isAr
+        ? (crmRole === "ACCOUNT_MGR" ? "مدير حسابات" : "مندوب مبيعات")
+        : (crmRole === "ACCOUNT_MGR" ? "Account manager" : "Sales rep"),
       pillTone: "sky",
       actions: [
-        { href: "/crm/opportunities/new", label: "New opportunity", description: "Log a lead", icon: "Plus", tone: "sky" },
-        { href: "/crm/companies", label: "Add company", description: "Save a new account", icon: "Building2", tone: "emerald" },
-        { href: "/crm/calls", label: "Log a call", description: "Add to today's report", icon: "Phone", tone: "amber" },
-        { href: "/crm/meetings", label: "Book a meeting", description: "Request approval", icon: "Calendar", tone: "rose" },
-        { href: "/crm/my", label: "My pipeline", description: "Today's calls + opps", icon: "LayoutDashboard", tone: "indigo" },
-        { href: "/crm/opportunities", label: "Opportunities", description: "Everything you own", icon: "Briefcase", tone: "violet" },
+        { href: "/crm/opportunities/new", label: isAr ? "فرصة جديدة" : "New opportunity", description: isAr ? "سجّل عميلًا" : "Log a lead", icon: "Plus", tone: "sky" },
+        { href: "/crm/companies", label: isAr ? "إضافة شركة" : "Add company", description: isAr ? "احفظ حسابًا جديدًا" : "Save a new account", icon: "Building2", tone: "emerald" },
+        { href: "/crm/calls", label: isAr ? "تسجيل مكالمة" : "Log a call", description: isAr ? "أضفها لتقرير اليوم" : "Add to today's report", icon: "Phone", tone: "amber" },
+        { href: "/crm/meetings", label: isAr ? "حجز اجتماع" : "Book a meeting", description: isAr ? "اطلب الاعتماد" : "Request approval", icon: "Calendar", tone: "rose" },
+        { href: "/crm/my", label: isAr ? "بايبلايني" : "My pipeline", description: isAr ? "مكالمات وفرص اليوم" : "Today's calls + opps", icon: "LayoutDashboard", tone: "indigo" },
+        { href: "/crm/opportunities", label: isAr ? "الفرص" : "Opportunities", description: isAr ? "كل ما تملك" : "Everything you own", icon: "Briefcase", tone: "violet" },
       ],
       shortcuts: [
-        { href: "/crm/contacts", label: "Contacts" },
-        { href: "/crm/reports", label: "Daily reports" },
-        ...COMMON_TOURS,
+        { href: "/crm/contacts", label: isAr ? "جهات الاتصال" : "Contacts" },
+        { href: "/crm/reports", label: isAr ? "التقارير اليومية" : "Daily reports" },
+        ...tours,
       ],
     };
   }
 
   if (modules.includes("partners") && partnerId) {
     return {
-      pillLabel: "Partner",
+      pillLabel: isAr ? "شريك" : "Partner",
       pillTone: "emerald",
       actions: [
-        { href: "/partners/leads", label: "Register a lead", description: "Bring in a prospect", icon: "Plus", tone: "sky" },
-        { href: "/partners/deals", label: "My deals", description: "Status · commissions", icon: "Handshake", tone: "emerald" },
-        { href: "/partners/commissions", label: "Commissions", description: "Earnings · payouts", icon: "Receipt", tone: "amber" },
-        { href: "/partners/dashboard", label: "Dashboard", description: "Headline numbers", icon: "LayoutDashboard", tone: "indigo" },
+        { href: "/partners/leads", label: isAr ? "تسجيل عميل" : "Register a lead", description: isAr ? "أحضر عميلًا محتملًا" : "Bring in a prospect", icon: "Plus", tone: "sky" },
+        { href: "/partners/deals", label: isAr ? "صفقاتي" : "My deals", description: isAr ? "الحالة · العمولات" : "Status · commissions", icon: "Handshake", tone: "emerald" },
+        { href: "/partners/commissions", label: isAr ? "العمولات" : "Commissions", description: isAr ? "الأرباح · المدفوعات" : "Earnings · payouts", icon: "Receipt", tone: "amber" },
+        { href: "/partners/dashboard", label: isAr ? "لوحة التحكم" : "Dashboard", description: isAr ? "الأرقام الرئيسية" : "Headline numbers", icon: "LayoutDashboard", tone: "indigo" },
       ],
       shortcuts: [
-        { href: "/partners/contracts", label: "Contracts" },
-        { href: "/partners/invoices", label: "Invoices" },
-        { href: "/partners/notifications", label: "Notifications" },
+        { href: "/partners/contracts", label: isAr ? "العقود" : "Contracts" },
+        { href: "/partners/invoices", label: isAr ? "الفواتير" : "Invoices" },
+        { href: "/partners/notifications", label: isAr ? "الإشعارات" : "Notifications" },
       ],
     };
   }
@@ -139,70 +145,70 @@ function personaFor(args: {
   if (modules.includes("hr")) {
     if (hrRoles.includes("hr_manager")) {
       return {
-        pillLabel: "HR manager",
+        pillLabel: isAr ? "مدير الموارد البشرية" : "HR manager",
         pillTone: "indigo",
         actions: [
-          { href: "/hr/dashboard", label: "HR dashboard", description: "Action queue + KPIs", icon: "LayoutDashboard", tone: "indigo" },
-          { href: "/hr/employees", label: "Employees", description: "Browse + add", icon: "Users", tone: "rose" },
-          { href: "/hr/overtime/pending", label: "Overtime approvals", description: "Awaiting your signoff", icon: "CheckSquare", tone: "emerald" },
-          { href: "/hr/incidents/submit", label: "Submit incident", description: "Disciplinary record", icon: "AlertTriangle", tone: "amber" },
-          { href: "/hr/payroll/monthly", label: "Monthly payroll", description: "Calculate + lock", icon: "Wallet", tone: "violet" },
-          { href: "/admin/users/new", label: "Onboard a hire", description: "One form, every module", icon: "Plus", tone: "sky" },
+          { href: "/hr/dashboard", label: isAr ? "لوحة الموارد البشرية" : "HR dashboard", description: isAr ? "قائمة الإجراءات + مؤشرات" : "Action queue + KPIs", icon: "LayoutDashboard", tone: "indigo" },
+          { href: "/hr/employees", label: isAr ? "الموظفون" : "Employees", description: isAr ? "تصفح + إضافة" : "Browse + add", icon: "Users", tone: "rose" },
+          { href: "/hr/overtime/pending", label: isAr ? "اعتمادات الإضافي" : "Overtime approvals", description: isAr ? "بانتظار موافقتك" : "Awaiting your signoff", icon: "CheckSquare", tone: "emerald" },
+          { href: "/hr/incidents/submit", label: isAr ? "تسجيل مخالفة" : "Submit incident", description: isAr ? "سجل تأديبي" : "Disciplinary record", icon: "AlertTriangle", tone: "amber" },
+          { href: "/hr/payroll/monthly", label: isAr ? "رواتب الشهر" : "Monthly payroll", description: isAr ? "احتسب + اقفل" : "Calculate + lock", icon: "Wallet", tone: "violet" },
+          { href: "/admin/users/new", label: isAr ? "إضافة موظف جديد" : "Onboard a hire", description: isAr ? "نموذج واحد لكل الوحدات" : "One form, every module", icon: "Plus", tone: "sky" },
         ],
         shortcuts: [
-          { href: "/hr/org-chart", label: "Org chart" },
-          { href: "/hr/calendar", label: "Time-off calendar" },
-          ...COMMON_TOURS,
+          { href: "/hr/org-chart", label: isAr ? "الهيكل التنظيمي" : "Org chart" },
+          { href: "/hr/calendar", label: isAr ? "تقويم الإجازات" : "Time-off calendar" },
+          ...tours,
         ],
       };
     }
     if (hrRoles.includes("accountant")) {
       return {
-        pillLabel: "Accountant",
+        pillLabel: isAr ? "المحاسب" : "Accountant",
         pillTone: "emerald",
         actions: [
-          { href: "/hr/accountant", label: "Financial dashboard", description: "Payroll + commission liability", icon: "Wallet", tone: "indigo" },
-          { href: "/hr/payroll/monthly", label: "Run payroll", description: "This month's salaries", icon: "Wallet", tone: "emerald" },
-          { href: "/hr/bonuses/all", label: "Bonuses", description: "Approve / log", icon: "Plus", tone: "amber" },
-          { href: "/hr/reports/excel", label: "Reports", description: "Excel exports", icon: "FileText", tone: "violet" },
+          { href: "/hr/accountant", label: isAr ? "اللوحة المالية" : "Financial dashboard", description: isAr ? "الرواتب + التزام العمولات" : "Payroll + commission liability", icon: "Wallet", tone: "indigo" },
+          { href: "/hr/payroll/monthly", label: isAr ? "تشغيل الرواتب" : "Run payroll", description: isAr ? "رواتب هذا الشهر" : "This month's salaries", icon: "Wallet", tone: "emerald" },
+          { href: "/hr/bonuses/all", label: isAr ? "المكافآت" : "Bonuses", description: isAr ? "اعتماد / تسجيل" : "Approve / log", icon: "Plus", tone: "amber" },
+          { href: "/hr/reports/excel", label: isAr ? "التقارير" : "Reports", description: isAr ? "تصدير Excel" : "Excel exports", icon: "FileText", tone: "violet" },
         ],
-        shortcuts: COMMON_TOURS,
+        shortcuts: tours,
       };
     }
     if (hrRoles.includes("team_lead")) {
       return {
-        pillLabel: "Team lead",
+        pillLabel: isAr ? "قائد الفريق" : "Team lead",
         pillTone: "violet",
         actions: [
-          { href: "/hr/team", label: "My team", description: "Reports + attendance roll-up", icon: "Users", tone: "indigo" },
-          { href: "/hr/overtime/pending", label: "Approve overtime", description: "Pending requests", icon: "CheckSquare", tone: "emerald" },
-          { href: "/hr/team/attendance", label: "Today's attendance", description: "Who's in", icon: "Calendar", tone: "amber" },
-          { href: "/tasks", label: "My tasks", description: "Things on my plate", icon: "ListTodo", tone: "rose" },
+          { href: "/hr/team", label: isAr ? "فريقي" : "My team", description: isAr ? "التابعون + ملخص الحضور" : "Reports + attendance roll-up", icon: "Users", tone: "indigo" },
+          { href: "/hr/overtime/pending", label: isAr ? "اعتماد الإضافي" : "Approve overtime", description: isAr ? "طلبات قيد الانتظار" : "Pending requests", icon: "CheckSquare", tone: "emerald" },
+          { href: "/hr/team/attendance", label: isAr ? "حضور اليوم" : "Today's attendance", description: isAr ? "من حضر" : "Who's in", icon: "Calendar", tone: "amber" },
+          { href: "/tasks", label: isAr ? "مهامي" : "My tasks", description: isAr ? "المهام لديّ" : "Things on my plate", icon: "ListTodo", tone: "rose" },
         ],
-        shortcuts: COMMON_TOURS,
+        shortcuts: tours,
       };
     }
     return {
-      pillLabel: "Employee",
+      pillLabel: isAr ? "موظف" : "Employee",
       pillTone: "rose",
       actions: [
-        { href: "/hr/employee/home", label: "My home", description: "Today + recent payslips", icon: "LayoutDashboard", tone: "indigo" },
-        { href: "/hr/employee/attendance", label: "Check in / out", description: "Today's status", icon: "Calendar", tone: "emerald" },
-        { href: "/hr/employee/overtime", label: "Request overtime", description: "Submit a request", icon: "Plus", tone: "amber" },
-        { href: "/hr/employee/tasks", label: "My tasks", description: "Start · end · attach", icon: "ListTodo", tone: "rose" },
-        { href: "/hr/employee/salary", label: "My salary", description: "Slips · history", icon: "Wallet", tone: "violet" },
-        { href: "/hr/employee/profile", label: "Profile", description: "My personal info", icon: "Users", tone: "sky" },
+        { href: "/hr/employee/home", label: isAr ? "صفحتي" : "My home", description: isAr ? "اليوم + أحدث الرواتب" : "Today + recent payslips", icon: "LayoutDashboard", tone: "indigo" },
+        { href: "/hr/employee/attendance", label: isAr ? "تسجيل دخول / خروج" : "Check in / out", description: isAr ? "حالة اليوم" : "Today's status", icon: "Calendar", tone: "emerald" },
+        { href: "/hr/employee/overtime", label: isAr ? "طلب إضافي" : "Request overtime", description: isAr ? "تقديم طلب" : "Submit a request", icon: "Plus", tone: "amber" },
+        { href: "/hr/employee/tasks", label: isAr ? "مهامي" : "My tasks", description: isAr ? "ابدأ · أنهِ · أرفق" : "Start · end · attach", icon: "ListTodo", tone: "rose" },
+        { href: "/hr/employee/salary", label: isAr ? "راتبي" : "My salary", description: isAr ? "الكشوف · السجل" : "Slips · history", icon: "Wallet", tone: "violet" },
+        { href: "/hr/employee/profile", label: isAr ? "الملف الشخصي" : "Profile", description: isAr ? "بياناتي الشخصية" : "My personal info", icon: "Users", tone: "sky" },
       ],
-      shortcuts: COMMON_TOURS,
+      shortcuts: tours,
     };
   }
 
   return {
-    pillLabel: "Welcome",
+    pillLabel: isAr ? "مرحبًا" : "Welcome",
     pillTone: "indigo",
     actions: [
-      { href: "/tasks", label: "My tasks", description: "Everything assigned to me", icon: "ListTodo", tone: "indigo" },
-      { href: "/today", label: "Today", description: "Approvals · calls · meetings", icon: "ClipboardList", tone: "rose" },
+      { href: "/tasks", label: isAr ? "مهامي" : "My tasks", description: isAr ? "كل ما هو مسند إليّ" : "Everything assigned to me", icon: "ListTodo", tone: "indigo" },
+      { href: "/today", label: isAr ? "اليوم" : "Today", description: isAr ? "اعتمادات · مكالمات · اجتماعات" : "Approvals · calls · meetings", icon: "ClipboardList", tone: "rose" },
     ],
     shortcuts: [],
   };
@@ -219,6 +225,8 @@ export default async function RootPage() {
   const isPlatformAdmin =
     hrRoles.includes("super_admin") ||
     (modules.includes("partners") && !partnerId);
+  const { locale } = await getServerT();
+  const isAr = locale === "ar";
 
   const persona = personaFor({
     modules,
@@ -226,6 +234,7 @@ export default async function RootPage() {
     crmRole,
     partnerId,
     isPlatformAdmin,
+    isAr,
   });
 
   const firstName = firstNameOf(session.user.name, session.user.email);

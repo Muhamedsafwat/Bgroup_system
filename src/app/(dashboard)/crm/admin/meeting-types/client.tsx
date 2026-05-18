@@ -23,6 +23,7 @@ import {
 } from "@/components/ui/table";
 import { Trash2, RotateCcw, Pencil, X, Check, Plus } from "lucide-react";
 import { toast } from "sonner";
+import { useLocale } from "@/lib/i18n";
 import {
   createMeetingTypeConfig,
   deleteMeetingTypeConfig,
@@ -39,6 +40,8 @@ type Row = {
 };
 
 export function MeetingTypesClient({ initial }: { initial: Row[] }) {
+  const { locale } = useLocale();
+  const isAr = locale === "ar";
   const [rows, setRows] = useState<Row[]>(initial);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editLabel, setEditLabel] = useState("");
@@ -134,16 +137,17 @@ export function MeetingTypesClient({ initial }: { initial: Row[] }) {
     <div className="space-y-4">
       <div className="flex items-start justify-between gap-3">
         <div>
-          <h1 className="text-2xl font-bold">Meeting types</h1>
+          <h1 className="text-2xl font-bold">{isAr ? "أنواع الاجتماعات" : "Meeting types"}</h1>
           <p className="text-sm text-muted-foreground mt-1">
-            The dropdown reps pick from when booking a meeting. Rename labels,
-            reorder them, hide types you don&apos;t run, or add new ones. Codes
-            must be UPPER_SNAKE (e.g. <span className="font-mono">SITE_VISIT</span>).
+            {isAr
+              ? "القائمة التي يختار منها المندوبون عند حجز اجتماع. غيّر التسميات، أعد ترتيبها، أخفِ ما لا يُستخدم، أو أضف أنواعًا جديدة. الكود يجب أن يكون UPPER_SNAKE (مثل "
+              : "The dropdown reps pick from when booking a meeting. Rename labels, reorder them, hide types you don’t run, or add new ones. Codes must be UPPER_SNAKE (e.g. "}
+            <span className="font-mono">SITE_VISIT</span>{isAr ? ")." : ")."}
           </p>
         </div>
         <Button onClick={() => setAddOpen(true)} disabled={saving}>
           <Plus className="me-1 h-4 w-4" />
-          Add type
+          {isAr ? "إضافة نوع" : "Add type"}
         </Button>
       </div>
 
@@ -152,12 +156,12 @@ export function MeetingTypesClient({ initial }: { initial: Row[] }) {
           <Table>
             <TableHeader>
               <TableRow>
-                <TableHead className="w-16">Sort</TableHead>
-                <TableHead className="w-32">Code</TableHead>
-                <TableHead>Label (EN)</TableHead>
-                <TableHead>Label (AR)</TableHead>
-                <TableHead>Status</TableHead>
-                <TableHead className="w-32">Actions</TableHead>
+                <TableHead className="w-16">{isAr ? "ترتيب" : "Sort"}</TableHead>
+                <TableHead className="w-32">{isAr ? "الكود" : "Code"}</TableHead>
+                <TableHead>{isAr ? "التسمية (EN)" : "Label (EN)"}</TableHead>
+                <TableHead>{isAr ? "التسمية (AR)" : "Label (AR)"}</TableHead>
+                <TableHead>{isAr ? "الحالة" : "Status"}</TableHead>
+                <TableHead className="w-32">{isAr ? "إجراءات" : "Actions"}</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
@@ -192,9 +196,9 @@ export function MeetingTypesClient({ initial }: { initial: Row[] }) {
                   </TableCell>
                   <TableCell>
                     {r.active ? (
-                      <Badge variant="default" className="bg-emerald-600">Active</Badge>
+                      <Badge variant="default" className="bg-emerald-600">{isAr ? "نشط" : "Active"}</Badge>
                     ) : (
-                      <Badge variant="secondary">Hidden</Badge>
+                      <Badge variant="secondary">{isAr ? "مخفي" : "Hidden"}</Badge>
                     )}
                   </TableCell>
                   <TableCell>

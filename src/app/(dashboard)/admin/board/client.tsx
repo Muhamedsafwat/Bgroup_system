@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { TrendingUp, Users, Handshake, ListChecks, Loader2 } from "lucide-react";
+import { useLocale } from "@/lib/i18n";
 
 type Period = "daily" | "weekly" | "monthly";
 
@@ -68,6 +69,8 @@ function formatCurrency(n: number, currency: string): string {
 }
 
 export function BoardClient() {
+  const { locale } = useLocale();
+  const isAr = locale === "ar";
   const [period, setPeriod] = useState<Period>("weekly");
   const [data, setData] = useState<BoardData | null>(null);
   const [loading, setLoading] = useState(true);
@@ -84,9 +87,9 @@ export function BoardClient() {
     <div className="space-y-4">
       <Tabs value={period} onValueChange={(v) => setPeriod(v as Period)}>
         <TabsList>
-          <TabsTrigger value="daily">Daily</TabsTrigger>
-          <TabsTrigger value="weekly">Weekly</TabsTrigger>
-          <TabsTrigger value="monthly">Monthly</TabsTrigger>
+          <TabsTrigger value="daily">{isAr ? "يومي" : "Daily"}</TabsTrigger>
+          <TabsTrigger value="weekly">{isAr ? "أسبوعي" : "Weekly"}</TabsTrigger>
+          <TabsTrigger value="monthly">{isAr ? "شهري" : "Monthly"}</TabsTrigger>
         </TabsList>
       </Tabs>
 
@@ -98,7 +101,7 @@ export function BoardClient() {
       {loading || !data ? (
         <div className="flex items-center justify-center py-20 text-muted-foreground">
           <Loader2 className="h-4 w-4 me-2 animate-spin" />
-          Loading...
+          {isAr ? "جاري التحميل..." : "Loading..."}
         </div>
       ) : (
         <>

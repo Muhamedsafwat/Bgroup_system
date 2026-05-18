@@ -12,8 +12,11 @@ import { EmptyState } from '@/components/partners/ui/empty-state';
 import { TableSkeleton } from '@/components/partners/ui/skeleton';
 import { Textarea } from '@/components/partners/ui/input';
 import { Receipt, Check, X } from 'lucide-react';
+import { useLocale } from '@/lib/i18n';
 
 export default function AdminInvoicesPage() {
+  const { locale } = useLocale();
+  const isAr = locale === 'ar';
   const [invoices, setInvoices] = useState<Invoice[]>([]);
   const [pagination, setPagination] = useState<PaginationMeta | null>(null);
   const [page, setPage] = useState(1);
@@ -85,7 +88,7 @@ export default function AdminInvoicesPage() {
   return (
     <div className="space-y-6">
       <div>
-        <h1 className="text-2xl font-bold text-foreground">Invoices</h1>
+        <h1 className="text-2xl font-bold text-foreground">{isAr ? "الفواتير" : "Invoices"}</h1>
         <p className="mt-1 text-sm text-muted-foreground">Review and manage partner invoice requests</p>
       </div>
 

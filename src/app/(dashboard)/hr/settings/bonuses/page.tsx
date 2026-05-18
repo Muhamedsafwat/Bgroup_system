@@ -6,6 +6,7 @@ import React, { useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { Plus, Pencil, Trash2, ChevronRight } from 'lucide-react'
 import { PageHeader } from '@/components/hr/shared/PageHeader'
+import { useLocale } from '@/lib/i18n'
 import { ConfirmDialog } from '@/components/hr/shared/ConfirmDialog'
 import { Button } from '@/components/hr/ui/button'
 import {
@@ -79,6 +80,8 @@ const EMPTY_RULE: RuleFormData = {
 }
 
 export default function BonusesSettingsPage() {
+  const { locale } = useLocale()
+  const isAr = locale === 'ar'
   const { toast } = useToast()
   const queryClient = useQueryClient()
 
@@ -170,7 +173,7 @@ export default function BonusesSettingsPage() {
       <PageHeader
         title="Bonus Rules"
         description="Configure bonus categories and calculation rules"
-        breadcrumbs={[{ label: 'Settings', href: '/settings' }, { label: 'Bonuses' }]}
+        breadcrumbs={[{ label: isAr ? 'الإعدادات' : 'Settings', href: '/settings' }, { label: isAr ? 'المكافآت' : 'Bonuses' }]}
       />
 
       <div className="flex gap-6">

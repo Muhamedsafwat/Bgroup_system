@@ -73,6 +73,11 @@ export function StageConfigClient({ configs: initial }: { configs: StageConfigIt
   const [newProb, setNewProb] = useState("50");
   const [newSla, setNewSla] = useState("");
   const [newLabelEn, setNewLabelEn] = useState("");
+  // Arabic label so admins can rename the stage in both languages at create
+  // time — previously the form silently sent `customLabelAr: null` which left
+  // Arabic users staring at the English fallback even after the admin had
+  // edited the EN label.
+  const [newLabelAr, setNewLabelAr] = useState("");
 
   const stageLabels = t.stages as Record<string, string>;
 
@@ -91,12 +96,13 @@ export function StageConfigClient({ configs: initial }: { configs: StageConfigIt
         slaHours: newSla ? Number(newSla) : null,
         displayOrder: configs.length,
         customLabelEn: newLabelEn || null,
-        customLabelAr: null,
+        customLabelAr: newLabelAr || null,
       });
       setConfigs([...configs, created as StageConfigItem]);
       setAdding(false);
       setNewStage("");
       setNewLabelEn("");
+      setNewLabelAr("");
       setNewProb("50");
       setNewSla("");
     } catch (e) {
@@ -159,7 +165,7 @@ export function StageConfigClient({ configs: initial }: { configs: StageConfigIt
         <h1 className="text-2xl font-bold">{t.nav.stageConfig}</h1>
         {!adding && availableStages.length > 0 && (
           <Button size="sm" onClick={() => setAdding(true)}>
-            <Plus className="h-4 w-4 me-1" /> Add stage
+            <Plus className="h-4 w-4 me-1" /> {locale === "ar" ? "إضافة مرحلة" : "Add stage"}
           </Button>
         )}
       </div>
@@ -167,12 +173,14 @@ export function StageConfigClient({ configs: initial }: { configs: StageConfigIt
       {adding && (
         <Card>
           <CardContent className="p-4 space-y-3">
-            <p className="text-sm font-semibold">Add stage to pipeline</p>
-            <div className="grid grid-cols-1 sm:grid-cols-5 gap-2 items-end">
+            <p className="text-sm font-semibold">
+              {locale === "ar" ? "إضافة مرحلة إلى البايبلاين" : "Add stage to pipeline"}
+            </p>
+            <div className="grid grid-cols-1 sm:grid-cols-6 gap-2 items-end">
               <div>
-                <label className="text-xs text-muted-foreground">Stage</label>
+                <label className="text-xs text-muted-foreground">{locale === "ar" ? "المرحلة" : "Stage"}</label>
                 <Select value={newStage} onValueChange={(v) => setNewStage(v ?? "")}>
-                  <SelectTrigger><SelectValue placeholder="Pick a stage" /></SelectTrigger>
+                  <SelectTrigger><SelectValue placeholder={locale === "ar" ? "اختر مرحلة" : "Pick a stage"} /></SelectTrigger>
                   <SelectContent>
                     {availableStages.map((s) => (
                       <SelectItem key={s} value={s}>{stageLabels[s] ?? s}</SelectItem>
@@ -181,20 +189,28 @@ export function StageConfigClient({ configs: initial }: { configs: StageConfigIt
                 </Select>
               </div>
               <div>
-                <label className="text-xs text-muted-foreground">Custom label (optional)</label>
+                <label className="text-xs text-muted-foreground">
+                  {locale === "ar" ? "الاسم بالإنجليزية (اختياري)" : "Label EN (optional)"}
+                </label>
                 <Input value={newLabelEn} onChange={(e) => setNewLabelEn(e.target.value)} placeholder="e.g. Discovery call" />
               </div>
               <div>
-                <label className="text-xs text-muted-foreground">Probability %</label>
+                <label className="text-xs text-muted-foreground">
+                  {locale === "ar" ? "الاسم بالعربية (اختياري)" : "Label AR (optional)"}
+                </label>
+                <Input value={newLabelAr} onChange={(e) => setNewLabelAr(e.target.value)} placeholder={locale === "ar" ? "مثال: اجتماع استكشافي" : "مثال: اجتماع استكشافي"} dir="rtl" />
+              </div>
+              <div>
+                <label className="text-xs text-muted-foreground">{locale === "ar" ? "نسبة الاحتمال %" : "Probability %"}</label>
                 <Input type="number" min={0} max={100} value={newProb} onChange={(e) => setNewProb(e.target.value)} />
               </div>
               <div>
-                <label className="text-xs text-muted-foreground">SLA hours</label>
+                <label className="text-xs text-muted-foreground">{locale === "ar" ? "ساعات الـ SLA" : "SLA hours"}</label>
                 <Input type="number" min={0} value={newSla} onChange={(e) => setNewSla(e.target.value)} placeholder="—" />
               </div>
               <div className="flex gap-2">
-                <Button size="sm" onClick={handleAdd} disabled={!newStage || saving}>Add</Button>
-                <Button size="sm" variant="ghost" onClick={() => setAdding(false)}>Cancel</Button>
+                <Button size="sm" onClick={handleAdd} disabled={!newStage || saving}>{locale === "ar" ? "إضافة" : "Add"}</Button>
+                <Button size="sm" variant="ghost" onClick={() => setAdding(false)}>{locale === "ar" ? "إلغاء" : "Cancel"}</Button>
               </div>
             </div>
           </CardContent>
