@@ -26,6 +26,7 @@ import { Skeleton } from '@/components/hr/ui/skeleton'
 import { useAuth } from '@/contexts/hr/AuthContext'
 import api from '@/lib/hr/api'
 import { formatCurrency, formatDate } from '@/lib/hr/utils'
+import { useLocale } from '@/lib/i18n'
 
 type CommissionBucket = { count: number; wonValueEGP: number; commissionEGP: number }
 interface CommissionSummary {
@@ -129,6 +130,8 @@ function StatBox({
 }
 
 export default function EmployeeHomePage() {
+  const { locale } = useLocale()
+  const isAr = locale === "ar"
   const { user } = useAuth()
   const { data: session } = useSession()
   const router = useRouter()
@@ -220,7 +223,9 @@ export default function EmployeeHomePage() {
           the same calm greeting no matter which module they enter. */}
       <WelcomeBanner
         firstName={firstNameOf(user?.full_name, user?.email)}
-        rolePill={isSalesRep ? `Sales rep${crmRole ? ` · ${crmRole}` : ''}` : 'Employee'}
+        rolePill={isAr
+          ? (isSalesRep ? `مندوب مبيعات${crmRole ? ` · ${crmRole}` : ''}` : 'موظف')
+          : (isSalesRep ? `Sales rep${crmRole ? ` · ${crmRole}` : ''}` : 'Employee')}
         pillTone={isSalesRep ? 'sky' : 'rose'}
         email={user?.email ?? undefined}
         subtitle={formatDate(now.toISOString())}
@@ -445,10 +450,10 @@ export default function EmployeeHomePage() {
                 </div>
                 <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 pt-2 border-t border-border/60">
                   {[
-                    { label: 'Base', value: latestSlip.base_salary, color: 'text-foreground' },
-                    { label: 'Overtime', value: latestSlip.overtime_amount, color: 'text-blue-600' },
-                    { label: 'Bonuses', value: latestSlip.total_bonuses, color: 'text-emerald-600' },
-                    { label: 'Deductions', value: latestSlip.total_deductions, color: 'text-red-600' },
+                    { label: isAr ? 'الأساسي' : 'Base', value: latestSlip.base_salary, color: 'text-foreground' },
+                    { label: isAr ? 'الإضافي' : 'Overtime', value: latestSlip.overtime_amount, color: 'text-blue-600' },
+                    { label: isAr ? 'المكافآت' : 'Bonuses', value: latestSlip.total_bonuses, color: 'text-emerald-600' },
+                    { label: isAr ? 'الخصومات' : 'Deductions', value: latestSlip.total_deductions, color: 'text-red-600' },
                   ].map((item) => (
                     <div key={item.label}>
                       <p className="text-[10px] text-muted-foreground uppercase tracking-wide">{item.label}</p>
@@ -460,7 +465,7 @@ export default function EmployeeHomePage() {
             ) : (
               <div className="flex flex-col items-center justify-center py-10 text-muted-foreground">
                 <DollarSign className="h-8 w-8 mb-2 opacity-40" />
-                <p className="text-sm">No salary slips yet</p>
+                <p className="text-sm">{isAr ? "لا توجد كشوف رواتب بعد" : "No salary slips yet"}</p>
               </div>
             )}
           </CardContent>
@@ -474,10 +479,10 @@ export default function EmployeeHomePage() {
               <CardTitle className="text-sm flex items-center justify-between">
                 <span className="flex items-center gap-2">
                   <Gift className="h-4 w-4 text-emerald-500" />
-                  Bonuses
+                  {isAr ? "المكافآت" : "Bonuses"}
                 </span>
                 <Button variant="ghost" size="sm" className="text-xs h-6 px-2" onClick={() => router.push('/employee/incidents')}>
-                  View
+                  {isAr ? "عرض" : "View"}
                 </Button>
               </CardTitle>
             </CardHeader>
@@ -485,17 +490,17 @@ export default function EmployeeHomePage() {
               {bonusesQuery.isLoading ? <Skeleton className="h-16 w-full rounded" /> : (
                 <>
                   <div className="flex justify-between items-center">
-                    <span className="text-xs text-muted-foreground">Total applied</span>
+                    <span className="text-xs text-muted-foreground">{isAr ? "إجمالي المطبّق" : "Total applied"}</span>
                     <span className="text-sm font-bold text-emerald-600">+{formatCurrency(totalBonuses)}</span>
                   </div>
                   {pendingBonuses > 0 && (
                     <div className="flex justify-between items-center">
-                      <span className="text-xs text-muted-foreground">Pending review</span>
+                      <span className="text-xs text-muted-foreground">{isAr ? "قيد المراجعة" : "Pending review"}</span>
                       <Badge variant="warning" className="text-[10px]">{pendingBonuses}</Badge>
                     </div>
                   )}
                   {bonuses.length === 0 && (
-                    <p className="text-xs text-muted-foreground text-center py-2">No bonuses recorded</p>
+                    <p className="text-xs text-muted-foreground text-center py-2">{isAr ? "لا توجد مكافآت مسجّلة" : "No bonuses recorded"}</p>
                   )}
                 </>
               )}
@@ -508,10 +513,10 @@ export default function EmployeeHomePage() {
               <CardTitle className="text-sm flex items-center justify-between">
                 <span className="flex items-center gap-2">
                   <AlertTriangle className="h-4 w-4 text-red-500" />
-                  Incidents
+                  {isAr ? "المخالفات" : "Incidents"}
                 </span>
                 <Button variant="ghost" size="sm" className="text-xs h-6 px-2" onClick={() => router.push('/employee/incidents')}>
-                  View
+                  {isAr ? "عرض" : "View"}
                 </Button>
               </CardTitle>
             </CardHeader>
@@ -519,19 +524,19 @@ export default function EmployeeHomePage() {
               {incidentsQuery.isLoading ? <Skeleton className="h-16 w-full rounded" /> : (
                 <>
                   <div className="flex justify-between items-center">
-                    <span className="text-xs text-muted-foreground">Total deductions</span>
+                    <span className="text-xs text-muted-foreground">{isAr ? "إجمالي الخصومات" : "Total deductions"}</span>
                     <span className="text-sm font-bold text-red-600">-{formatCurrency(totalDeductions)}</span>
                   </div>
                   {pendingIncidents > 0 && (
                     <div className="flex justify-between items-center">
-                      <span className="text-xs text-muted-foreground">Pending review</span>
+                      <span className="text-xs text-muted-foreground">{isAr ? "قيد المراجعة" : "Pending review"}</span>
                       <Badge variant="warning" className="text-[10px]">{pendingIncidents}</Badge>
                     </div>
                   )}
                   {incidents.length === 0 && (
                     <div className="flex items-center gap-2 text-xs text-emerald-600 py-2 justify-center">
                       <CheckCircle2 className="h-3.5 w-3.5" />
-                      Clean record
+                      {isAr ? "سجل نظيف" : "Clean record"}
                     </div>
                   )}
                 </>
@@ -543,15 +548,15 @@ export default function EmployeeHomePage() {
 
       {/* ── Quick Links ── */}
       <div>
-        <h2 className="text-sm font-semibold text-muted-foreground uppercase tracking-wide mb-3">Quick Access</h2>
+        <h2 className="text-sm font-semibold text-muted-foreground uppercase tracking-wide mb-3">{isAr ? "وصول سريع" : "Quick Access"}</h2>
         <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3">
           {[
-            { label: 'Attendance', icon: Clock, href: '/employee/attendance', color: 'text-blue-600 bg-blue-50' },
-            { label: 'Overtime', icon: TrendingUp, href: '/employee/overtime', color: 'text-amber-600 bg-amber-50' },
-            { label: 'Salary Slips', icon: DollarSign, href: '/employee/salary', color: 'text-emerald-600 bg-emerald-50' },
-            { label: 'Incidents', icon: AlertTriangle, href: '/employee/incidents', color: 'text-red-600 bg-red-50' },
-            { label: 'Calendar', icon: CalendarDays, href: '/employee/attendance', color: 'text-purple-600 bg-purple-50' },
-            { label: 'Documents', icon: UserX, href: '/employee/documents', color: 'text-muted-foreground bg-muted/50' },
+            { label: isAr ? 'الحضور' : 'Attendance', icon: Clock, href: '/employee/attendance', color: 'text-blue-600 bg-blue-50' },
+            { label: isAr ? 'الإضافي' : 'Overtime', icon: TrendingUp, href: '/employee/overtime', color: 'text-amber-600 bg-amber-50' },
+            { label: isAr ? 'كشوف الرواتب' : 'Salary Slips', icon: DollarSign, href: '/employee/salary', color: 'text-emerald-600 bg-emerald-50' },
+            { label: isAr ? 'المخالفات' : 'Incidents', icon: AlertTriangle, href: '/employee/incidents', color: 'text-red-600 bg-red-50' },
+            { label: isAr ? 'التقويم' : 'Calendar', icon: CalendarDays, href: '/employee/attendance', color: 'text-purple-600 bg-purple-50' },
+            { label: isAr ? 'المستندات' : 'Documents', icon: UserX, href: '/employee/documents', color: 'text-muted-foreground bg-muted/50' },
           ].map((item) => {
             const Icon = item.icon
             return (

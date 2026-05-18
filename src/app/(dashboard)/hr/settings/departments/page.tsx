@@ -6,6 +6,7 @@ import React, { useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { Plus, Pencil, Trash2 } from 'lucide-react'
 import { PageHeader } from '@/components/hr/shared/PageHeader'
+import { useLocale } from '@/lib/i18n'
 import { ConfirmDialog } from '@/components/hr/shared/ConfirmDialog'
 import { Button } from '@/components/hr/ui/button'
 import {
@@ -37,6 +38,8 @@ const EMPTY_FORM: DeptFormData = {
 }
 
 export default function DepartmentsSettingsPage() {
+  const { locale } = useLocale()
+  const isAr = locale === 'ar'
   const { toast } = useToast()
   const queryClient = useQueryClient()
 
@@ -136,9 +139,9 @@ export default function DepartmentsSettingsPage() {
   return (
     <div className="space-y-6">
       <PageHeader
-        title="Departments"
+        title={isAr ? 'الأقسام' : 'Departments'}
         description="Manage organizational departments"
-        breadcrumbs={[{ label: 'Settings', href: '/settings' }, { label: 'Departments' }]}
+        breadcrumbs={[{ label: isAr ? 'الإعدادات' : 'Settings', href: '/settings' }, { label: isAr ? 'الأقسام' : 'Departments' }]}
         actions={
           <Button size="sm" className="gap-1.5 bg-emerald-600 hover:bg-emerald-700 text-white" onClick={openAdd}>
             <Plus className="h-4 w-4" />

@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { redirect } from "next/navigation";
 import { auth } from "@/lib/auth";
+import { getServerT } from "@/lib/i18n/server";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import {
   Users,
@@ -92,23 +93,59 @@ export default async function AdminSettingsPage() {
     crmRole === "ADMIN" ||
     (!!session.user.modules?.includes("partners") && !session.user.partnerId);
   if (!canEnter) redirect("/");
+  const { locale } = await getServerT();
+  const isAr = locale === "ar";
+
+  // Tile-label translations live inline since the module-scope GROUPS array
+  // wraps Lucide icon refs that can't be re-declared inside a server function
+  // without cost. The key is the English label; the map gives the AR version.
+  // Anything not in the map falls through to the English label, which is what
+  // an EN-locale user sees anyway.
+  const arLabels: Record<string, string> = {
+    "Entities": "الكيانات",
+    "FX rates": "أسعار العملات",
+    "Pipeline stages": "مراحل الـ Pipeline",
+    "Loss reasons": "أسباب الخسارة",
+    "Lead sources": "مصادر العملاء",
+    "Customer needs": "احتياجات العملاء",
+    "Meeting types": "أنواع الاجتماعات",
+    "Products & services": "المنتجات والخدمات",
+    "Pipeline health": "صحة الـ Pipeline",
+    "Companies": "الشركات",
+    "Departments": "الأقسام",
+    "Violation rules": "قواعد المخالفات",
+    "Bonus rules": "قواعد المكافآت",
+    "Overtime policy": "سياسة الساعات الإضافية",
+    "Leave policy": "سياسة الإجازات",
+    "App settings": "إعدادات التطبيق",
+    "Partners": "الشركاء",
+    "Partner services": "خدمات الشركاء",
+    "Audit logs": "سجلات التدقيق",
+    "All users (unified)": "كل المستخدمين (موحّد)",
+    "Add new user": "إضافة مستخدم",
+  };
+  const groupTitle = (en: string) => isAr ? ({ CRM: "CRM", HR: "الموارد البشرية", Partners: "الشركاء", Users: "المستخدمون" })[en] ?? en : en;
+  const tile = (en: string) => isAr ? (arLabels[en] ?? en) : en;
+
   return (
     <div className="space-y-6">
       <div>
-        <h1 className="text-2xl font-bold text-foreground">All settings</h1>
+        <h1 className="text-2xl font-bold text-foreground">{isAr ? "كل الإعدادات" : "All settings"}</h1>
         <p className="text-sm text-muted-foreground mt-1">
-          Every admin-configurable surface across CRM, HR, and Partners — consolidated. Per-module settings tabs were removed; this is the single home for taxonomy, users, and policy.
+          {isAr
+            ? "كل الأسطح التي يضبطها الأدمن عبر الـ CRM والموارد البشرية والشركاء — مجمّعة. تبويبات الإعدادات لكل وحدة أُزيلت؛ هذه هي النقطة الموحّدة للتصنيفات والمستخدمين والسياسات."
+            : "Every admin-configurable surface across CRM, HR, and Partners — consolidated. Per-module settings tabs were removed; this is the single home for taxonomy, users, and policy."}
         </p>
       </div>
       {GROUPS.map((g) => (
         <section key={g.title} className="space-y-3">
-          <h2 className="text-sm font-semibold text-muted-foreground uppercase tracking-wide">{g.title}</h2>
+          <h2 className="text-sm font-semibold text-muted-foreground uppercase tracking-wide">{groupTitle(g.title)}</h2>
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
             {g.items.map((s) => (
               <Link key={s.href} href={s.href} className="block group">
                 <Card className="hover:-translate-y-0.5 transition-transform h-full">
                   <CardHeader className="flex flex-row items-start justify-between pb-2">
-                    <CardTitle className="text-base">{s.label}</CardTitle>
+                    <CardTitle className="text-base">{tile(s.label)}</CardTitle>
                     <div className={`h-10 w-10 rounded-xl ${s.tone} flex items-center justify-center shrink-0`}>
                       <s.icon className="h-5 w-5" />
                     </div>
@@ -116,7 +153,7 @@ export default async function AdminSettingsPage() {
                   <CardContent>
                     <p className="text-sm text-muted-foreground">{s.description}</p>
                     <span className="text-xs text-primary mt-2 inline-flex items-center gap-1 group-hover:underline">
-                      Open <ArrowRight className="h-3 w-3" />
+                      {isAr ? "فتح" : "Open"} <ArrowRight className="h-3 w-3" />
                     </span>
                   </CardContent>
                 </Card>

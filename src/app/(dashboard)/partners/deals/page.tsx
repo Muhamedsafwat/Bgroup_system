@@ -12,10 +12,13 @@ import { Card } from '@/components/partners/ui/card';
 import { EmptyState } from '@/components/partners/ui/empty-state';
 import { TableSkeleton } from '@/components/partners/ui/skeleton';
 import { Plus, HandCoins, List, Kanban as KanbanIcon } from 'lucide-react';
+import { useLocale } from '@/lib/i18n';
 import Link from 'next/link';
 import { DealKanban } from '@/components/partners/deals/DealKanban';
 
 export default function DealsPage() {
+  const { locale } = useLocale();
+  const isAr = locale === 'ar';
   const [deals, setDeals] = useState<Deal[]>([]);
   const [pagination, setPagination] = useState<PaginationMeta | null>(null);
   const [page, setPage] = useState(1);
@@ -96,7 +99,7 @@ export default function DealsPage() {
     <div className="space-y-6">
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-2xl font-bold text-foreground">Deals</h1>
+          <h1 className="text-2xl font-bold text-foreground">{isAr ? "الصفقات" : "Deals"}</h1>
           <p className="mt-1 text-sm text-muted-foreground">Track and manage your deals pipeline</p>
         </div>
         <div className="flex items-center gap-2">

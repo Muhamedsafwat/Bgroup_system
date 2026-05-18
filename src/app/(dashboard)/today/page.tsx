@@ -2,6 +2,7 @@ import Link from "next/link";
 import { redirect } from "next/navigation";
 import { auth } from "@/lib/auth";
 import { getTodayData } from "@/lib/today/aggregator";
+import { getServerT } from "@/lib/i18n/server";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { EmptyState } from "@/components/shared/EmptyState";
 import {
@@ -22,9 +23,12 @@ export default async function TodayPage() {
   if (!session?.user) redirect("/login");
 
   const data = await getTodayData(session);
+  const { t, locale } = await getServerT();
 
   const today = new Date();
-  const formattedDate = today.toLocaleDateString(undefined, {
+  // Format the date in the active locale so Arabic users see Arabic months
+  // and weekday names instead of the browser's default English.
+  const formattedDate = today.toLocaleDateString(locale === "ar" ? "ar-EG" : "en-US", {
     weekday: "long",
     year: "numeric",
     month: "long",
@@ -34,7 +38,7 @@ export default async function TodayPage() {
   return (
     <div className="space-y-6">
       <div>
-        <h1 className="text-2xl font-bold text-foreground">Today</h1>
+        <h1 className="text-2xl font-bold text-foreground">{t.pages.today}</h1>
         <p className="text-sm text-muted-foreground mt-1">{formattedDate}</p>
       </div>
 
@@ -44,7 +48,7 @@ export default async function TodayPage() {
           <CardHeader className="flex flex-row items-center justify-between pb-3">
             <CardTitle className="flex items-center gap-2 text-base">
               <ListTodo className="h-4 w-4 text-primary" />
-              My tasks
+              {locale === "ar" ? "مهامي" : "My tasks"}
               {data.tasks.total > 0 && (
                 <span className="text-xs font-normal bg-muted px-2 py-0.5 rounded">
                   {data.tasks.total}
@@ -52,7 +56,7 @@ export default async function TodayPage() {
               )}
             </CardTitle>
             <Link href="/tasks" className="text-xs text-muted-foreground hover:text-foreground">
-              View all →
+              {locale === "ar" ? "عرض الكل →" : "View all →"}
             </Link>
           </CardHeader>
           <CardContent className="space-y-2">
@@ -60,8 +64,8 @@ export default async function TodayPage() {
               <EmptyState
                 size="sm"
                 icon={CheckCircle2}
-                title="Inbox zero"
-                description="No tasks waiting on you right now."
+                title={locale === "ar" ? "صندوق وارد فارغ" : "Inbox zero"}
+                description={locale === "ar" ? "لا توجد مهام بانتظارك الآن." : "No tasks waiting on you right now."}
               />
             ) : (
               <ul className="space-y-1">
@@ -110,7 +114,7 @@ export default async function TodayPage() {
           <CardHeader className="flex flex-row items-center justify-between pb-3">
             <CardTitle className="flex items-center gap-2 text-base">
               <CheckCircle2 className="h-4 w-4 text-primary" />
-              Pending approvals
+              {locale === "ar" ? "اعتمادات قيد الانتظار" : "Pending approvals"}
               {data.approvals.total > 0 && (
                 <span className="text-xs font-normal bg-muted px-2 py-0.5 rounded">
                   {data.approvals.total}
@@ -123,8 +127,8 @@ export default async function TodayPage() {
               <EmptyState
                 size="sm"
                 icon={CheckCircle2}
-                title="All caught up"
-                description="No items waiting on you right now."
+                title={locale === "ar" ? "أنجزتَ كل شيء" : "All caught up"}
+                description={locale === "ar" ? "لا توجد طلبات بانتظارك الآن." : "No items waiting on you right now."}
               />
             ) : (
               <ul className="space-y-1">
@@ -157,7 +161,7 @@ export default async function TodayPage() {
           <CardHeader className="pb-3">
             <CardTitle className="flex items-center gap-2 text-base">
               <Phone className="h-4 w-4 text-primary" />
-              Today's calls
+              {locale === "ar" ? "مكالمات اليوم" : "Today's calls"}
               {data.callsToday.total > 0 && (
                 <span className="text-xs font-normal bg-muted px-2 py-0.5 rounded">
                   {data.callsToday.total}
@@ -170,8 +174,8 @@ export default async function TodayPage() {
               <EmptyState
                 size="sm"
                 icon={Inbox}
-                title="No calls scheduled"
-                description="Calls you log today will appear here."
+                title={locale === "ar" ? "لا توجد مكالمات مجدولة" : "No calls scheduled"}
+                description={locale === "ar" ? "ستظهر هنا المكالمات التي تسجلها اليوم." : "Calls you log today will appear here."}
               />
             ) : (
               <ul className="space-y-1">
@@ -206,7 +210,7 @@ export default async function TodayPage() {
           <CardHeader className="pb-3">
             <CardTitle className="flex items-center gap-2 text-base">
               <TrendingUp className="h-4 w-4 text-primary" />
-              Closing this week
+              {locale === "ar" ? "إغلاق هذا الأسبوع" : "Closing this week"}
               {data.closingThisWeek.total > 0 && (
                 <span className="text-xs font-normal bg-muted px-2 py-0.5 rounded">
                   {data.closingThisWeek.total}
@@ -219,8 +223,8 @@ export default async function TodayPage() {
               <EmptyState
                 size="sm"
                 icon={CalendarClock}
-                title="No deals closing soon"
-                description="Opportunities expected to close in the next 7 days will show up here."
+                title={locale === "ar" ? "لا توجد صفقات قريبة الإغلاق" : "No deals closing soon"}
+                description={locale === "ar" ? "ستظهر هنا الفرص المتوقع إغلاقها خلال 7 أيام." : "Opportunities expected to close in the next 7 days will show up here."}
               />
             ) : (
               <ul className="space-y-1">
@@ -254,7 +258,7 @@ export default async function TodayPage() {
           <CardHeader className="pb-3">
             <CardTitle className="flex items-center gap-2 text-base">
               <PartyPopper className="h-4 w-4 text-primary" />
-              Upcoming milestones
+              {locale === "ar" ? "مناسبات قادمة" : "Upcoming milestones"}
               {data.milestones.total > 0 && (
                 <span className="text-xs font-normal bg-muted px-2 py-0.5 rounded">
                   {data.milestones.total}

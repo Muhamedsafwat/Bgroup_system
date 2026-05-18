@@ -12,9 +12,12 @@ import { Card } from '@/components/partners/ui/card';
 import { EmptyState } from '@/components/partners/ui/empty-state';
 import { TableSkeleton } from '@/components/partners/ui/skeleton';
 import { Plus, Users } from 'lucide-react';
+import { useLocale } from '@/lib/i18n';
 import Link from 'next/link';
 
 export default function LeadsPage() {
+  const { locale } = useLocale();
+  const isAr = locale === 'ar';
   const [leads, setLeads] = useState<Lead[]>([]);
   const [pagination, setPagination] = useState<PaginationMeta | null>(null);
   const [page, setPage] = useState(1);
@@ -77,7 +80,7 @@ export default function LeadsPage() {
     <div className="space-y-6">
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-2xl font-bold text-foreground">Leads</h1>
+          <h1 className="text-2xl font-bold text-foreground">{isAr ? "العملاء المحتملون" : "Leads"}</h1>
           <p className="mt-1 text-sm text-muted-foreground">Manage and track your prospects</p>
         </div>
         <Button icon={Plus} onClick={() => setShowModal(true)}>New Lead</Button>

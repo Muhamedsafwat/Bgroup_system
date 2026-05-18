@@ -26,6 +26,7 @@ import {
 import type { ComponentType } from "react";
 import { firstNameOf as _firstNameOf, timeOfDay as _timeOfDay, type Tone } from "@/lib/welcome";
 import { WelcomeControls } from "./WelcomeControls";
+import { useLocale } from "@/lib/i18n";
 
 /**
  * Server components can't serialize function references across the RSC
@@ -114,6 +115,12 @@ const GREETINGS = {
   evening: "Good evening",
 } as const;
 
+const GREETINGS_AR = {
+  morning: "صباح الخير",
+  afternoon: "مساء الخير",
+  evening: "مساء الخير",
+} as const;
+
 /// Re-exports so any existing `import { firstNameOf } from "@/components/shared/WelcomeHero"`
 /// keeps working. New code should import from `@/lib/welcome` directly.
 export const timeOfDay = _timeOfDay;
@@ -139,7 +146,10 @@ export function WelcomeBanner({
   /** Optional second-line copy. Defaults to a friendly "Here's your..." line. */
   subtitle?: string;
 }) {
-  const greet = GREETINGS[timeOfDay()];
+  const { locale } = useLocale();
+  // Pick the localized greeting on the client so flipping the toggle
+  // re-renders without round-tripping to the server.
+  const greet = (locale === "ar" ? GREETINGS_AR : GREETINGS)[timeOfDay()];
   return (
     <div className="flex flex-col sm:flex-row sm:items-end sm:justify-between gap-2 pb-2">
       <div>
@@ -186,7 +196,9 @@ export function WelcomeHero({
   /** Compact = no big brand mark + tighter spacing, for module home pages */
   compact?: boolean;
 }) {
-  const greet = greeting ?? GREETINGS[timeOfDay()];
+  const { locale } = useLocale();
+  const isAr = locale === "ar";
+  const greet = greeting ?? (isAr ? GREETINGS_AR : GREETINGS)[timeOfDay()];
 
   return (
     <div className={compact ? "w-full" : "relative min-h-[60vh] flex items-center justify-center py-6"}>
@@ -217,7 +229,7 @@ export function WelcomeHero({
 
         {/* Subheading */}
         <p className="text-sm text-muted-foreground text-center mb-5">
-          {question ?? "What do you want to do now?"}
+          {question ?? (isAr ? "ماذا تود أن تفعل الآن؟" : "What do you want to do now?")}
         </p>
 
         {/* Quick action tiles */}
@@ -246,7 +258,7 @@ export function WelcomeHero({
         {shortcuts && shortcuts.length > 0 && (
           <div className="flex flex-col items-center gap-3 mb-2">
             <p className="text-xs text-muted-foreground uppercase tracking-widest flex items-center gap-2">
-              <ArrowRight className="h-3 w-3" /> Shortcuts
+              <ArrowRight className="h-3 w-3" /> {isAr ? "اختصارات" : "Shortcuts"}
             </p>
             <div className="flex flex-wrap items-center justify-center gap-2">
               {shortcuts.map((s) => (

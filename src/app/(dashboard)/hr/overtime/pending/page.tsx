@@ -7,6 +7,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { Check, X, Clock, DollarSign, ThumbsUp, ThumbsDown } from 'lucide-react'
 import api from '@/lib/hr/api'
 import { formatDate, formatCurrency, truncate } from '@/lib/hr/utils'
+import { useLocale } from '@/lib/i18n'
 import { PageHeader } from '@/components/hr/shared/PageHeader'
 import { Button } from '@/components/hr/ui/button'
 import { Badge } from '@/components/hr/ui/badge'
@@ -66,6 +67,8 @@ function getStatusVariant(status: string): 'warning' | 'success' | 'danger' | 'd
 }
 
 export default function OvertimePendingPage() {
+  const { locale } = useLocale()
+  const isAr = locale === "ar"
   const qc = useQueryClient()
   const [activeTab, setActiveTab] = useState<'pending' | 'approved' | 'denied'>('pending')
   const [selectedIds, setSelectedIds] = useState<number[]>([])
@@ -150,35 +153,38 @@ export default function OvertimePendingPage() {
   return (
     <div className="space-y-6">
       <PageHeader
-        title="Overtime Approval Queue"
+        title={isAr ? "قائمة اعتماد الساعات الإضافية" : "Overtime Approval Queue"}
         description="Review and approve or deny overtime requests"
-        breadcrumbs={[{ label: 'Overtime' }, { label: 'Approval Queue' }]}
+        breadcrumbs={[
+          { label: isAr ? "الساعات الإضافية" : "Overtime" },
+          { label: isAr ? "قائمة الاعتماد" : "Approval Queue" },
+        ]}
       />
 
       {/* Summary Bar */}
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
         <div className="bg-card border border-border rounded-lg p-4">
           <div className="flex items-center gap-2 text-muted-foreground text-sm mb-1">
-            <Clock className="h-4 w-4" /> Total Pending
+            <Clock className="h-4 w-4" /> {isAr ? "إجمالي قيد الانتظار" : "Total Pending"}
           </div>
           <p className="text-2xl font-bold text-amber-600">{summaryData?.total_pending ?? 0}</p>
         </div>
         <div className="bg-card border border-border rounded-lg p-4">
           <div className="flex items-center gap-2 text-muted-foreground text-sm mb-1">
-            <ThumbsUp className="h-4 w-4" /> Approved This Month
+            <ThumbsUp className="h-4 w-4" /> {isAr ? "معتمد هذا الشهر" : "Approved This Month"}
           </div>
           <p className="text-2xl font-bold text-emerald-600">{summaryData?.approved_this_month_hours?.toFixed(1) ?? 0}h</p>
           <p className="text-xs text-muted-foreground">{formatCurrency(summaryData?.approved_this_month_amount ?? 0)}</p>
         </div>
         <div className="bg-card border border-border rounded-lg p-4">
           <div className="flex items-center gap-2 text-muted-foreground text-sm mb-1">
-            <ThumbsDown className="h-4 w-4" /> Denied
+            <ThumbsDown className="h-4 w-4" /> {isAr ? "مرفوض" : "Denied"}
           </div>
           <p className="text-2xl font-bold text-red-600">{summaryData?.denied_count ?? 0}</p>
         </div>
         <div className="bg-card border border-border rounded-lg p-4">
           <div className="flex items-center gap-2 text-muted-foreground text-sm mb-1">
-            <DollarSign className="h-4 w-4" /> Budget Impact
+            <DollarSign className="h-4 w-4" /> {isAr ? "أثر الميزانية" : "Budget Impact"}
           </div>
           <p className="text-2xl font-bold text-blue-600">{formatCurrency(summaryData?.budget_impact ?? 0)}</p>
         </div>
@@ -186,15 +192,20 @@ export default function OvertimePendingPage() {
 
       <Tabs value={activeTab} onValueChange={v => { setActiveTab(v as typeof activeTab); setSelectedIds([]) }}>
         <TabsList className="border-b border-border bg-transparent p-0 h-auto mb-4">
-          {(['pending', 'approved', 'denied'] as const).map(tab => (
-            <TabsTrigger
-              key={tab}
-              value={tab}
-              className="rounded-none border-b-2 border-transparent data-[state=active]:border-brand-navy data-[state=active]:text-brand-navy pb-3 px-4 capitalize"
-            >
-              {tab}
-            </TabsTrigger>
-          ))}
+          {(['pending', 'approved', 'denied'] as const).map(tab => {
+            const tabLabel = isAr
+              ? { pending: "قيد الانتظار", approved: "معتمد", denied: "مرفوض" }[tab]
+              : { pending: "Pending", approved: "Approved", denied: "Denied" }[tab];
+            return (
+              <TabsTrigger
+                key={tab}
+                value={tab}
+                className="rounded-none border-b-2 border-transparent data-[state=active]:border-brand-navy data-[state=active]:text-brand-navy pb-3 px-4"
+              >
+                {tabLabel}
+              </TabsTrigger>
+            );
+          })}
         </TabsList>
 
         {(['pending', 'approved', 'denied'] as const).map(tab => (
@@ -238,17 +249,17 @@ export default function OvertimePendingPage() {
                         />
                       </TableHead>
                     )}
-                    <TableHead className="font-semibold">Date</TableHead>
-                    <TableHead className="font-semibold">Employee</TableHead>
-                    <TableHead className="font-semibold">Department</TableHead>
-                    <TableHead className="font-semibold">OT Type</TableHead>
-                    <TableHead className="font-semibold">Hours</TableHead>
-                    <TableHead className="font-semibold">Reason</TableHead>
-                    <TableHead className="font-semibold">Evidence</TableHead>
-                    <TableHead className="font-semibold">Amount</TableHead>
-                    <TableHead className="font-semibold">Submitted</TableHead>
-                    {tab === 'pending' && <TableHead className="font-semibold text-center">Actions</TableHead>}
-                    {tab !== 'pending' && <TableHead className="font-semibold">Status</TableHead>}
+                    <TableHead className="font-semibold">{isAr ? "التاريخ" : "Date"}</TableHead>
+                    <TableHead className="font-semibold">{isAr ? "الموظف" : "Employee"}</TableHead>
+                    <TableHead className="font-semibold">{isAr ? "القسم" : "Department"}</TableHead>
+                    <TableHead className="font-semibold">{isAr ? "نوع الإضافي" : "OT Type"}</TableHead>
+                    <TableHead className="font-semibold">{isAr ? "ساعات" : "Hours"}</TableHead>
+                    <TableHead className="font-semibold">{isAr ? "السبب" : "Reason"}</TableHead>
+                    <TableHead className="font-semibold">{isAr ? "إثبات" : "Evidence"}</TableHead>
+                    <TableHead className="font-semibold">{isAr ? "المبلغ" : "Amount"}</TableHead>
+                    <TableHead className="font-semibold">{isAr ? "تاريخ التقديم" : "Submitted"}</TableHead>
+                    {tab === 'pending' && <TableHead className="font-semibold text-center">{isAr ? "إجراءات" : "Actions"}</TableHead>}
+                    {tab !== 'pending' && <TableHead className="font-semibold">{isAr ? "الحالة" : "Status"}</TableHead>}
                   </TableRow>
                 </TableHeader>
                 <TableBody>

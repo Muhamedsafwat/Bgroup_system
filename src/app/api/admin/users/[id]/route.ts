@@ -24,9 +24,11 @@ import { describeZodError, describeError } from "@/lib/zod-errors";
  *   }
  *
  * `crm.teamMemberIds` is the manager's direct reports — when present, the
- * route sets `managerId = <this user's crmProfileId>` on every listed CRM
- * profile and clears it from any previous report not in the list, in one
- * transaction. Only meaningful when the target user is a MANAGER/ADMIN.
+ * route syncs `CrmTeamMembership` join rows so this manager has exactly the
+ * listed reps on their team. A rep can be on multiple managers' teams, so
+ * this only touches memberships owned by THIS manager — other managers'
+ * memberships for the same rep are preserved. Only meaningful when the
+ * target user is a MANAGER/ADMIN.
  */
 function isPlatformAdmin(session: Session | null) {
   if (!session?.user) return false;
@@ -221,20 +223,24 @@ export async function PATCH(
         });
 
         if (crm.teamMemberIds) {
-          // Reset managerId on previous reports that aren't in the new set,
-          // then set it on the new reports. Two updates, both fenced to
-          // crmUserProfile so we don't accidentally clobber unrelated rows.
-          await tx.crmUserProfile.updateMany({
+          // Sync the many-to-many CrmTeamMembership rows for THIS manager
+          // only. A rep can belong to multiple managers' teams, so we must
+          // not touch memberships owned by other managers. Delete the
+          // memberships for this manager that aren't in the new set, then
+          // upsert the new ones. The legacy single-FK `managerId` is left
+          // alone here — scope helpers OR both relations, so the M2M side
+          // is authoritative for "is this rep on my team".
+          await tx.crmTeamMembership.deleteMany({
             where: {
               managerId: profileId,
-              id: { notIn: crm.teamMemberIds.length ? crm.teamMemberIds : ["__none__"] },
+              repId: { notIn: crm.teamMemberIds.length ? crm.teamMemberIds : ["__none__"] },
             },
-            data: { managerId: null },
           });
-          if (crm.teamMemberIds.length) {
-            await tx.crmUserProfile.updateMany({
-              where: { id: { in: crm.teamMemberIds } },
-              data: { managerId: profileId },
+          for (const repId of crm.teamMemberIds) {
+            await tx.crmTeamMembership.upsert({
+              where: { managerId_repId: { managerId: profileId, repId } },
+              create: { managerId: profileId, repId },
+              update: {},
             });
           }
         }

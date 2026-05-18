@@ -439,6 +439,21 @@ export async function changeStage(opportunityId: string, input: StageChangeInput
     throw new Error(transition.error || "Transition not allowed");
   }
 
+  // Block stages the admin has hidden from the pipeline. Without this guard
+  // a rep could change to a stage that doesn't appear in any kanban column,
+  // which makes the opp "disappear" from /crm/pipeline (it still exists,
+  // but no column matches its stage). The bug surfaced when admin removed
+  // a seed stage from Stage Config — the rep dropdown still listed it.
+  const targetConfig = await db.crmStageConfig.findFirst({
+    where: { stage: parsed.toStage, isActive: true },
+    select: { id: true },
+  });
+  if (!targetConfig) {
+    throw new Error(
+      `Stage "${parsed.toStage}" isn't configured in Stage Config. Ask an admin to enable it.`
+    );
+  }
+
   // Check requirements
   const requirements = getTransitionRequirements(parsed.toStage as CrmOpportunityStage);
 

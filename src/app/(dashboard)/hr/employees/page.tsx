@@ -28,22 +28,8 @@ import {
 } from '@/components/hr/ui/dropdown-menu'
 import { employeesApi, companiesApi, departmentsApi } from '@/lib/hr/api'
 import { formatCurrency, formatDate, getInitials, capitalize } from '@/lib/hr/utils'
+import { useLocale } from '@/lib/i18n'
 import type { Employee, Company, Department, PaginatedResponse } from '@/lib/hr/types'
-
-const STATUS_OPTIONS = [
-  { value: 'active', label: 'Active' },
-  { value: 'on_leave', label: 'On Leave' },
-  { value: 'probation', label: 'Probation' },
-  { value: 'terminated', label: 'Terminated' },
-  { value: 'suspended', label: 'Suspended' },
-]
-
-const TYPE_OPTIONS = [
-  { value: 'full_time', label: 'Full Time' },
-  { value: 'part_time', label: 'Part Time' },
-  { value: 'contract', label: 'Contract' },
-  { value: 'intern', label: 'Intern' },
-]
 
 const STATUS_VARIANT: Record<string, 'success' | 'warning' | 'danger' | 'info' | 'default'> = {
   active: 'success',
@@ -55,6 +41,24 @@ const STATUS_VARIANT: Record<string, 'success' | 'warning' | 'danger' | 'info' |
 
 export default function EmployeesPage() {
   const router = useRouter()
+  const { t } = useLocale()
+
+  // Defined inside the component so the labels swap when the user flips the
+  // locale toggle. Keeping them at module scope would freeze the language to
+  // whatever the dictionary was on first render.
+  const STATUS_OPTIONS = [
+    { value: 'active', label: t.pages.statusActive },
+    { value: 'on_leave', label: t.pages.statusOnLeave },
+    { value: 'probation', label: t.pages.statusProbation },
+    { value: 'terminated', label: t.pages.statusTerminated },
+    { value: 'suspended', label: t.pages.statusSuspended },
+  ]
+  const TYPE_OPTIONS = [
+    { value: 'full_time', label: t.pages.typeFullTime },
+    { value: 'part_time', label: t.pages.typePartTime },
+    { value: 'contract', label: t.pages.typeContract },
+    { value: 'intern', label: t.pages.typeIntern },
+  ]
 
   const [search, setSearch] = useState('')
   const [selectedCompany, setSelectedCompany] = useState<number | null>(null)
@@ -232,9 +236,9 @@ export default function EmployeesPage() {
   return (
     <div className="space-y-6">
       <PageHeader
-        title="Employees"
-        description={`${totalCount} total employees across all entities`}
-        breadcrumbs={[{ label: 'Employees' }]}
+        title={t.pages.employeesTitle}
+        description={`${totalCount} ${t.pages.employeesTotal}`}
+        breadcrumbs={[{ label: t.pages.employeesTitle }]}
         demoId="employees-page-header"
         actions={
           <div className="flex items-center gap-2">
@@ -245,7 +249,7 @@ export default function EmployeesPage() {
               className="gap-1.5"
             >
               <Upload className="h-4 w-4" />
-              Bulk Import
+              {t.pages.bulkImport}
             </Button>
             <Button
               size="sm"
@@ -254,7 +258,7 @@ export default function EmployeesPage() {
               data-demo-id="add-employee-btn"
             >
               <UserPlus className="h-4 w-4" />
-              Add Employee
+              {t.pages.addEmployee}
             </Button>
           </div>
         }
@@ -279,7 +283,7 @@ export default function EmployeesPage() {
               value={employmentType}
               onChange={(e) => { setEmploymentType(e.target.value); setPage(1) }}
             >
-              <option value="">All Types</option>
+              <option value="">{t.pages.allTypes}</option>
               {TYPE_OPTIONS.map((t) => (
                 <option key={t.value} value={t.value}>
                   {t.label}
@@ -301,8 +305,8 @@ export default function EmployeesPage() {
           page={page}
           pageSize={PAGE_SIZE}
           onPageChange={setPage}
-          emptyTitle="No employees found"
-          emptyDescription="Try adjusting your filters or add a new employee."
+          emptyTitle={t.pages.noEmployeesFound}
+          emptyDescription={t.pages.tryAdjustingFilters}
           onRowClick={(row) => router.push(`/hr/employees/${row.id}`)}
         />
       </div>

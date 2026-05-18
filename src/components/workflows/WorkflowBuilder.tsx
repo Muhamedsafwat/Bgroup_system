@@ -27,6 +27,7 @@ import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Plus, Trash2, GripVertical, ArrowDown, Save } from "lucide-react";
+import { useLocale } from "@/lib/i18n";
 import { toast } from "sonner";
 
 type Step = {
@@ -61,6 +62,8 @@ function uid() {
 }
 
 export function WorkflowBuilder({ workflowId }: { workflowId?: string }) {
+  const { locale } = useLocale();
+  const isAr = locale === "ar";
   const router = useRouter();
   const isEdit = Boolean(workflowId);
 
@@ -222,15 +225,15 @@ export function WorkflowBuilder({ workflowId }: { workflowId?: string }) {
     <div className="space-y-4">
       <Card>
         <CardHeader>
-          <CardTitle className="text-base">Definition</CardTitle>
+          <CardTitle className="text-base">{isAr ? "التعريف" : "Definition"}</CardTitle>
         </CardHeader>
         <CardContent className="grid grid-cols-1 md:grid-cols-2 gap-3">
           <div>
-            <Label>Name</Label>
-            <Input value={name} onChange={(e) => setName(e.target.value)} placeholder="e.g. Closed-deal handoff" />
+            <Label>{isAr ? "الاسم" : "Name"}</Label>
+            <Input value={name} onChange={(e) => setName(e.target.value)} placeholder={isAr ? "مثال: تسليم صفقة مكتملة" : "e.g. Closed-deal handoff"} />
           </div>
           <div>
-            <Label>Module</Label>
+            <Label>{isAr ? "الوحدة" : "Module"}</Label>
             <Select value={moduleName} onValueChange={(v) => setModuleName(v as typeof moduleName)}>
               <SelectTrigger><SelectValue /></SelectTrigger>
               <SelectContent>
@@ -242,12 +245,12 @@ export function WorkflowBuilder({ workflowId }: { workflowId?: string }) {
             </Select>
           </div>
           <div className="md:col-span-2">
-            <Label>Description</Label>
+            <Label>{isAr ? "الوصف" : "Description"}</Label>
             <Textarea rows={2} value={description} onChange={(e) => setDescription(e.target.value)} />
           </div>
           <div className="flex items-center gap-2">
             <Checkbox checked={isActive} onCheckedChange={(v) => setIsActive(!!v)} />
-            <span className="text-sm">Active (allow triggering)</span>
+            <span className="text-sm">{isAr ? "نشط (السماح بالتشغيل)" : "Active (allow triggering)"}</span>
           </div>
 
           {/* Kind toggle: TEMPLATE (reusable, relative budgets) vs CUSTOM
@@ -329,11 +332,11 @@ export function WorkflowBuilder({ workflowId }: { workflowId?: string }) {
 
       <div className="flex justify-end gap-2">
         <Button variant="outline" onClick={() => router.push("/admin/workflows-sequential")}>
-          Cancel
+          {isAr ? "إلغاء" : "Cancel"}
         </Button>
         <Button onClick={save} disabled={saving}>
           <Save className="h-4 w-4 me-1.5" />
-          {saving ? "Saving..." : isEdit ? "Save changes" : "Create workflow"}
+          {saving ? (isAr ? "جاري الحفظ..." : "Saving...") : isEdit ? (isAr ? "حفظ التغييرات" : "Save changes") : (isAr ? "إنشاء سير العمل" : "Create workflow")}
         </Button>
       </div>
     </div>

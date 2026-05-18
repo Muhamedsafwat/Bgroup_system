@@ -11,12 +11,18 @@ export default async function MyDashboardPage() {
   const data = await getMyDashboardData(session);
 
   const crmRole = session.role;
-  const rolePill =
-    crmRole === "ACCOUNT_MGR" ? "Account manager" :
-    crmRole === "MANAGER" ? "Sales manager" :
-    crmRole === "ASSISTANT" ? "Assistant" :
-    crmRole === "ADMIN" ? "CRM admin" :
-    "Sales rep";
+  const isAr = locale === "ar";
+  const rolePill = isAr
+    ? (crmRole === "ACCOUNT_MGR" ? "مدير حسابات" :
+       crmRole === "MANAGER" ? "مدير مبيعات" :
+       crmRole === "ASSISTANT" ? "مساعد" :
+       crmRole === "ADMIN" ? "أدمن CRM" :
+       "مندوب مبيعات")
+    : (crmRole === "ACCOUNT_MGR" ? "Account manager" :
+       crmRole === "MANAGER" ? "Sales manager" :
+       crmRole === "ASSISTANT" ? "Assistant" :
+       crmRole === "ADMIN" ? "CRM admin" :
+       "Sales rep");
 
   return (
     <div className="space-y-6">
@@ -25,7 +31,7 @@ export default async function MyDashboardPage() {
         rolePill={rolePill}
         pillTone="sky"
         email={session.email}
-        subtitle="Today’s calls, meetings, and open pipeline"
+        subtitle={isAr ? "مكالمات اليوم، الاجتماعات، والـ pipeline المفتوح" : "Today’s calls, meetings, and open pipeline"}
       />
       <MyDashboardClient
         data={JSON.parse(JSON.stringify(data))}

@@ -28,6 +28,7 @@ import api, { payrollApi } from '@/lib/hr/api'
 import { toast } from '@/components/hr/ui/toast'
 import { useAuth } from '@/contexts/hr/AuthContext'
 import { WelcomeBanner, firstNameOf } from '@/components/shared/WelcomeHero'
+import { useLocale } from '@/lib/i18n'
 import { ExportButton } from '@/components/hr/shared/ExportButton'
 import { StatCard } from '@/components/hr/shared/StatCard'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/hr/ui/card'
@@ -68,6 +69,8 @@ const statusConfig: Record<string, { label: string; variant: 'default' | 'info' 
 }
 
 export default function AccountantPage() {
+  const { locale } = useLocale()
+  const isAr = locale === "ar"
   const { companies, user } = useAuth()
   const queryClient = useQueryClient()
   const now = new Date()
@@ -188,10 +191,10 @@ export default function AccountantPage() {
     <div className="space-y-6">
       <WelcomeBanner
         firstName={firstNameOf(user?.full_name, user?.email)}
-        rolePill="Accountant"
+        rolePill={isAr ? "المحاسب" : "Accountant"}
         pillTone="emerald"
         email={user?.email}
-        subtitle={`Payroll overview for ${periodLabel}`}
+        subtitle={isAr ? `نظرة عامة للرواتب لـ ${periodLabel}` : `Payroll overview for ${periodLabel}`}
       />
       <div className="flex justify-end">
         <ExportButton

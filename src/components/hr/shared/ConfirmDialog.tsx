@@ -11,6 +11,7 @@ import {
   DialogFooter,
 } from '@/components/hr/ui/dialog'
 import { Button } from '@/components/hr/ui/button'
+import { useLocale } from '@/lib/i18n'
 
 interface ConfirmDialogProps {
   open: boolean
@@ -30,12 +31,15 @@ export function ConfirmDialog({
   onOpenChange,
   title,
   description,
-  confirmLabel = 'Confirm',
-  cancelLabel = 'Cancel',
+  confirmLabel,
+  cancelLabel,
   variant = 'destructive',
   onConfirm,
   loading = false,
 }: ConfirmDialogProps) {
+  const { t } = useLocale()
+  const resolvedConfirmLabel = confirmLabel ?? t.common.confirm
+  const resolvedCancelLabel = cancelLabel ?? t.common.cancel
   const [isLoading, setIsLoading] = React.useState(false)
 
   async function handleConfirm() {
@@ -80,14 +84,14 @@ export function ConfirmDialog({
             onClick={() => onOpenChange(false)}
             disabled={isLoading || loading}
           >
-            {cancelLabel}
+            {resolvedCancelLabel}
           </Button>
           <Button
             variant={btnVariant[variant]}
             onClick={handleConfirm}
             loading={isLoading || loading}
           >
-            {confirmLabel}
+            {resolvedConfirmLabel}
           </Button>
         </DialogFooter>
       </DialogContent>

@@ -20,52 +20,56 @@ import {
 import { cn } from "@/lib/utils";
 import { Sheet, SheetContent } from "@/components/ui/sheet";
 import { Sidebar } from "@/components/layout/Sidebar";
+import { useLocale } from "@/lib/i18n";
+import type { Dictionary } from "@/lib/i18n";
 
 type NavItem = { href: string; label: string; icon: LucideIcon };
+type MobileT = Dictionary["mobileNav"];
 
 function navForModule(
   module: "hr" | "crm" | "partners" | null,
-  hrRoles: string[] | undefined
+  hrRoles: string[] | undefined,
+  t: MobileT
 ): NavItem[] {
   if (module === "hr") {
     const isAdmin = hrRoles?.some((r) => ["super_admin", "hr_manager"].includes(r));
     if (isAdmin) {
       return [
-        { href: "/hr/dashboard", label: "Home", icon: LayoutDashboard },
-        { href: "/hr/employees", label: "People", icon: Users },
-        { href: "/hr/attendance/today", label: "Today", icon: Clock },
-        { href: "/hr/payroll/monthly", label: "Pay", icon: DollarSign },
+        { href: "/hr/dashboard", label: t.home, icon: LayoutDashboard },
+        { href: "/hr/employees", label: t.people, icon: Users },
+        { href: "/hr/attendance/today", label: t.today, icon: Clock },
+        { href: "/hr/payroll/monthly", label: t.pay, icon: DollarSign },
       ];
     }
     return [
-      { href: "/hr/employee/home", label: "Home", icon: LayoutDashboard },
-      { href: "/hr/employee/attendance", label: "Time", icon: Clock },
-      { href: "/hr/employee/overtime", label: "OT", icon: ClipboardList },
-      { href: "/hr/employee/salary", label: "Pay", icon: DollarSign },
+      { href: "/hr/employee/home", label: t.home, icon: LayoutDashboard },
+      { href: "/hr/employee/attendance", label: t.time, icon: Clock },
+      { href: "/hr/employee/overtime", label: t.overtime, icon: ClipboardList },
+      { href: "/hr/employee/salary", label: t.pay, icon: DollarSign },
     ];
   }
   if (module === "crm") {
     return [
-      { href: "/crm/my", label: "Home", icon: LayoutDashboard },
-      { href: "/crm/opportunities", label: "Pipeline", icon: TrendingUp },
-      { href: "/crm/calls", label: "Calls", icon: Phone },
-      { href: "/crm/companies", label: "Companies", icon: Briefcase },
+      { href: "/crm/my", label: t.home, icon: LayoutDashboard },
+      { href: "/crm/opportunities", label: t.pipeline, icon: TrendingUp },
+      { href: "/crm/calls", label: t.calls, icon: Phone },
+      { href: "/crm/companies", label: t.companies, icon: Briefcase },
     ];
   }
   if (module === "partners") {
     return [
-      { href: "/partners/dashboard", label: "Home", icon: LayoutDashboard },
-      { href: "/partners/leads", label: "Leads", icon: Users },
-      { href: "/partners/deals", label: "Deals", icon: Handshake },
-      { href: "/partners/commissions", label: "Earn", icon: DollarSign },
+      { href: "/partners/dashboard", label: t.home, icon: LayoutDashboard },
+      { href: "/partners/leads", label: t.leads, icon: Users },
+      { href: "/partners/deals", label: t.deals, icon: Handshake },
+      { href: "/partners/commissions", label: t.earn, icon: DollarSign },
     ];
   }
   // Fallback: cross-module home
   return [
-    { href: "/today", label: "Today", icon: LayoutDashboard },
-    { href: "/hr/dashboard", label: "HR", icon: Users },
-    { href: "/crm/my", label: "CRM", icon: TrendingUp },
-    { href: "/partners/dashboard", label: "Partners", icon: Handshake },
+    { href: "/today", label: t.today, icon: LayoutDashboard },
+    { href: "/hr/dashboard", label: t.hr, icon: Users },
+    { href: "/crm/my", label: t.crm, icon: TrendingUp },
+    { href: "/partners/dashboard", label: t.partners, icon: Handshake },
   ];
 }
 
@@ -73,6 +77,7 @@ export function MobileBottomNav() {
   const pathname = usePathname();
   const { data: session } = useSession();
   const [moreOpen, setMoreOpen] = useState(false);
+  const { t } = useLocale();
 
   const activeModule: "hr" | "crm" | "partners" | null = pathname.startsWith("/hr")
     ? "hr"
@@ -82,7 +87,7 @@ export function MobileBottomNav() {
         ? "partners"
         : null;
 
-  const items = navForModule(activeModule, session?.user?.hrRoles);
+  const items = navForModule(activeModule, session?.user?.hrRoles, t.mobileNav);
 
   function isActive(href: string) {
     if (pathname === href) return true;
@@ -121,10 +126,10 @@ export function MobileBottomNav() {
             <button
               onClick={() => setMoreOpen(true)}
               className="w-full flex flex-col items-center justify-center gap-0.5 py-2 text-xs text-muted-foreground hover:text-foreground transition-colors"
-              aria-label="Open menu"
+              aria-label={t.mobileNav.more}
             >
               <Menu className="h-5 w-5" />
-              <span className="text-[10px] leading-none">More</span>
+              <span className="text-[10px] leading-none">{t.mobileNav.more}</span>
             </button>
           </li>
         </ul>

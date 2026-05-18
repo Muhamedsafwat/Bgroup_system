@@ -1,5 +1,7 @@
 'use client'
 
+import { useLocale } from '@/lib/i18n'
+
 import React, { useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import api from '@/lib/hr/api'
@@ -77,6 +79,8 @@ function getLevelBadge(level: string) {
 }
 
 export default function ProgressiveDisciplinePage() {
+  const { locale } = useLocale()
+  const isAr = locale === 'ar'
   const [company, setCompany] = useState('')
   const [department, setDepartment] = useState('')
   const [severity, setSeverity] = useState('')
@@ -119,9 +123,9 @@ export default function ProgressiveDisciplinePage() {
   return (
     <div className="space-y-6">
       <PageHeader
-        title="Progressive Discipline Status"
+        title={isAr ? 'حالة التأديب المتدرج' : 'Progressive Discipline Status'}
         description="Track employee offense history and discipline escalation levels"
-        breadcrumbs={[{ label: 'Incidents' }, { label: 'Progressive Discipline' }]}
+        breadcrumbs={[{ label: isAr ? 'المخالفات' : 'Incidents' }, { label: isAr ? 'التأديب المتدرج' : 'Progressive Discipline' }]}
       />
 
       {/* Summary Chips */}
@@ -151,7 +155,7 @@ export default function ProgressiveDisciplinePage() {
       {/* Filters */}
       <div className="bg-card p-4 rounded-lg border border-border flex flex-wrap gap-3 items-end">
         <div className="space-y-1">
-          <Label>Company</Label>
+          <Label>{isAr ? 'الشركة' : 'Company'}</Label>
           <Select value={company} onValueChange={v => { setCompany(v === 'all' ? '' : v); setDepartment('') }}>
             <SelectTrigger className="w-44">
               <SelectValue placeholder="All Companies" />
@@ -165,7 +169,7 @@ export default function ProgressiveDisciplinePage() {
           </Select>
         </div>
         <div className="space-y-1">
-          <Label>Department</Label>
+          <Label>{isAr ? 'القسم' : 'Department'}</Label>
           <Select value={department} onValueChange={v => setDepartment(v === 'all' ? '' : v)}>
             <SelectTrigger className="w-44">
               <SelectValue placeholder="All Departments" />
@@ -179,7 +183,7 @@ export default function ProgressiveDisciplinePage() {
           </Select>
         </div>
         <div className="space-y-1">
-          <Label>Severity</Label>
+          <Label>{isAr ? 'الشدة' : 'Severity'}</Label>
           <Select value={severity} onValueChange={v => setSeverity(v === 'all' ? '' : v)}>
             <SelectTrigger className="w-40">
               <SelectValue placeholder="All Severities" />
@@ -209,14 +213,14 @@ export default function ProgressiveDisciplinePage() {
         <Table>
           <TableHeader>
             <TableRow className="bg-muted/50">
-              <TableHead className="font-semibold">Employee</TableHead>
-              <TableHead className="font-semibold">Department</TableHead>
-              <TableHead className="font-semibold">Category</TableHead>
+              <TableHead className="font-semibold">{isAr ? 'الموظف' : 'Employee'}</TableHead>
+              <TableHead className="font-semibold">{isAr ? 'القسم' : 'Department'}</TableHead>
+              <TableHead className="font-semibold">{isAr ? 'الفئة' : 'Category'}</TableHead>
               <TableHead className="font-semibold text-center">Total Offenses</TableHead>
               <TableHead className="font-semibold">Current Level</TableHead>
               <TableHead className="font-semibold">Last Offense</TableHead>
               <TableHead className="font-semibold">Next Offense Would Be</TableHead>
-              <TableHead className="font-semibold">Severity</TableHead>
+              <TableHead className="font-semibold">{isAr ? 'الشدة' : 'Severity'}</TableHead>
             </TableRow>
           </TableHeader>
           <TableBody>

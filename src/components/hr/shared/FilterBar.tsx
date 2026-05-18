@@ -12,6 +12,7 @@ import {
   SelectValue,
 } from '@/components/hr/ui/select'
 import { cn } from '@/lib/hr/utils'
+import { useLocale } from '@/lib/i18n'
 import type { Company, Department } from '@/lib/hr/types'
 
 interface FilterBarProps {
@@ -67,23 +68,19 @@ export function FilterBar({
   activeFilterCount = 0,
   className,
 }: FilterBarProps) {
+  const { locale } = useLocale()
+  const isAr = locale === "ar"
   const currentYear = new Date().getFullYear()
   const years = yearOptions || Array.from({ length: 5 }, (_, i) => currentYear - i)
 
-  const months = [
-    { value: '1', label: 'January' },
-    { value: '2', label: 'February' },
-    { value: '3', label: 'March' },
-    { value: '4', label: 'April' },
-    { value: '5', label: 'May' },
-    { value: '6', label: 'June' },
-    { value: '7', label: 'July' },
-    { value: '8', label: 'August' },
-    { value: '9', label: 'September' },
-    { value: '10', label: 'October' },
-    { value: '11', label: 'November' },
-    { value: '12', label: 'December' },
-  ]
+  // Locale-aware month labels. Generated from a 1-based date so they match
+  // the browser's own month names — picks up Arabic numerals + diacritics
+  // automatically when the locale is Arabic.
+  const fmt = new Intl.DateTimeFormat(isAr ? 'ar-EG' : 'en-US', { month: 'long' })
+  const months = Array.from({ length: 12 }, (_, i) => ({
+    value: String(i + 1),
+    label: fmt.format(new Date(2000, i, 1)),
+  }))
 
   return (
     <div className={cn('bg-card rounded-lg border border-border p-4', className)}>
@@ -92,7 +89,7 @@ export function FilterBar({
         {onSearchChange !== undefined && (
           <div className="flex-1 min-w-[200px]" data-demo-id="filter-search">
             <Input
-              placeholder="Search..."
+              placeholder={isAr ? "بحث..." : "Search..."}
               value={search || ''}
               onChange={(e) => onSearchChange(e.target.value)}
               leftIcon={<Search className="h-4 w-4" />}
@@ -116,10 +113,10 @@ export function FilterBar({
               onValueChange={(v) => onCompanyChange(v === 'all' ? null : Number(v))}
             >
               <SelectTrigger className="h-9">
-                <SelectValue placeholder="All Companies" />
+                <SelectValue placeholder={isAr ? "كل الشركات" : "All Companies"} />
               </SelectTrigger>
               <SelectContent>
-                <SelectItem value="all">All Companies</SelectItem>
+                <SelectItem value="all">{isAr ? "كل الشركات" : "All Companies"}</SelectItem>
                 {companies.map((c) => (
                   <SelectItem key={c.id} value={String(c.id)}>
                     {c.name_en}
@@ -138,10 +135,10 @@ export function FilterBar({
               onValueChange={(v) => onDepartmentChange(v === 'all' ? null : Number(v))}
             >
               <SelectTrigger className="h-9">
-                <SelectValue placeholder="All Departments" />
+                <SelectValue placeholder={isAr ? "كل الأقسام" : "All Departments"} />
               </SelectTrigger>
               <SelectContent>
-                <SelectItem value="all">All Departments</SelectItem>
+                <SelectItem value="all">{isAr ? "كل الأقسام" : "All Departments"}</SelectItem>
                 {departments.map((d) => (
                   <SelectItem key={d.id} value={String(d.id)}>
                     {d.name_en}
@@ -160,10 +157,10 @@ export function FilterBar({
               onValueChange={(v) => onStatusChange(v === 'all' ? '' : v)}
             >
               <SelectTrigger className="h-9">
-                <SelectValue placeholder="All Statuses" />
+                <SelectValue placeholder={isAr ? "كل الحالات" : "All Statuses"} />
               </SelectTrigger>
               <SelectContent>
-                <SelectItem value="all">All Statuses</SelectItem>
+                <SelectItem value="all">{isAr ? "كل الحالات" : "All Statuses"}</SelectItem>
                 {statusOptions.map((opt) => (
                   <SelectItem key={opt.value} value={opt.value}>
                     {opt.label}
@@ -254,7 +251,7 @@ export function FilterBar({
             className="h-9 gap-1.5"
           >
             <X className="h-3.5 w-3.5" />
-            Reset
+            {isAr ? "إعادة تعيين" : "Reset"}
             {activeFilterCount > 0 && (
               <span className="ml-1 bg-brand-navy text-white text-xs rounded-full h-4 w-4 flex items-center justify-center">
                 {activeFilterCount}

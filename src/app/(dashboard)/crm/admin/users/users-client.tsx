@@ -1,6 +1,8 @@
 "use client";
 
 import { useState } from "react";
+import { useRouter } from "next/navigation";
+import { toast } from "sonner";
 import { useLocale } from "@/lib/i18n";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -27,7 +29,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { createUser, updateUser } from "../actions";
+import { createUser, updateUser, setTeamMembers } from "../actions";
 import type { CrmRole } from "@/types";
 
 type UserItem = {
@@ -40,6 +42,10 @@ type UserItem = {
   monthlyTargetEGP: unknown;
   managerId?: string | null;
   manager?: { id: string; fullName: string } | null;
+  // M2M memberships — manager ids that have this user on their team.
+  // A rep can be on multiple managers' teams, so this is the authoritative
+  // source for "which managers see this rep's pipeline".
+  managedByIds?: string[];
   active: boolean;
   entity: {
     id: string;
@@ -69,6 +75,7 @@ export function UsersClient({
   entities: EntityItem[];
 }) {
   const { t, locale } = useLocale();
+  const router = useRouter();
   const [open, setOpen] = useState(false);
   const [editing, setEditing] = useState<UserItem | null>(null);
   const [saving, setSaving] = useState(false);
@@ -113,14 +120,14 @@ export function UsersClient({
     setEntityId(user.entityId ?? "");
     setMonthlyTarget(user.monthlyTargetEGP ? String(Number(user.monthlyTargetEGP)) : "");
     setManagerId(user.managerId ?? "");
-    // Seed the team-members picker with the reps already pointing at this
-    // manager. The seed only matters when editing — creating a manager
-    // wouldn't have any reports yet (and the user record doesn't exist
-    // until save, so there's nothing for reps to point at).
+    // Seed the team-members picker from the M2M join — every rep whose
+    // `managedByIds` includes this user. The seed only matters when editing
+    // — creating a manager wouldn't have any reports yet (and the user
+    // record doesn't exist until save).
     setTeamMemberIds(
       new Set(
         users
-          .filter((u) => u.managerId === user.id)
+          .filter((u) => (u.managedByIds ?? []).includes(user.id))
           .map((u) => u.id)
       )
     );
@@ -143,21 +150,35 @@ export function UsersClient({
           monthlyTargetEGP: monthlyTarget ? Number(monthlyTarget) : null,
           managerId: managerId || null,
         });
-        // When we're editing a manager, sync team membership by patching
-        // each rep's `managerId`. Compare against the seed set:
-        //   - ticked + wasn't on team before → set managerId = this user
-        //   - was on team but unticked       → clear their managerId
+        // When we're editing a manager, sync team membership through the
+        // M2M join table in one call. setTeamMembers only touches THIS
+        // manager's CrmTeamMembership rows — other managers' relationships
+        // with the same reps are preserved, so a rep can be on multiple
+        // teams. Previously this iterated reps and overwrote their single
+        // `managerId`, which silently kicked them off any other manager's
+        // team they were already on.
         if (role === "MANAGER" || role === "ADMIN") {
           const previousTeam = new Set(
-            users.filter((u) => u.managerId === editing.id).map((u) => u.id)
+            users
+              .filter((u) => (u.managedByIds ?? []).includes(editing.id))
+              .map((u) => u.id)
           );
-          const additions = Array.from(teamMemberIds).filter((id) => !previousTeam.has(id));
-          const removals = Array.from(previousTeam).filter((id) => !teamMemberIds.has(id));
-          await Promise.all([
-            ...additions.map((repId) => updateUser(repId, { managerId: editing.id })),
-            ...removals.map((repId) => updateUser(repId, { managerId: null })),
-          ]);
+          const next = teamMemberIds;
+          const sameSet =
+            next.size === previousTeam.size &&
+            [...next].every((id) => previousTeam.has(id));
+          if (!sameSet) {
+            await setTeamMembers(editing.id, [...next]);
+            const additions = [...next].filter((id) => !previousTeam.has(id)).length;
+            const removals = [...previousTeam].filter((id) => !next.has(id)).length;
+            toast.success(
+              locale === "ar"
+                ? `تم تحديث الفريق (+${additions}/−${removals})`
+                : `Team updated (+${additions}/−${removals})`
+            );
+          }
         }
+        toast.success(locale === "ar" ? "تم حفظ المستخدم" : "User saved");
       } else {
         await createUser({
           fullName,
@@ -170,10 +191,17 @@ export function UsersClient({
           monthlyTargetEGP: monthlyTarget ? Number(monthlyTarget) : undefined,
           managerId: managerId || undefined,
         });
+        toast.success(locale === "ar" ? "تم إنشاء المستخدم" : "User created");
       }
       setOpen(false);
+      // Refresh the server-rendered list so the new managerId values appear
+      // immediately on the page (and the picker re-seeds correctly next open).
+      router.refresh();
     } catch (err) {
-      console.error(err);
+      const message =
+        err instanceof Error ? err.message : (locale === "ar" ? "فشل الحفظ" : "Save failed");
+      toast.error(message);
+      console.error("[updateUser handleSave]", err);
     } finally {
       setSaving(false);
     }
@@ -446,9 +474,12 @@ export function UsersClient({
 
             {/* Team members picker — only when editing a MANAGER. This is
                 the inverse of the "Reports to" field on a rep's record:
-                tick everyone who works for this manager and we sync their
-                managerId on save (additions + removals). New managers
-                don't have a user id yet so the picker is hidden on create. */}
+                tick everyone who works for this manager and we sync the
+                CrmTeamMembership join rows on save. A rep can be on
+                multiple managers' teams — toggling here only affects this
+                manager's row, so unticking does NOT remove the rep from
+                another manager. New managers don't have a user id yet so
+                the picker is hidden on create. */}
             {editing && (role === "MANAGER" || role === "ADMIN") && (
               <div className="space-y-2 pt-3 border-t">
                 <div className="flex items-center justify-between">
@@ -462,8 +493,8 @@ export function UsersClient({
                 </div>
                 <p className="text-xs text-muted-foreground">
                   {locale === "ar"
-                    ? "حدد المندوبين الذين يتبعون هذا المدير. سيرى هذا المدير فرص هؤلاء فقط في لوحة المبيعات."
-                    : "Tick the reps that report to this manager. They become this manager's pipeline scope."}
+                    ? "حدد المندوبين الذين يتبعون هذا المدير. يمكن للمندوب أن ينتمي إلى عدة فرق — التعديل هنا يؤثر على فريق هذا المدير فقط."
+                    : "Tick the reps that report to this manager. A rep can belong to multiple teams — toggling here only affects this manager's team."}
                 </p>
                 <div className="max-h-48 overflow-y-auto rounded-md border divide-y">
                   {users.filter((u) => u.active && u.id !== editing.id && (u.role === "REP" || u.role === "ACCOUNT_MGR")).length === 0 ? (
@@ -480,7 +511,12 @@ export function UsersClient({
                       )
                       .map((u) => {
                         const checked = teamMemberIds.has(u.id);
-                        const otherManager = !checked && u.managerId && u.managerId !== editing.id;
+                        // Count managers OTHER than this one that already
+                        // claim this rep. Informational only — having the
+                        // rep on another team is fine under the M2M model.
+                        const otherManagerCount = (u.managedByIds ?? []).filter(
+                          (id) => id !== editing.id
+                        ).length;
                         return (
                           <label
                             key={u.id}
@@ -503,11 +539,18 @@ export function UsersClient({
                               <span className="font-medium">{u.fullName}</span>
                               <span className="text-xs text-muted-foreground ms-2">· {u.role}</span>
                             </span>
-                            {otherManager && (
-                              <span className="text-[10px] text-amber-600 dark:text-amber-400">
+                            {otherManagerCount > 0 && (
+                              <span
+                                className="text-[10px] text-muted-foreground"
+                                title={
+                                  locale === "ar"
+                                    ? `أيضاً ضمن فريق ${otherManagerCount} مدير آخر`
+                                    : `Also on ${otherManagerCount} other manager${otherManagerCount === 1 ? "'s" : "s'"} team`
+                                }
+                              >
                                 {locale === "ar"
-                                  ? "حالياً مع مدير آخر"
-                                  : "currently on another team"}
+                                  ? `+${otherManagerCount} فرق`
+                                  : `+${otherManagerCount} team${otherManagerCount === 1 ? "" : "s"}`}
                               </span>
                             )}
                           </label>

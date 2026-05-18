@@ -12,9 +12,12 @@ import { Card } from '@/components/partners/ui/card';
 import { EmptyState } from '@/components/partners/ui/empty-state';
 import { TableSkeleton } from '@/components/partners/ui/skeleton';
 import { Plus, Package } from 'lucide-react';
+import { useLocale } from '@/lib/i18n';
 import { useAuth } from '@/lib/partners/auth-compat';
 
 export default function ServicesPage() {
+  const { locale } = useLocale();
+  const isAr = locale === 'ar';
   const { user } = useAuth();
   const [services, setServices] = useState<Service[]>([]);
   const [pagination, setPagination] = useState<PaginationMeta | null>(null);
@@ -81,7 +84,7 @@ export default function ServicesPage() {
     <div className="space-y-6">
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-2xl font-bold text-foreground">Services</h1>
+          <h1 className="text-2xl font-bold text-foreground">{isAr ? "الخدمات" : "Services"}</h1>
           <p className="mt-1 text-sm text-muted-foreground">Browse available services and pricing</p>
         </div>
         {user?.role === 'ADMIN' && (

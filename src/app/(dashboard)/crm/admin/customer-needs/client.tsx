@@ -16,6 +16,7 @@ import {
 } from "@/components/ui/table";
 import { Plus, Trash2, RotateCcw, Pencil, X, Check } from "lucide-react";
 import { toast } from "sonner";
+import { useLocale } from "@/lib/i18n";
 import {
   createCustomerNeed,
   deleteCustomerNeed,
@@ -32,6 +33,8 @@ type Need = {
 };
 
 export function CustomerNeedsClient({ initial }: { initial: Need[] }) {
+  const { locale } = useLocale();
+  const isAr = locale === "ar";
   const [needs, setNeeds] = useState<Need[]>(initial);
   const [adding, setAdding] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
@@ -135,14 +138,16 @@ export function CustomerNeedsClient({ initial }: { initial: Need[] }) {
     <div className="space-y-4">
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-2xl font-bold">Customer needs</h1>
+          <h1 className="text-2xl font-bold">{isAr ? "احتياجات العملاء" : "Customer needs"}</h1>
           <p className="text-sm text-muted-foreground mt-1">
-            The list that powers the &ldquo;What does the customer need?&rdquo; dropdown when reps book a meeting and tag opportunities. Hide an entry instead of deleting it so historical rows still display correctly.
+            {isAr
+              ? "القائمة التي تُغذّي قائمة \"ما الذي يحتاجه العميل؟\" عند حجز الاجتماعات ووسم الفرص. أخفِ العنصر بدلًا من حذفه حتى تظل السجلات التاريخية صحيحة."
+              : "The list that powers the “What does the customer need?” dropdown when reps book a meeting and tag opportunities. Hide an entry instead of deleting it so historical rows still display correctly."}
           </p>
         </div>
         {!adding && (
           <Button size="sm" onClick={() => setAdding(true)}>
-            <Plus className="h-4 w-4 me-1" /> Add need
+            <Plus className="h-4 w-4 me-1" /> {isAr ? "إضافة احتياج" : "Add need"}
           </Button>
         )}
       </div>
@@ -152,23 +157,23 @@ export function CustomerNeedsClient({ initial }: { initial: Need[] }) {
           <CardContent className="p-4 space-y-3">
             <div className="grid grid-cols-1 sm:grid-cols-4 gap-2 items-end">
               <div>
-                <Label className="text-xs">Label (English)</Label>
+                <Label className="text-xs">{isAr ? "التسمية (إنجليزي)" : "Label (English)"}</Label>
                 <Input value={newLabel} onChange={(e) => setNewLabel(e.target.value)} autoFocus />
               </div>
               <div>
-                <Label className="text-xs">Label (Arabic)</Label>
+                <Label className="text-xs">{isAr ? "التسمية (عربي)" : "Label (Arabic)"}</Label>
                 <Input value={newLabelAr} onChange={(e) => setNewLabelAr(e.target.value)} dir="rtl" />
               </div>
               <div>
-                <Label className="text-xs">Category (optional)</Label>
-                <Input value={newCategory} onChange={(e) => setNewCategory(e.target.value)} placeholder="e.g. Healthcare" />
+                <Label className="text-xs">{isAr ? "الفئة (اختياري)" : "Category (optional)"}</Label>
+                <Input value={newCategory} onChange={(e) => setNewCategory(e.target.value)} placeholder={isAr ? "مثال: الصحة" : "e.g. Healthcare"} />
               </div>
               <div className="flex gap-2">
                 <Button size="sm" onClick={handleAdd} disabled={saving || !newLabel.trim()}>
-                  Add
+                  {isAr ? "إضافة" : "Add"}
                 </Button>
                 <Button size="sm" variant="ghost" onClick={() => setAdding(false)}>
-                  Cancel
+                  {isAr ? "إلغاء" : "Cancel"}
                 </Button>
               </div>
             </div>
@@ -181,12 +186,12 @@ export function CustomerNeedsClient({ initial }: { initial: Need[] }) {
           <Table>
             <TableHeader>
               <TableRow>
-                <TableHead className="w-16">Sort</TableHead>
-                <TableHead>Label (EN)</TableHead>
-                <TableHead>Label (AR)</TableHead>
-                <TableHead>Category</TableHead>
-                <TableHead>Status</TableHead>
-                <TableHead className="w-32">Actions</TableHead>
+                <TableHead className="w-16">{isAr ? "ترتيب" : "Sort"}</TableHead>
+                <TableHead>{isAr ? "التسمية (EN)" : "Label (EN)"}</TableHead>
+                <TableHead>{isAr ? "التسمية (AR)" : "Label (AR)"}</TableHead>
+                <TableHead>{isAr ? "الفئة" : "Category"}</TableHead>
+                <TableHead>{isAr ? "الحالة" : "Status"}</TableHead>
+                <TableHead className="w-32">{isAr ? "إجراءات" : "Actions"}</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
@@ -227,9 +232,9 @@ export function CustomerNeedsClient({ initial }: { initial: Need[] }) {
                   </TableCell>
                   <TableCell>
                     {n.active ? (
-                      <Badge variant="default" className="bg-emerald-600">Active</Badge>
+                      <Badge variant="default" className="bg-emerald-600">{isAr ? "نشط" : "Active"}</Badge>
                     ) : (
-                      <Badge variant="secondary">Hidden</Badge>
+                      <Badge variant="secondary">{isAr ? "مخفي" : "Hidden"}</Badge>
                     )}
                   </TableCell>
                   <TableCell>

@@ -10,6 +10,7 @@ import { DashboardSkeleton } from '@/components/partners/ui/skeleton';
 import { Users, Handshake, DollarSign, TrendingUp, ArrowRight } from 'lucide-react';
 import Link from 'next/link';
 import { WelcomeBanner, firstNameOf } from '@/components/shared/WelcomeHero';
+import { useLocale } from '@/lib/i18n';
 import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
   PieChart, Pie, Cell,
@@ -19,6 +20,8 @@ const PIE_COLORS = ['#3b82f6', '#10b981', '#f59e0b', '#ef4444'];
 
 export default function DashboardPage() {
   const { user } = useAuth();
+  const { locale } = useLocale();
+  const isAr = locale === "ar";
   const [leads, setLeads] = useState<Lead[]>([]);
   const [deals, setDeals] = useState<Deal[]>([]);
   const [commissionSummary, setCommissionSummary] = useState<{ totalAmount: number; totalCommissions: number; byStatus: { status: string; count: number; totalAmount: number }[] } | null>(null);
@@ -72,39 +75,39 @@ export default function DashboardPage() {
     <div className="space-y-8">
       <WelcomeBanner
         firstName={firstNameOf(user?.name, user?.email)}
-        rolePill="Partner"
+        rolePill={isAr ? "شريك" : "Partner"}
         pillTone="emerald"
         email={user?.email}
-        subtitle="Here’s what’s happening with your business today"
+        subtitle={isAr ? "إليك ما يجري في عملك اليوم" : "Here’s what’s happening with your business today"}
       />
 
       {/* Stat Cards */}
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
         <StatCard
-          title="Total Leads"
+          title={isAr ? "إجمالي العملاء" : "Total Leads"}
           value={leads.length}
-          subtitle="Active prospects"
+          subtitle={isAr ? "العملاء النشطون" : "Active prospects"}
           icon={Users}
           color="blue"
         />
         <StatCard
-          title="Won Deals"
+          title={isAr ? "الصفقات المربوحة" : "Won Deals"}
           value={wonDeals}
-          subtitle={`of ${totalDeals} total`}
+          subtitle={isAr ? `من ${totalDeals} إجمالًا` : `of ${totalDeals} total`}
           icon={Handshake}
           color="green"
         />
         <StatCard
-          title="Pipeline Value"
+          title={isAr ? "قيمة الـ Pipeline" : "Pipeline Value"}
           value={`$${totalPipeline.toLocaleString()}`}
-          subtitle="Pending deals"
+          subtitle={isAr ? "صفقات قيد الإنجاز" : "Pending deals"}
           icon={TrendingUp}
           color="orange"
         />
         <StatCard
-          title="Commissions"
+          title={isAr ? "العمولات" : "Commissions"}
           value={`$${(commissionSummary?.totalAmount ?? 0).toLocaleString()}`}
-          subtitle={`${commissionSummary?.totalCommissions ?? 0} total`}
+          subtitle={isAr ? `${commissionSummary?.totalCommissions ?? 0} إجمالًا` : `${commissionSummary?.totalCommissions ?? 0} total`}
           icon={DollarSign}
           color="purple"
         />
@@ -115,7 +118,7 @@ export default function DashboardPage() {
         {/* Bar Chart */}
         <Card className="lg:col-span-2">
           <CardHeader>
-            <h3 className="text-base font-semibold text-foreground">Deal Value Overview</h3>
+            <h3 className="text-base font-semibold text-foreground">{isAr ? "نظرة عامة على قيمة الصفقات" : "Deal Value Overview"}</h3>
           </CardHeader>
           <CardContent>
             {monthlyData.length > 0 ? (
@@ -140,7 +143,7 @@ export default function DashboardPage() {
         {/* Pie Chart */}
         <Card>
           <CardHeader>
-            <h3 className="text-base font-semibold text-foreground">Deal Status</h3>
+            <h3 className="text-base font-semibold text-foreground">{isAr ? "حالة الصفقات" : "Deal Status"}</h3>
           </CardHeader>
           <CardContent>
             {dealStatusData.length > 0 ? (
@@ -176,9 +179,9 @@ export default function DashboardPage() {
         {/* Recent Leads */}
         <Card>
           <CardHeader className="flex flex-row items-center justify-between">
-            <h3 className="text-base font-semibold text-foreground">Recent Leads</h3>
+            <h3 className="text-base font-semibold text-foreground">{isAr ? "أحدث العملاء" : "Recent Leads"}</h3>
             <Link href="/leads" className="text-sm text-blue-600 hover:text-blue-700 font-medium flex items-center gap-1">
-              View all <ArrowRight className="w-3.5 h-3.5" />
+              {isAr ? "عرض الكل" : "View all"} <ArrowRight className="w-3.5 h-3.5" />
             </Link>
           </CardHeader>
           <CardContent className="p-0">
@@ -198,7 +201,7 @@ export default function DashboardPage() {
                 </Link>
               ))}
               {leads.length === 0 && (
-                <div className="px-6 py-8 text-center text-sm text-muted-foreground">No leads yet</div>
+                <div className="px-6 py-8 text-center text-sm text-muted-foreground">{isAr ? "لا يوجد عملاء بعد" : "No leads yet"}</div>
               )}
             </div>
           </CardContent>
@@ -207,9 +210,9 @@ export default function DashboardPage() {
         {/* Recent Deals */}
         <Card>
           <CardHeader className="flex flex-row items-center justify-between">
-            <h3 className="text-base font-semibold text-foreground">Recent Deals</h3>
+            <h3 className="text-base font-semibold text-foreground">{isAr ? "أحدث الصفقات" : "Recent Deals"}</h3>
             <Link href="/deals" className="text-sm text-blue-600 hover:text-blue-700 font-medium flex items-center gap-1">
-              View all <ArrowRight className="w-3.5 h-3.5" />
+              {isAr ? "عرض الكل" : "View all"} <ArrowRight className="w-3.5 h-3.5" />
             </Link>
           </CardHeader>
           <CardContent className="p-0">
@@ -227,7 +230,7 @@ export default function DashboardPage() {
                 </Link>
               ))}
               {deals.length === 0 && (
-                <div className="px-6 py-8 text-center text-sm text-muted-foreground">No deals yet</div>
+                <div className="px-6 py-8 text-center text-sm text-muted-foreground">{isAr ? "لا توجد صفقات بعد" : "No deals yet"}</div>
               )}
             </div>
           </CardContent>

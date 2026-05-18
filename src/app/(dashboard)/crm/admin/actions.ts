@@ -46,15 +46,60 @@ export async function getUsers() {
       // string back to User.email).
       user: { select: { email: true } },
       manager: { select: { id: true, fullName: true } },
+      // M2M join — a rep can belong to multiple managers' teams. The edit
+      // dialog seeds its team-member checkboxes from this list, not from
+      // the legacy single-FK managerId.
+      managedBy: { select: { managerId: true } },
     },
     orderBy: [{ active: "desc" }, { fullName: "asc" }],
   });
-  // Flatten user.email up to the row so the existing UserItem type works.
+  // Flatten user.email up to the row and project managedBy down to an array
+  // of manager ids so the client doesn't need to know the join-row shape.
   const shaped = users.map((u) => ({
     ...u,
     email: u.user?.email ?? "",
+    managedByIds: u.managedBy.map((m) => m.managerId),
   }));
   return JSON.parse(JSON.stringify(shaped));
+}
+
+/**
+ * Sync the M2M CrmTeamMembership rows for one manager. Pass the rep ids that
+ * should be on this manager's team — any existing memberships for THIS manager
+ * not in the list are deleted, any new ones are upserted. Other managers'
+ * memberships for the same reps are untouched, so a rep can be on multiple
+ * managers' teams.
+ */
+export async function setTeamMembers(managerId: string, repIds: string[]) {
+  await requireAdmin();
+  // Validate the manager exists and is actually MANAGER/ADMIN — otherwise
+  // we'd silently create memberships pointing at a rep, which scope helpers
+  // would never consult.
+  const mgr = await db.crmUserProfile.findUnique({
+    where: { id: managerId },
+    select: { id: true, role: true },
+  });
+  if (!mgr) throw new Error("Manager not found");
+  if (mgr.role !== "MANAGER" && mgr.role !== "ADMIN") {
+    throw new Error("Only MANAGER/ADMIN users can have a team");
+  }
+  await db.$transaction(async (tx) => {
+    await tx.crmTeamMembership.deleteMany({
+      where: {
+        managerId,
+        repId: { notIn: repIds.length ? repIds : ["__none__"] },
+      },
+    });
+    for (const repId of repIds) {
+      await tx.crmTeamMembership.upsert({
+        where: { managerId_repId: { managerId, repId } },
+        create: { managerId, repId },
+        update: {},
+      });
+    }
+  });
+  revalidatePath("/crm/admin/users");
+  return { ok: true };
 }
 
 export async function createUser(data: Record<string, unknown>) {

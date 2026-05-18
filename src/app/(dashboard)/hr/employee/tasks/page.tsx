@@ -5,6 +5,7 @@ import { useSession } from 'next-auth/react'
 import { PageHeader } from '@/components/hr/shared/PageHeader'
 import { Card } from '@/components/hr/ui/card'
 import { TaskList } from '@/components/tasks/TaskList'
+import { useLocale } from '@/lib/i18n'
 
 /**
  * /hr/employee/tasks — the employee's own task surface.
@@ -24,6 +25,8 @@ import { TaskList } from '@/components/tasks/TaskList'
  *      view and getting confused. Same component, scoped + framed.
  */
 export default function EmployeeTasksPage() {
+  const { locale } = useLocale();
+  const isAr = locale === 'ar';
   const { data: session } = useSession()
   const firstName = session?.user?.name?.split(' ')[0]
 
@@ -36,7 +39,7 @@ export default function EmployeeTasksPage() {
             ? `${firstName}, here's everything assigned to you and tasks you've created`
             : 'Everything assigned to you, plus tasks you create for yourself'
         }
-        breadcrumbs={[{ label: 'My Workspace' }, { label: 'Tasks' }]}
+        breadcrumbs={[{ label: isAr ? 'مساحتي' : 'My Workspace' }, { label: isAr ? 'المهام' : 'Tasks' }]}
       />
 
       <Card className="p-4 sm:p-5">

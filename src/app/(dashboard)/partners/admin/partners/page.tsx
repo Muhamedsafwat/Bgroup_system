@@ -13,8 +13,11 @@ import { EmptyState } from '@/components/partners/ui/empty-state';
 import { TableSkeleton } from '@/components/partners/ui/skeleton';
 import { StatCard } from '@/components/partners/ui/stat-card';
 import { Users, UserPlus, UserCheck, UserX } from 'lucide-react';
+import { useLocale } from '@/lib/i18n';
 
 export default function AdminPartnersPage() {
+  const { locale } = useLocale();
+  const isAr = locale === 'ar';
   const [partners, setPartners] = useState<Partner[]>([]);
   const [pagination, setPagination] = useState<PaginationMeta | null>(null);
   const [page, setPage] = useState(1);
@@ -108,16 +111,16 @@ export default function AdminPartnersPage() {
     <div className="space-y-6">
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-2xl font-bold text-foreground">Partners</h1>
-          <p className="mt-1 text-sm text-muted-foreground">Manage partner accounts and commission rates</p>
+          <h1 className="text-2xl font-bold text-foreground">{isAr ? 'الشركاء' : 'Partners'}</h1>
+          <p className="mt-1 text-sm text-muted-foreground">{isAr ? 'إدارة حسابات الشركاء ونسب العمولات' : 'Manage partner accounts and commission rates'}</p>
         </div>
-        <Button icon={UserPlus} onClick={() => setShowCreate(true)}>Add Partner</Button>
+        <Button icon={UserPlus} onClick={() => setShowCreate(true)}>{isAr ? 'إضافة شريك' : 'Add Partner'}</Button>
       </div>
 
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-        <StatCard title="Total Partners" value={partners.length} icon={Users} color="blue" />
-        <StatCard title="Active" value={activeCount} icon={UserCheck} color="green" />
-        <StatCard title="Inactive" value={inactiveCount} icon={UserX} color="orange" />
+        <StatCard title={isAr ? 'إجمالي الشركاء' : 'Total Partners'} value={partners.length} icon={Users} color="blue" />
+        <StatCard title={isAr ? 'نشط' : 'Active'} value={activeCount} icon={UserCheck} color="green" />
+        <StatCard title={isAr ? 'غير نشط' : 'Inactive'} value={inactiveCount} icon={UserX} color="orange" />
       </div>
 
       <Card>

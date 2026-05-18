@@ -267,13 +267,13 @@ export function ProductsClient({
                   <Table>
                     <TableHeader>
                       <TableRow>
-                        <TableHead className="w-24">Code</TableHead>
+                        <TableHead className="w-24">{locale === 'ar' ? 'الكود' : 'Code'}</TableHead>
                         <TableHead>{t.common.name}</TableHead>
                         <TableHead>{t.forms.basePrice}</TableHead>
                         <TableHead>{t.forms.currency}</TableHead>
                         <TableHead>{t.forms.dealType}</TableHead>
                         <TableHead>{t.common.status}</TableHead>
-                        {canEdit && <TableHead className="w-32">Actions</TableHead>}
+                        {canEdit && <TableHead className="w-32">{locale === 'ar' ? 'إجراءات' : 'Actions'}</TableHead>}
                       </TableRow>
                     </TableHeader>
                     <TableBody>

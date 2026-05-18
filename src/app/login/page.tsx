@@ -9,6 +9,8 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { AlertCircle, Loader2, Eye, EyeOff } from "lucide-react";
+import { useLocale } from "@/lib/i18n";
+import { LocaleToggle } from "@/components/layout/LocaleToggle";
 
 export default function LoginPage() {
   return (
@@ -22,6 +24,7 @@ function LoginForm() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const callbackUrl = searchParams.get("callbackUrl") || "/";
+  const { t } = useLocale();
 
   // Pre-fill the email when we got bounced here from the force-change-password
   // flow (we always re-auth after a password change to dodge JWT-cache races).
@@ -54,27 +57,33 @@ function LoginForm() {
       }
 
       if (result?.error) {
-        setError("Invalid email or password");
+        setError(t.auth.invalidCredentials);
       } else {
         router.push(callbackUrl);
         router.refresh();
       }
     } catch {
-      setError("Something went wrong. Please try again.");
+      setError(t.auth.somethingWentWrong);
     } finally {
       setLoading(false);
     }
   }
 
   return (
-    <div className="min-h-screen flex items-center justify-center bg-muted/50 p-4">
+    <div className="min-h-screen flex flex-col items-center justify-center bg-muted/50 p-4">
+      {/* Top bar with locale toggle — sits outside the card so it's reachable
+          before sign-in. Users who land here in the wrong language can flip
+          before typing anything else. */}
+      <div className="w-full max-w-md flex justify-end mb-3">
+        <LocaleToggle />
+      </div>
       <Card className="w-full max-w-md">
         <CardHeader className="text-center">
           <div className="mx-auto h-12 w-12 rounded-xl bg-primary flex items-center justify-center text-primary-foreground font-bold text-xl mb-4">
             B
           </div>
-          <CardTitle className="text-2xl">Welcome back</CardTitle>
-          <CardDescription>Sign in to BGroup Super App</CardDescription>
+          <CardTitle className="text-2xl">{t.auth.welcomeBack}</CardTitle>
+          <CardDescription>{t.auth.signInToBGroup}</CardDescription>
         </CardHeader>
         <CardContent className="space-y-4">
           {/* Email + Password */}
@@ -87,11 +96,11 @@ function LoginForm() {
             )}
 
             <div className="space-y-2">
-              <Label htmlFor="email">Email</Label>
+              <Label htmlFor="email">{t.common.email}</Label>
               <Input
                 id="email"
                 type="email"
-                placeholder="you@company.com"
+                placeholder={t.auth.emailPlaceholder}
                 value={email}
                 onChange={(e) => setEmail(e.target.value)}
                 required
@@ -100,12 +109,12 @@ function LoginForm() {
             </div>
 
             <div className="space-y-2">
-              <Label htmlFor="password">Password</Label>
+              <Label htmlFor="password">{t.auth.password}</Label>
               <div className="relative">
                 <Input
                   id="password"
                   type={showPassword ? "text" : "password"}
-                  placeholder="Enter your password"
+                  placeholder={t.auth.passwordPlaceholder}
                   value={password}
                   onChange={(e) => setPassword(e.target.value)}
                   required
@@ -115,7 +124,7 @@ function LoginForm() {
                 <button
                   type="button"
                   onClick={() => setShowPassword((s) => !s)}
-                  aria-label={showPassword ? "Hide password" : "Show password"}
+                  aria-label={showPassword ? t.auth.hidePassword : t.auth.showPassword}
                   className="absolute end-0 top-0 h-full w-10 inline-flex items-center justify-center text-muted-foreground hover:text-foreground rounded-md"
                   tabIndex={-1}
                 >
@@ -126,13 +135,13 @@ function LoginForm() {
 
             <Button type="submit" className="w-full" disabled={loading}>
               {loading && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
-              Sign in
+              {t.auth.signIn}
             </Button>
           </form>
 
           <div className="text-center text-sm text-muted-foreground">
             <Link href="/forgot-password" className="hover:text-primary underline-offset-4 hover:underline">
-              Forgot your password?
+              {t.auth.forgotPassword}
             </Link>
           </div>
         </CardContent>

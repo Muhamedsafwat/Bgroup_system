@@ -10,6 +10,7 @@ import { toast } from "sonner";
 import { TaskRow } from "./TaskRow";
 import { TaskForm } from "./TaskForm";
 import { TaskDrawer } from "./TaskDrawer";
+import { useLocale } from "@/lib/i18n";
 import { BulkActionBar } from "@/components/shared/BulkActionBar";
 import { EmptyState } from "@/components/shared/EmptyState";
 import { SavedViewsToolbar, type SavedView } from "@/components/shared/SavedViewsToolbar";
@@ -74,6 +75,13 @@ export function TaskList({
   compact?: boolean;
   heading?: string;
 }) {
+  const { locale } = useLocale();
+  const isAr = locale === "ar";
+  // Per-render bucket label map so the tabs swap on locale toggle.
+  const bucketLabel: Record<TaskBucket, string> = isAr
+    ? { today: "اليوم", overdue: "متأخر", upcoming: "قادم", someday: "لاحقًا", done: "منتهية" }
+    : BUCKET_LABEL;
+
   const [filters, setFilters] = useState<TaskFilters>({
     bucket: "today",
     q: "",
@@ -290,7 +298,7 @@ export function TaskList({
           <TabsList>
             {ALL_BUCKETS.map((b) => (
               <TabsTrigger key={b} value={b}>
-                {BUCKET_LABEL[b]}
+                {bucketLabel[b]}
                 {counts[b] > 0 && (
                   <span className="ms-1.5 text-[10px] bg-muted rounded px-1.5 py-0.5">
                     {counts[b]}

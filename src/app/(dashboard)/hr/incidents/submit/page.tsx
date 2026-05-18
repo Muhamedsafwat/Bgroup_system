@@ -5,6 +5,7 @@ import { describeError } from "@/lib/zod-errors";
 import React, { useState, useRef, useEffect } from 'react'
 import { useQuery, useMutation } from '@tanstack/react-query'
 import { Check, ChevronRight, User, AlertTriangle, FileText, Send } from 'lucide-react'
+import { useLocale } from '@/lib/i18n'
 import api from '@/lib/hr/api'
 import { formatDate, formatCurrency, cn } from '@/lib/hr/utils'
 import { PageHeader } from '@/components/hr/shared/PageHeader'
@@ -99,6 +100,8 @@ function StepIndicator({ currentStep }: { currentStep: number }) {
 }
 
 export default function SubmitIncidentPage() {
+  const { locale } = useLocale()
+  const isAr = locale === 'ar'
   const [step, setStep] = useState(1)
   const [employeeSearch, setEmployeeSearch] = useState('')
   const [showDropdown, setShowDropdown] = useState(false)
@@ -200,8 +203,8 @@ export default function SubmitIncidentPage() {
     return (
       <div className="space-y-6">
         <PageHeader
-          title="Submit Incident"
-          breadcrumbs={[{ label: 'Incidents' }, { label: 'Submit' }]}
+          title={isAr ? 'تقديم مخالفة' : 'Submit Incident'}
+          breadcrumbs={[{ label: isAr ? 'المخالفات' : 'Incidents' }, { label: isAr ? 'تقديم' : 'Submit' }]}
         />
         <div className="bg-card rounded-xl border border-border p-12 text-center max-w-lg mx-auto">
           <div className="h-16 w-16 rounded-full bg-emerald-100 flex items-center justify-center mx-auto mb-4">
@@ -232,7 +235,7 @@ export default function SubmitIncidentPage() {
       <PageHeader
         title="Submit Incident"
         description="Record a new disciplinary incident with 4-step guided process"
-        breadcrumbs={[{ label: 'Incidents' }, { label: 'Submit New' }]}
+        breadcrumbs={[{ label: isAr ? 'المخالفات' : 'Incidents' }, { label: isAr ? 'تقديم جديد' : 'Submit New' }]}
       />
 
       <div className="max-w-2xl mx-auto">

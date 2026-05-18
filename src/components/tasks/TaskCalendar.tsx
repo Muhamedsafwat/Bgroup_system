@@ -5,6 +5,7 @@ import { Button } from "@/components/ui/button";
 import { ChevronLeft, ChevronRight, Loader2 } from "lucide-react";
 import { TaskDrawer } from "./TaskDrawer";
 import { cn } from "@/lib/utils";
+import { useLocale } from "@/lib/i18n";
 import type { TaskPriority, TaskStatus } from "@/generated/prisma";
 
 type CalendarTask = {
@@ -38,6 +39,8 @@ function ymd(d: Date) {
 }
 
 export function TaskCalendar() {
+  const { locale } = useLocale();
+  const isAr = locale === "ar";
   const [cursor, setCursor] = useState(startOfMonth(new Date()));
   const [tasks, setTasks] = useState<CalendarTask[]>([]);
   const [loading, setLoading] = useState(true);
@@ -110,7 +113,7 @@ export function TaskCalendar() {
             size="sm"
             onClick={() => setCursor(startOfMonth(new Date()))}
           >
-            Today
+            {isAr ? "اليوم" : "Today"}
           </Button>
           <Button
             variant="outline"

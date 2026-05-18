@@ -11,8 +11,11 @@ import { EmptyState } from '@/components/partners/ui/empty-state';
 import { TableSkeleton } from '@/components/partners/ui/skeleton';
 import { StatCard } from '@/components/partners/ui/stat-card';
 import { DollarSign, Clock, CheckCircle, Banknote } from 'lucide-react';
+import { useLocale } from '@/lib/i18n';
 
 export default function AdminCommissionsPage() {
+  const { locale } = useLocale();
+  const isAr = locale === 'ar';
   const [commissions, setCommissions] = useState<Commission[]>([]);
   const [pagination, setPagination] = useState<PaginationMeta | null>(null);
   const [page, setPage] = useState(1);
@@ -83,15 +86,15 @@ export default function AdminCommissionsPage() {
   return (
     <div className="space-y-6">
       <div>
-        <h1 className="text-2xl font-bold text-foreground">Commissions</h1>
-        <p className="mt-1 text-sm text-muted-foreground">Track and manage partner commission payouts</p>
+        <h1 className="text-2xl font-bold text-foreground">{isAr ? 'العمولات' : 'Commissions'}</h1>
+        <p className="mt-1 text-sm text-muted-foreground">{isAr ? 'تتبع وإدارة دفعات عمولات الشركاء' : 'Track and manage partner commission payouts'}</p>
       </div>
 
       <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-        <StatCard title="Total Commissions" value={`$${(summary?.totalAmount ?? 0).toLocaleString()}`} subtitle={`${summary?.totalCommissions ?? 0} total`} icon={DollarSign} color="blue" />
-        <StatCard title="Pending" value={`$${getStatusAmount('PENDING').toLocaleString()}`} subtitle={`${getStatusCount('PENDING')} pending`} icon={Clock} color="orange" />
-        <StatCard title="Approved" value={`$${getStatusAmount('APPROVED').toLocaleString()}`} subtitle={`${getStatusCount('APPROVED')} approved`} icon={CheckCircle} color="green" />
-        <StatCard title="Paid" value={`$${getStatusAmount('PAID').toLocaleString()}`} subtitle={`${getStatusCount('PAID')} paid`} icon={Banknote} color="purple" />
+        <StatCard title={isAr ? 'إجمالي العمولات' : 'Total Commissions'} value={`$${(summary?.totalAmount ?? 0).toLocaleString()}`} subtitle={isAr ? `${summary?.totalCommissions ?? 0} إجمالًا` : `${summary?.totalCommissions ?? 0} total`} icon={DollarSign} color="blue" />
+        <StatCard title={isAr ? 'قيد الانتظار' : 'Pending'} value={`$${getStatusAmount('PENDING').toLocaleString()}`} subtitle={isAr ? `${getStatusCount('PENDING')} قيد الانتظار` : `${getStatusCount('PENDING')} pending`} icon={Clock} color="orange" />
+        <StatCard title={isAr ? 'معتمد' : 'Approved'} value={`$${getStatusAmount('APPROVED').toLocaleString()}`} subtitle={isAr ? `${getStatusCount('APPROVED')} معتمد` : `${getStatusCount('APPROVED')} approved`} icon={CheckCircle} color="green" />
+        <StatCard title={isAr ? 'مدفوع' : 'Paid'} value={`$${getStatusAmount('PAID').toLocaleString()}`} subtitle={isAr ? `${getStatusCount('PAID')} مدفوع` : `${getStatusCount('PAID')} paid`} icon={Banknote} color="purple" />
       </div>
 
       <Card>

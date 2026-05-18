@@ -13,6 +13,7 @@ import {
   Loader2,
   CheckCircle,
 } from 'lucide-react'
+import { useLocale } from '@/lib/i18n'
 import { PageHeader } from '@/components/hr/shared/PageHeader'
 import { ConfirmDialog } from '@/components/hr/shared/ConfirmDialog'
 import { Button } from '@/components/hr/ui/button'
@@ -84,6 +85,8 @@ const STATUS_CONFIG: Record<string, { label: string; className: string }> = {
 }
 
 export default function MonthlyPayrollPage() {
+  const { locale } = useLocale();
+  const isAr = locale === 'ar';
   const queryClient = useQueryClient()
 
   const now = new Date()
@@ -213,7 +216,7 @@ export default function MonthlyPayrollPage() {
       <PageHeader
         title="Monthly Payroll"
         description="Calculate, review and finalize monthly salaries"
-        breadcrumbs={[{ label: 'Payroll', href: '/payroll' }, { label: 'Monthly' }]}
+        breadcrumbs={[{ label: isAr ? 'الرواتب' : 'Payroll', href: '/payroll' }, { label: isAr ? 'شهري' : 'Monthly' }]}
         actions={
           <div className="flex items-center gap-2">
             <Button

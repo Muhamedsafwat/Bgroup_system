@@ -2451,13 +2451,23 @@ model CrmUserProfile {
   monthlyTargetEGP Decimal?     @db.Decimal(12, 2)
   active           Boolean      @default(true)
 
-  /// The sales manager this rep reports to. A MANAGER is responsible for
-  /// only the reps explicitly assigned to them (not the whole team) — the
-  /// admin makes the assignment from the CRM settings or the org chart.
-  /// Null for managers themselves, admins, assistants, account managers.
+  /// Legacy single-FK "primary manager" — the rep's first or main reporting
+  /// line. Visibility queries now OR this with the many-to-many `managedBy`
+  /// relation below, so any manager in either set sees the rep's pipeline.
+  /// Admin-curated via the team-members picker; the first ticked manager
+  /// becomes the primary, additional ones go in the join table.
   managerId        String?
   manager          CrmUserProfile? @relation("CrmManagerReports", fields: [managerId], references: [id])
   reports          CrmUserProfile[] @relation("CrmManagerReports")
+
+  /// Many-to-many team membership: a rep can be on multiple managers' teams
+  /// at once (e.g. a senior AE shared between a regional VP and a product
+  /// specialist). The admin "Team members" picker syncs this — adding a
+  /// tick inserts a row, unticking deletes it. Visibility for the pipeline
+  /// + cold leads + dashboards ORs this against `managerId` so legacy data
+  /// keeps working until everything has been migrated to the join table.
+  managedBy        CrmTeamMembership[] @relation("CrmTeamMembershipRep")
+  manages          CrmTeamMembership[] @relation("CrmTeamMembershipManager")
 
   /// Optional explicit link to the user's HR employee record. When set,
   /// commission liability rolls into payroll automatically and the
@@ -2488,6 +2498,25 @@ model CrmUserProfile {
   @@index([entityId])
   @@index([role])
   @@map("crm_user_profiles")
+}
+
+/// Many-to-many manager↔rep join. One row per (manager, rep) pair — admins
+/// add entries via the team-members picker. A rep can be on multiple
+/// managers' teams. Both relations cascade-delete so dropping a user
+/// doesn't leave dangling rows. Distinct from `CrmUserProfile.managerId`
+/// (which is the single "primary" reporting line kept for back-compat);
+/// visibility queries OR both.
+model CrmTeamMembership {
+  id        String         @id @default(cuid())
+  managerId String
+  manager   CrmUserProfile @relation("CrmTeamMembershipManager", fields: [managerId], references: [id], onDelete: Cascade)
+  repId     String
+  rep       CrmUserProfile @relation("CrmTeamMembershipRep", fields: [repId], references: [id], onDelete: Cascade)
+  createdAt DateTime       @default(now())
+
+  @@unique([managerId, repId])
+  @@index([repId])
+  @@map("crm_team_memberships")
 }
 
 // ============================================================================
