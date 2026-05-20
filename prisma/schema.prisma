@@ -2647,6 +2647,12 @@ model CrmOpportunity {
 
   // Product linkage
   products CrmOpportunityProduct[]
+  /// Repeatable contact roster — one opp can have any number of contacts
+  /// (decision maker, technical lead, procurement, etc.). The legacy
+  /// `customerContact*` columns above still hold the single "headline"
+  /// contact for backwards-compat with rows created before the join
+  /// existed; new contacts always go here. Cascade-deletes with the opp.
+  contacts CrmOpportunityContact[]
 
   // Timeline
   createdAt         DateTime  @default(now())
@@ -2726,6 +2732,33 @@ model CrmOpportunityProduct {
 
   @@unique([opportunityId, productId])
   @@map("crm_opportunity_products")
+}
+
+/// One row per contact person on an opportunity. Free-text (not FK'd to
+/// CrmContact) because reps capture contacts inline during the deal — the
+/// curated CrmContact directory is admin-managed and only covers companies
+/// we explicitly maintain. The CRM Contacts page surfaces both: directory
+/// rows AND these opp-level rows, deduped by phone/email at the read
+/// site. `role` is free text ("Decision maker", "Technical lead", etc.).
+/// Cascade-deletes when the parent opp is hard-deleted.
+model CrmOpportunityContact {
+  id            String         @id @default(cuid())
+  opportunityId String
+  opportunity   CrmOpportunity @relation(fields: [opportunityId], references: [id], onDelete: Cascade)
+  name          String
+  role          String?
+  phone         String?
+  email         String?
+  whatsapp      String?
+  isPrimary     Boolean        @default(false)
+  notes         String?
+  createdAt     DateTime       @default(now())
+  updatedAt     DateTime       @updatedAt
+
+  @@index([opportunityId])
+  @@index([email])
+  @@index([phone])
+  @@map("crm_opportunity_contacts")
 }
 
 model CrmStageHistory {

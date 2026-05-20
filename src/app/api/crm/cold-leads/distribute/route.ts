@@ -60,21 +60,11 @@ export async function POST(request: Request) {
     );
   }
 
-  // If the caller is a sales MANAGER (not platform admin / CRM ADMIN), they
-  // can only distribute to their own direct reports. Cross-team handoffs
-  // should go through the admin.
-  if (session.user.crmRole === "MANAGER") {
-    const mine = await db.crmUserProfile.findMany({
-      where: { id: { in: parsed.data.repIds }, managerId: session.user.crmProfileId },
-      select: { id: true },
-    });
-    if (mine.length !== parsed.data.repIds.length) {
-      return NextResponse.json(
-        { error: "Managers can only distribute to their own direct reports" },
-        { status: 403 }
-      );
-    }
-  }
+  // No team restriction on MANAGER any more. Managers run the whole sales
+  // floor — "supply any rep with data" was the explicit ask. The earlier
+  // "direct reports only" gate forced cross-team distribution through an
+  // admin, which managers don't want to wait on. Active-rep validation
+  // above still prevents assigning to disabled accounts.
 
   // Round-robin assignment.
   const now = new Date();

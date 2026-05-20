@@ -232,7 +232,7 @@ export default function OvertimePolicyPage() {
             <DialogTitle>{editPolicy ? 'Edit Overtime Policy' : 'Add Overtime Policy'}</DialogTitle>
           </DialogHeader>
           <div className="space-y-4 py-2">
-            <div className="grid grid-cols-3 gap-4">
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
               <div className="space-y-1.5">
                 <Label>Type Code *</Label>
                 <Input value={form.type_code} onChange={(e) => setForm((f) => ({ ...f, type_code: e.target.value }))} placeholder="e.g. WD" />

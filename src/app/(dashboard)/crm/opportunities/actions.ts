@@ -161,6 +161,9 @@ export async function getOpportunity(id: string) {
       attachments: {
         orderBy: { createdAt: "desc" },
       },
+      contacts: {
+        orderBy: [{ isPrimary: "desc" }, { createdAt: "asc" }],
+      },
     },
   });
   return result ? JSON.parse(JSON.stringify(result)) : null;
@@ -169,6 +172,23 @@ export async function getOpportunity(id: string) {
 export async function createOpportunity(input: CreateOpportunityInput) {
   const session = await getRequiredSession();
   const parsed = createOpportunitySchema.parse(input);
+
+  // Owner resolution: MANAGER/ADMIN can pass `ownerId` to create "on behalf
+  // of" another rep — this is the "act as the sales rep" workflow. For any
+  // other role (REP, ASSISTANT, ACCOUNT_MGR) we silently drop the override
+  // and use the caller. If the picked owner doesn't exist or is inactive,
+  // 400 so the manager isn't surprised by a silent fallback.
+  let resolvedOwnerId = session.id;
+  if (parsed.ownerId && (session.role === "MANAGER" || session.role === "ADMIN")) {
+    const target = await db.crmUserProfile.findUnique({
+      where: { id: parsed.ownerId },
+      select: { id: true, active: true },
+    });
+    if (!target || !target.active) {
+      throw new Error("Selected owner is not an active CRM rep");
+    }
+    resolvedOwnerId = target.id;
+  }
 
   // Customer company is plain text on the opp. We DO NOT look up or create
   // a CrmCompany row — that table is for the admin-curated principal
@@ -212,7 +232,7 @@ export async function createOpportunity(input: CreateOpportunityInput) {
         customerContactEmail: parsed.customerContactEmail?.trim() || null,
         companyId: companyId ?? null,
         primaryContactId: parsed.primaryContactId || null,
-        ownerId: session.id,
+        ownerId: resolvedOwnerId,
         entityId: parsed.entityId,
         title,
         stage: "NEW",
@@ -278,6 +298,23 @@ export async function createOpportunity(input: CreateOpportunityInput) {
       }
     }
 
+    // Multi-contact roster. Reps can attach 0..N contacts to an opp; if
+    // none is marked primary explicitly, the first row gets the flag so
+    // the legacy single-contact UI surfaces still have something to show.
+    if (parsed.contacts && parsed.contacts.length) {
+      const rows = parsed.contacts.map((c, i) => ({
+        opportunityId: created.id,
+        name: c.name.trim(),
+        role: c.role?.trim() || null,
+        phone: c.phone?.trim() || null,
+        email: c.email?.trim() || null,
+        whatsapp: c.whatsapp?.trim() || null,
+        isPrimary: c.isPrimary ?? i === 0,
+        notes: c.notes?.trim() || null,
+      }));
+      await tx.crmOpportunityContact.createMany({ data: rows });
+    }
+
     return created;
   });
 
@@ -299,14 +336,35 @@ export async function updateOpportunity(id: string, input: UpdateOpportunityInpu
 
   // productIds is handled separately (joins through CrmOpportunityProduct) —
   // don't push it onto the CrmOpportunity update payload or Prisma will reject.
+  // ownerId is gated below: MANAGER/ADMIN only, with target-active validation.
   for (const [key, value] of Object.entries(parsed)) {
     if (value === undefined) continue;
     if (key === "productIds") continue;
+    if (key === "ownerId") continue;
+    if (key === "contacts") continue;
     if (key === "expectedCloseDate" || key === "nextActionDate") {
       updateData[key] = value ? new Date(value as string) : null;
     } else {
       updateData[key] = value;
     }
+  }
+
+  // Owner reassignment — MANAGER/ADMIN can hand an opp to a different rep
+  // directly from the edit form (no need to round-trip through the bulk
+  // transfer endpoint for a single move). Silently dropped for any other
+  // role; mismatched/inactive targets are surfaced as a 400.
+  if (parsed.ownerId !== undefined && parsed.ownerId !== existing.ownerId) {
+    if (session.role !== "MANAGER" && session.role !== "ADMIN") {
+      throw new Error("Only a manager or admin can reassign opportunity owner");
+    }
+    const target = await db.crmUserProfile.findUnique({
+      where: { id: parsed.ownerId },
+      select: { id: true, active: true },
+    });
+    if (!target || !target.active) {
+      throw new Error("Selected owner is not an active CRM rep");
+    }
+    updateData.ownerId = target.id;
   }
 
   // Recompute financials if value or currency changed
@@ -363,6 +421,50 @@ export async function updateOpportunity(id: string, input: UpdateOpportunityInpu
               unitPriceEGP: Number(p.basePrice) * fx,
               discountPct: 0,
             },
+          });
+        }
+      }
+    }
+
+    // Sync the multi-contact roster: rows with an id are updated in
+    // place, rows without an id are inserted, and any pre-existing rows
+    // whose id isn't in the incoming list are deleted. Pass an empty
+    // array to clear everything. Skipping the key entirely leaves the
+    // existing contacts untouched.
+    if (parsed.contacts) {
+      const incoming = parsed.contacts;
+      const existingRows = await tx.crmOpportunityContact.findMany({
+        where: { opportunityId: id },
+        select: { id: true },
+      });
+      const keepIds = new Set(
+        incoming.map((c) => c.id).filter((cid): cid is string => !!cid)
+      );
+      const toDelete = existingRows.filter((r) => !keepIds.has(r.id));
+      if (toDelete.length) {
+        await tx.crmOpportunityContact.deleteMany({
+          where: { id: { in: toDelete.map((r) => r.id) } },
+        });
+      }
+      for (let i = 0; i < incoming.length; i++) {
+        const c = incoming[i];
+        const data = {
+          name: c.name.trim(),
+          role: c.role?.trim() || null,
+          phone: c.phone?.trim() || null,
+          email: c.email?.trim() || null,
+          whatsapp: c.whatsapp?.trim() || null,
+          isPrimary: c.isPrimary ?? i === 0,
+          notes: c.notes?.trim() || null,
+        };
+        if (c.id) {
+          await tx.crmOpportunityContact.update({
+            where: { id: c.id },
+            data,
+          });
+        } else {
+          await tx.crmOpportunityContact.create({
+            data: { ...data, opportunityId: id },
           });
         }
       }

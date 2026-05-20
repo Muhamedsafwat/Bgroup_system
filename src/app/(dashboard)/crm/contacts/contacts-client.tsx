@@ -18,16 +18,20 @@ import {
 import { EmptyState } from "@/components/crm/shared/EmptyState";
 import { ChevronLeft, ChevronRight, Search, User, Plus } from "lucide-react";
 
+/// Unified row shape — see getContacts in actions.ts. `source` decides
+/// whether scopeHref points at a company page or an opportunity page.
 type ContactsData = {
   contacts: Array<{
     id: string;
+    source: "directory" | "opportunity";
     fullName: string;
     role: string | null;
     email: string | null;
     phone: string | null;
-    whatsapp: string | null;
     isPrimary: boolean;
-    company: { id: string; nameEn: string; nameAr: string | null };
+    scopeId: string;
+    scopeLabel: string;
+    scopeHref: string;
   }>;
   total: number;
   page: number;
@@ -55,7 +59,7 @@ export function ContactsClient({
       const params = new URLSearchParams();
       if (value) params.set("search", value);
       params.set("page", "1");
-      router.push(`/contacts?${params.toString()}`);
+      router.push(`/crm/contacts?${params.toString()}`);
     });
   }
 
@@ -64,7 +68,7 @@ export function ContactsClient({
       const params = new URLSearchParams();
       if (search) params.set("search", search);
       params.set("page", page.toString());
-      router.push(`/contacts?${params.toString()}`);
+      router.push(`/crm/contacts?${params.toString()}`);
     });
   }
 
@@ -121,22 +125,32 @@ export function ContactsClient({
                 {data.contacts.map((contact) => (
                   <TableRow key={contact.id}>
                     <TableCell>
-                      <Link
-                        href={`/contacts/${contact.id}`}
-                        className="font-medium hover:underline"
-                      >
-                        {contact.fullName}
-                      </Link>
+                      {/* Directory rows have a contact-detail page; opp
+                          rows don't (they live on the opportunity), so
+                          the cell is just plain text for those. */}
+                      {contact.source === "directory" ? (
+                        <Link
+                          href={`/crm/contacts/${contact.id}`}
+                          className="font-medium hover:underline"
+                        >
+                          {contact.fullName}
+                        </Link>
+                      ) : (
+                        <span className="font-medium">{contact.fullName}</span>
+                      )}
                     </TableCell>
                     <TableCell>
                       <Link
-                        href={`/companies/${contact.company.id}`}
+                        href={contact.scopeHref}
                         className="text-primary hover:underline"
                       >
-                        {locale === "ar" && contact.company.nameAr
-                          ? contact.company.nameAr
-                          : contact.company.nameEn}
+                        {contact.scopeLabel}
                       </Link>
+                      {contact.source === "opportunity" && (
+                        <Badge variant="outline" className="ms-2 text-[10px]">
+                          {locale === "ar" ? "فرصة" : "Opportunity"}
+                        </Badge>
+                      )}
                     </TableCell>
                     <TableCell className="text-muted-foreground">
                       {contact.role ?? "—"}

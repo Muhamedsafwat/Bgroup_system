@@ -5,7 +5,10 @@ import type { Prisma } from "@/generated/prisma";
  * Who can see what in the cold-lead system:
  *
  *   ADMIN          — every lead (the "big directory" the user described).
- *   MANAGER        — leads assigned to themselves or any of their direct reports.
+ *   MANAGER        — every lead. Managers distribute leads across the
+ *                    whole sales floor, not just their direct team —
+ *                    "supply any rep with data" means the directory
+ *                    must be unbounded so they can assign to anyone.
  *   ASSISTANT      — read access to the whole entity (for coverage planning).
  *   REP            — only leads explicitly assigned to them.
  *   ACCOUNT_MGR    — out of scope, returns an empty filter.
@@ -18,18 +21,7 @@ export function scopeColdLeadsByRole(session: SessionUser): Prisma.CrmColdLeadWh
     case "ADMIN":
       return {};
     case "MANAGER":
-      return {
-        OR: [
-          { assignedToId: session.id },
-          // Both reporting paths: primary single-FK manager AND
-          // many-to-many memberships. A rep on multiple managers' teams
-          // shows up for every one of them.
-          { assignedTo: { managerId: session.id } },
-          { assignedTo: { managedBy: { some: { managerId: session.id } } } },
-          // Managers also see the unassigned pool so they can distribute.
-          { assignedToId: null },
-        ],
-      };
+      return {};
     case "ASSISTANT":
       return session.entityId
         ? { assignedTo: { entityId: session.entityId } }

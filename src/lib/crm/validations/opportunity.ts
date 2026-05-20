@@ -1,5 +1,22 @@
 import { z } from "zod";
 
+/**
+ * Repeatable contact row attached to an opportunity. `name` is the only
+ * required field — the rep often knows "Ahmed from procurement" before
+ * they've captured a phone or email. `id` is present on rows that already
+ * exist (used to update in place); new rows omit it.
+ */
+export const opportunityContactSchema = z.object({
+  id: z.string().optional(),
+  name: z.string().trim().min(1, "Contact name is required").max(200),
+  role: z.string().trim().max(120).optional().nullable(),
+  phone: z.string().trim().max(40).optional().nullable(),
+  email: z.string().trim().max(200).optional().nullable(),
+  whatsapp: z.string().trim().max(40).optional().nullable(),
+  isPrimary: z.boolean().optional(),
+  notes: z.string().trim().max(1000).optional().nullable(),
+});
+
 export const createOpportunitySchema = z.object({
   /// Customer company name as free text. Reps type the prospect's company
   /// name here — there's no curated directory of customer companies. The
@@ -40,6 +57,15 @@ export const createOpportunitySchema = z.object({
   description: z.string().optional(),
   techRequirements: z.string().optional(),
   productIds: z.array(z.string()).optional(),
+  /// Owner override — MANAGER + ADMIN can create an opp "on behalf of"
+  /// any active rep. The server action enforces the role gate; for REPs
+  /// this field is ignored and the caller is always the owner.
+  ownerId: z.string().optional(),
+  /// Repeatable contact roster — replaces the single-trio
+  /// customerContactName/Phone/Email pattern. The first entry (or the
+  /// one with `isPrimary: true`) is also written into the legacy free-text
+  /// columns so search/list views keep working without a UI sweep.
+  contacts: z.array(opportunityContactSchema).optional(),
 });
 
 export const updateOpportunitySchema = z.object({
@@ -82,6 +108,14 @@ export const updateOpportunitySchema = z.object({
   /// removed ones are deleted (cascade-safe — quote/commission FK references
   /// the opportunity, not these line rows).
   productIds: z.array(z.string()).optional(),
+  /// Owner reassignment — MANAGER + ADMIN can move an opp to a different
+  /// active rep without going through the bulk-transfer endpoint. The
+  /// server action enforces the role gate.
+  ownerId: z.string().optional(),
+  /// Full contact roster to sync. Rows with an `id` are updated in place;
+  /// rows without an id are inserted; previously-existing ids not in this
+  /// array are deleted. Pass an empty array to clear every contact.
+  contacts: z.array(opportunityContactSchema).optional(),
 });
 
 export const stageChangeSchema = z.object({

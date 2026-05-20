@@ -11,6 +11,7 @@ import { useCommandPalette } from "@/components/layout/CommandPaletteProvider";
 import { NotificationCenter } from "@/components/layout/NotificationCenter";
 import { LocaleToggle } from "@/components/layout/LocaleToggle";
 import { useLocale } from "@/lib/i18n";
+import { cn } from "@/lib/utils";
 
 /** Cuid / ULID / UUID — any of these means this segment is an entity id, not a navigable category. */
 function looksLikeId(segment: string): boolean {
@@ -165,38 +166,74 @@ export function Header() {
   const shortcutLabel = isMac ? "⌘K" : "Ctrl K";
   const isDark = mounted && resolvedTheme === "dark";
 
+  // On narrow screens, dropping every crumb but the trailing two keeps the
+  // header readable without losing the user's place — the module crumb is
+  // already covered by the bottom-nav active state.
+  const mobileCrumbs = breadcrumbs.slice(-2);
+
   return (
-    <header className="h-14 border-b bg-background flex items-center justify-between px-6">
-      {/* Breadcrumbs */}
-      <nav className="flex items-center gap-1 text-sm" aria-label="Breadcrumb">
-        {breadcrumbs.map((crumb, i) => {
-          const isLast = i === breadcrumbs.length - 1;
-          return (
-            <span key={i} className="flex items-center gap-1">
-              {i > 0 && <span className="text-muted-foreground mx-1">/</span>}
-              {isLast || !crumb.href ? (
-                <span className={isLast ? "font-medium" : "text-muted-foreground"}>
-                  {crumb.label}
-                </span>
-              ) : (
-                <Link
-                  href={crumb.href}
-                  className="text-muted-foreground hover:text-foreground hover:underline transition-colors"
-                >
-                  {crumb.label}
-                </Link>
-              )}
-            </span>
-          );
-        })}
+    <header className="h-14 border-b bg-background flex items-center justify-between gap-2 px-3 md:px-6">
+      {/* Breadcrumbs — desktop shows the full trail; mobile shows only the
+          tail to leave room for the action buttons. min-w-0 + overflow-hidden
+          on the nav means a long final label truncates instead of pushing
+          the right-side buttons off-screen. */}
+      <nav
+        className="flex items-center gap-1 text-sm min-w-0 overflow-hidden"
+        aria-label="Breadcrumb"
+      >
+        <span className="hidden md:contents">
+          {breadcrumbs.map((crumb, i) => {
+            const isLast = i === breadcrumbs.length - 1;
+            return (
+              <span key={i} className="flex items-center gap-1 min-w-0">
+                {i > 0 && <span className="text-muted-foreground mx-1 shrink-0">/</span>}
+                {isLast || !crumb.href ? (
+                  <span className={cn("truncate", isLast ? "font-medium" : "text-muted-foreground")}>
+                    {crumb.label}
+                  </span>
+                ) : (
+                  <Link
+                    href={crumb.href}
+                    className="text-muted-foreground hover:text-foreground hover:underline transition-colors truncate"
+                  >
+                    {crumb.label}
+                  </Link>
+                )}
+              </span>
+            );
+          })}
+        </span>
+        <span className="contents md:hidden">
+          {mobileCrumbs.map((crumb, i) => {
+            const isLast = i === mobileCrumbs.length - 1;
+            return (
+              <span key={i} className="flex items-center gap-1 min-w-0">
+                {i > 0 && <span className="text-muted-foreground mx-1 shrink-0">/</span>}
+                {isLast || !crumb.href ? (
+                  <span className={cn("truncate", isLast ? "font-medium" : "text-muted-foreground")}>
+                    {crumb.label}
+                  </span>
+                ) : (
+                  <Link
+                    href={crumb.href}
+                    className="text-muted-foreground hover:text-foreground hover:underline transition-colors truncate"
+                  >
+                    {crumb.label}
+                  </Link>
+                )}
+              </span>
+            );
+          })}
+        </span>
       </nav>
 
-      {/* Right section */}
-      <div className="flex items-center gap-2">
+      {/* Right section — shrink-0 so the breadcrumb area gets all the squeeze
+          when space runs out; gap drops on mobile to fit four controls. */}
+      <div className="flex items-center gap-1 md:gap-2 shrink-0">
         <Button
           variant="outline"
           size="sm"
-          className="h-8 gap-2 text-muted-foreground"
+          className="h-8 gap-2 text-muted-foreground px-2 md:px-3"
           onClick={() => setOpen(true)}
           aria-label={t.common.search}
         >

@@ -5,10 +5,14 @@ import * as React from "react"
 import { cn } from "@/lib/utils"
 
 function Table({ className, ...props }: React.ComponentProps<"table">) {
+  // min-w-0 on the container so it can shrink inside a flex/grid parent —
+  // without it, the container's intrinsic width is the table's natural
+  // width and overflow-x-auto never engages on phones. The table itself
+  // keeps w-full so it fills the container on desktop where it does fit.
   return (
     <div
       data-slot="table-container"
-      className="relative w-full overflow-x-auto"
+      className="relative w-full min-w-0 overflow-x-auto"
     >
       <table
         data-slot="table"

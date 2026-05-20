@@ -15,11 +15,14 @@ export function DashboardShell({ children }: { children: React.ReactNode }) {
           <Sidebar />
         </div>
 
-        <div className="flex-1 flex flex-col min-w-0">
+        <div className="flex-1 flex flex-col min-w-0 overflow-x-hidden">
           <Header />
-          {/* pb-16 on mobile so bottom-nav doesn't overlap the last row of content */}
-          <main className="flex-1 bg-muted/30 pb-16 md:pb-0">
-            <div className="px-4 md:px-6 py-4 md:py-6">{children}</div>
+          {/* pb-16 on mobile so bottom-nav doesn't overlap the last row of
+              content. min-w-0 on <main> prevents a wide child (long URL,
+              long word, wide table without overflow-x) from pushing the
+              whole page horizontally on phones. */}
+          <main className="flex-1 bg-muted/30 pb-16 md:pb-0 min-w-0">
+            <div className="px-3 md:px-6 py-4 md:py-6 min-w-0">{children}</div>
           </main>
         </div>
 

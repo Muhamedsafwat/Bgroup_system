@@ -8,7 +8,12 @@ export default async function NewOpportunityPage() {
   const session = await getRequiredSession();
   const { t, locale } = await getServerT();
 
-  const [entities, leadSources, companies, products] = await Promise.all([
+  // MANAGER/ADMIN get the rep list so the form can render the "Assign to"
+  // picker — that's the "act as the rep" workflow. For REPs we skip the
+  // query entirely so a regular rep can't even see the dropdown.
+  const canActAsRep = session.role === "MANAGER" || session.role === "ADMIN";
+
+  const [entities, leadSources, companies, products, reps] = await Promise.all([
     getEntities(),
     getLeadSources(),
     db.crmCompany.findMany({
@@ -21,6 +26,13 @@ export default async function NewOpportunityPage() {
       select: { id: true, code: true, nameEn: true, nameAr: true, entityId: true, basePrice: true, currency: true },
       orderBy: { code: "asc" },
     }),
+    canActAsRep
+      ? db.crmUserProfile.findMany({
+          where: { active: true, role: { in: ["REP", "ACCOUNT_MGR", "MANAGER", "ADMIN"] } },
+          select: { id: true, fullName: true, fullNameAr: true, role: true },
+          orderBy: { fullName: "asc" },
+        })
+      : Promise.resolve([]),
   ]);
 
   return (
@@ -33,6 +45,8 @@ export default async function NewOpportunityPage() {
         products={JSON.parse(JSON.stringify(products))}
         userEntityId={session.entityId}
         locale={locale}
+        reps={canActAsRep ? JSON.parse(JSON.stringify(reps)) : undefined}
+        currentUserId={session.id}
       />
     </div>
   );

@@ -23,6 +23,21 @@ import {
   updateMeetingTypeConfigSchema,
 } from "@/lib/crm/validations/admin";
 
+/**
+ * Two gates for two classes of admin action.
+ *
+ *   requireAdmin   — settings / lookup tables (stage config, FX rates,
+ *                    entities, loss reasons, lead sources, customer needs,
+ *                    meeting types). Only ADMIN; MANAGER doesn't even see
+ *                    these in the sidebar.
+ *
+ *   requireManager — people + data ops (user CRUD, team membership, lead
+ *                    re-assignment, owner reassignment). Both ADMIN and
+ *                    MANAGER, because managers are accountable for the
+ *                    whole sales floor — they distribute leads, move opps
+ *                    between reps, and "act as" reps when filling in for
+ *                    a leave / handover.
+ */
 async function requireAdmin() {
   const session = await getRequiredSession();
   if (session.role !== "ADMIN") {
@@ -31,10 +46,18 @@ async function requireAdmin() {
   return session;
 }
 
+async function requireManager() {
+  const session = await getRequiredSession();
+  if (session.role !== "ADMIN" && session.role !== "MANAGER") {
+    throw new Error("Unauthorized: Manager access required");
+  }
+  return session;
+}
+
 // ========== USERS ==========
 
 export async function getUsers() {
-  await requireAdmin();
+  await requireManager();
   const users = await db.crmUserProfile.findMany({
     include: {
       entity: {
@@ -71,7 +94,7 @@ export async function getUsers() {
  * managers' teams.
  */
 export async function setTeamMembers(managerId: string, repIds: string[]) {
-  await requireAdmin();
+  await requireManager();
   // Validate the manager exists and is actually MANAGER/ADMIN — otherwise
   // we'd silently create memberships pointing at a rep, which scope helpers
   // would never consult.
@@ -103,7 +126,7 @@ export async function setTeamMembers(managerId: string, repIds: string[]) {
 }
 
 export async function createUser(data: Record<string, unknown>) {
-  await requireAdmin();
+  await requireManager();
   const parsed = createUserSchema.parse(data);
 
   // Hash the password so the user can sign in via credentials. Without this
@@ -136,7 +159,7 @@ export async function createUser(data: Record<string, unknown>) {
 }
 
 export async function updateUser(id: string, data: Record<string, unknown>) {
-  await requireAdmin();
+  await requireManager();
   const parsed = updateUserSchema.parse(data);
 
   // Update email and/or password on the unified User row when provided. Blank

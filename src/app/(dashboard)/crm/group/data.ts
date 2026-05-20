@@ -18,14 +18,12 @@ function repTargetList(session: SessionUser) {
     case "REP":
       return { id: session.id };
     case "MANAGER":
-      return {
-        OR: [
-          { id: session.id },
-          { managerId: session.id },
-          { managedBy: { some: { managerId: session.id } } },
-        ],
-        active: true,
-      };
+      // MANAGER is "ADMIN minus settings" — the team target now sums every
+      // active rep, same as ADMIN. The M2M team rows still drive the
+      // optional "my team" filter on the dashboard, but the headline KPI
+      // reflects the whole sales floor since managers are accountable for
+      // pipeline beyond their direct reports.
+      return { active: true };
     case "ASSISTANT":
       return session.entityId
         ? { entityId: session.entityId, active: true }

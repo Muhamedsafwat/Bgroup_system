@@ -184,11 +184,18 @@ function getCrmNav(crmRole: string | undefined, t: SidebarT): NavSection[] {
   ];
   sections.push({ title: t.sectionWork, items: workItems });
 
-  if (crmRole === "ADMIN") {
-    sections.push({
-      title: t.sectionAdmin,
-      items: [{ href: "/admin/settings", label: t.settings, icon: Settings }],
-    });
+  // MANAGER gets the people-management entry but not settings — they
+  // distribute leads, re-team reps, and adjust ownership across the floor,
+  // but the lookup tables (stage config, FX rates, entities, etc.) stay
+  // ADMIN-only because they change how the whole system behaves.
+  if (isManager) {
+    const adminItems: NavItem[] = [
+      { href: "/crm/admin/users", label: t.allUsers, icon: UserCog },
+    ];
+    if (crmRole === "ADMIN") {
+      adminItems.push({ href: "/admin/settings", label: t.settings, icon: Settings });
+    }
+    sections.push({ title: t.sectionAdmin, items: adminItems });
   }
 
   return sections;

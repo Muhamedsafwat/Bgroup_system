@@ -77,28 +77,13 @@ export async function POST(req: Request) {
     },
   });
 
-  // Manager-scoped transfer: a non-admin manager can only move opps owned by
-  // reps in their own entity. Admin moves anything.
+  // MANAGER + ADMIN can transfer any opp to any rep — the previous
+  // "manager confined to their own entity" guard was the old team-only
+  // model. Managers now run the whole sales floor and must be able to
+  // rebalance across entities + teams without round-tripping through an
+  // admin.
   const actorId = session.user.crmProfileId ?? null;
-  const isAdmin =
-    session.user.crmRole === "ADMIN" ||
-    !!session.user.hrRoles?.includes("super_admin");
-  let allowedIds = new Set(opps.map((o) => o.id));
-  if (!isAdmin) {
-    // Confine to the manager's own entity. (A future tightening: confine to
-    // opps owned by reps whose managerId === actorId.)
-    const myEntity = (await db.crmUserProfile.findUnique({
-      where: { id: actorId ?? "" },
-      select: { entityId: true },
-    }))?.entityId ?? null;
-    if (!myEntity) {
-      return NextResponse.json(
-        { error: "Manager has no entity scope; ask an admin to move these" },
-        { status: 403 }
-      );
-    }
-    allowedIds = new Set(opps.filter((o) => o.entityId === myEntity).map((o) => o.id));
-  }
+  const allowedIds = new Set(opps.map((o) => o.id));
 
   const transferred: Array<{ id: string; code: string; fromOwnerId: string }> = [];
   for (const o of opps) {
