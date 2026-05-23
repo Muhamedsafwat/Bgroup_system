@@ -1,0 +1,3026 @@
+generator client {
+  provider = "prisma-client-js"
+  output   = "../src/generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+// ============================================================================
+// SHARED: NextAuth Models
+// ============================================================================
+
+model Account {
+  id                String  @id @default(cuid())
+  userId            String
+  type              String
+  provider          String
+  providerAccountId String
+  refresh_token     String? @db.Text
+  access_token      String? @db.Text
+  expires_at        Int?
+  token_type        String?
+  scope             String?
+  id_token          String? @db.Text
+  session_state     String?
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([provider, providerAccountId])
+  @@index([userId])
+  @@map("accounts")
+}
+
+model Session {
+  id           String   @id @default(cuid())
+  sessionToken String   @unique
+  userId       String
+  expires      DateTime
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@map("sessions")
+}
+
+model VerificationToken {
+  identifier String
+  token      String   @unique
+  expires    DateTime
+
+  @@unique([identifier, token])
+  @@map("verification_tokens")
+}
+
+// ============================================================================
+// SHARED: Unified User
+// ============================================================================
+
+model User {
+  id            String    @id @default(cuid())
+  email         String    @unique
+  emailVerified DateTime?
+  name          String?
+  image         String?
+  password      String?
+
+  // Module access flags
+  hrAccess       Boolean @default(false)
+  crmAccess      Boolean @default(false)
+  partnersAccess Boolean @default(false)
+
+  // NextAuth relations
+  accounts Account[]
+  sessions Session[]
+
+  // Module profile links
+  hrProfile      HrUserProfile?
+  hrEmployee     HrEmployee?
+  crmProfile     CrmUserProfile?
+  partnerProfile PartnerProfile?
+
+  // Cross-cutting
+  savedViews     SavedView[]
+  mfaCredentials UserMfaCredential[]
+  recoveryCodes  UserRecoveryCode[]
+  mfaEnabled     Boolean             @default(false)
+  onboardedAt    DateTime?
+  bookingPage    BookingPage?
+  assignedTasks  Task[]              @relation("TaskAssignee")
+  createdTasks   Task[]              @relation("TaskCreator")
+  taskComments   TaskComment[]       @relation("TaskCommentAuthor")
+  taskAttachments TaskAttachment[]   @relation("TaskAttachmentUploader")
+  taskWatching   TaskWatcher[]       @relation("TaskWatcher")
+  taskTimeEntries TaskTimeEntry[]    @relation("TaskTimeEntry")
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@map("users")
+}
+
+// ============================================================================
+// CROSS-CUTTING — MFA / 2FA (E7)
+// ============================================================================
+
+enum MfaCredentialKind {
+  TOTP
+  WEBAUTHN
+}
+
+model UserMfaCredential {
+  id         String            @id @default(cuid())
+  userId     String
+  user       User              @relation(fields: [userId], references: [id], onDelete: Cascade)
+  kind       MfaCredentialKind
+  /// For TOTP: base32-encoded secret. For WebAuthn (future): the credential ID.
+  secret     String
+  label      String            @default("")
+  metadata   Json?
+  verified   Boolean           @default(false)
+  lastUsedAt DateTime?
+  createdAt  DateTime          @default(now())
+
+  @@index([userId])
+  @@map("user_mfa_credentials")
+}
+
+model UserRecoveryCode {
+  id        String    @id @default(cuid())
+  userId    String
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  /// bcrypt hash of the recovery code; never stored in plaintext.
+  codeHash  String
+  used      Boolean   @default(false)
+  usedAt    DateTime?
+  createdAt DateTime  @default(now())
+
+  @@index([userId])
+  @@map("user_recovery_codes")
+}
+
+// ============================================================================
+// CROSS-CUTTING — Workflow engine (E3)
+// ============================================================================
+
+enum WorkflowTriggerKind {
+  ENTITY_CREATED
+  ENTITY_UPDATED
+  FIELD_CHANGED
+  TIME_BASED
+  WEBHOOK
+  MANUAL
+}
+
+enum WorkflowRunStatus {
+  PENDING
+  RUNNING
+  SUCCEEDED
+  FAILED
+  CANCELLED
+}
+
+model Workflow {
+  id          String              @id @default(cuid())
+  /// Owning module — used to scope visibility in the admin builder.
+  module      String
+  name        String
+  description String              @default("")
+  isActive    Boolean             @default(true)
+  /// Type of trigger.
+  triggerKind WorkflowTriggerKind
+  /// Trigger config: { entity?: string, field?: string, fromValue?, toValue?, cron?: string, ... }
+  triggerConfig Json
+  /// Sequence of actions to execute. Each step is { kind: string, config: object, branchOnError?: "continue" | "stop" }.
+  steps       Json
+  createdById String?
+  createdAt   DateTime            @default(now())
+  updatedAt   DateTime            @updatedAt
+
+  runs WorkflowRun[]
+
+  @@index([module])
+  @@index([triggerKind, isActive])
+  @@map("workflows")
+}
+
+model WorkflowRun {
+  id         String            @id @default(cuid())
+  workflowId String
+  workflow   Workflow          @relation(fields: [workflowId], references: [id], onDelete: Cascade)
+  status     WorkflowRunStatus @default(PENDING)
+  /// Trigger payload that started this run (the changed entity, etc.).
+  input      Json
+  /// Aggregated step results.
+  output     Json?
+  error      String?
+  startedAt  DateTime          @default(now())
+  finishedAt DateTime?
+
+  @@index([workflowId])
+  @@index([status])
+  @@map("workflow_runs")
+}
+
+// ============================================================================
+// CROSS-CUTTING — Email integration (E1)
+// ============================================================================
+
+enum EmailProvider {
+  GMAIL
+  MICROSOFT_GRAPH
+  RESEND
+}
+
+enum EmailDirection {
+  INBOUND
+  OUTBOUND
+}
+
+/// Stored OAuth tokens for a user's connected mail account.
+model EmailAccount {
+  id           String        @id @default(cuid())
+  userId       String        @unique
+  provider     EmailProvider
+  email        String
+  /// Encrypted in production (TODO: KMS); plaintext for dev.
+  accessToken  String
+  refreshToken String?
+  expiresAt    DateTime?
+  lastSyncAt   DateTime?
+  createdAt    DateTime      @default(now())
+  updatedAt    DateTime      @updatedAt
+
+  threads CrmEmailThread[]
+
+  @@map("email_accounts")
+}
+
+model CrmEmailThread {
+  id             String         @id @default(cuid())
+  accountId      String
+  account        EmailAccount   @relation(fields: [accountId], references: [id], onDelete: Cascade)
+  /// Provider-side conversation/thread id.
+  externalId     String
+  subject        String
+  /// Linked CRM entities — one thread can attach to multiple opportunities/contacts.
+  opportunityIds String[]
+  contactIds     String[]
+  participants   String[]
+  lastMessageAt  DateTime
+  createdAt      DateTime       @default(now())
+
+  messages CrmEmailMessage[]
+
+  @@unique([accountId, externalId])
+  @@index([accountId])
+  @@map("crm_email_threads")
+}
+
+model CrmEmailMessage {
+  id         String         @id @default(cuid())
+  threadId   String
+  thread     CrmEmailThread @relation(fields: [threadId], references: [id], onDelete: Cascade)
+  externalId String
+  direction  EmailDirection
+  fromEmail  String
+  toEmails   String[]
+  ccEmails   String[]
+  bodyText   String         @default("")
+  bodyHtml   String         @default("")
+  sentAt     DateTime
+  createdAt  DateTime       @default(now())
+
+  @@unique([threadId, externalId])
+  @@index([threadId])
+  @@map("crm_email_messages")
+}
+
+model EmailTemplate {
+  id          String   @id @default(cuid())
+  /// "crm" or future modules.
+  scope       String
+  name        String
+  subject     String
+  bodyHtml    String
+  /// Variables the template expects (e.g. ["contact.firstName", "deal.value"])
+  variables   String[]
+  createdById String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@index([scope])
+  @@map("email_templates")
+}
+
+// ============================================================================
+// CROSS-CUTTING — Calendar integration (E2)
+// ============================================================================
+
+enum CalendarProvider {
+  GOOGLE
+  MICROSOFT_GRAPH
+}
+
+model CalendarAccount {
+  id           String           @id @default(cuid())
+  userId       String           @unique
+  provider     CalendarProvider
+  email        String
+  accessToken  String
+  refreshToken String?
+  expiresAt    DateTime?
+  lastSyncAt   DateTime?
+  createdAt    DateTime         @default(now())
+  updatedAt    DateTime         @updatedAt
+
+  events CalendarEvent[]
+
+  @@map("calendar_accounts")
+}
+
+model CalendarEvent {
+  id            String          @id @default(cuid())
+  accountId     String
+  account       CalendarAccount @relation(fields: [accountId], references: [id], onDelete: Cascade)
+  externalId    String
+  title         String
+  startAt       DateTime
+  endAt         DateTime
+  attendees     String[]
+  location      String?
+  /// Optional links to CRM entities the event was attached to.
+  opportunityId String?
+  contactId     String?
+  createdAt     DateTime        @default(now())
+  updatedAt     DateTime        @updatedAt
+
+  @@unique([accountId, externalId])
+  @@index([accountId])
+  @@index([startAt])
+  @@map("calendar_events")
+}
+
+/// Public booking page handle, e.g. "ibrahim" → /book/ibrahim
+model BookingPage {
+  id          String   @id @default(cuid())
+  userId      String   @unique
+  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  handle      String   @unique
+  title       String
+  description String   @default("")
+  /// Default meeting length in minutes.
+  durationMin Int      @default(30)
+  /// Buffer time (minutes) before/after each meeting.
+  bufferMin   Int      @default(0)
+  isActive    Boolean  @default(true)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@map("booking_pages")
+}
+
+// ============================================================================
+// CROSS-CUTTING — Reports & analytics (E8)
+// ============================================================================
+
+model SavedReport {
+  id          String   @id @default(cuid())
+  ownerId     String
+  /// "hr", "crm", "partners", "global".
+  module      String
+  name        String
+  description String   @default("")
+  /// Definition: { source: string, filters: object, groupBy: string[], metric: string, chart: "bar"|"line"|"pie"|"table" }
+  definition  Json
+  isShared    Boolean  @default(false)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  schedules ReportSchedule[]
+
+  @@index([ownerId, module])
+  @@map("saved_reports")
+}
+
+model ReportSchedule {
+  id           String      @id @default(cuid())
+  reportId     String
+  report       SavedReport @relation(fields: [reportId], references: [id], onDelete: Cascade)
+  /// Cron expression in UTC (e.g. "0 8 * * 1" — Monday 08:00).
+  cron         String
+  /// Comma-separated email recipients.
+  recipients   String[]
+  isActive     Boolean     @default(true)
+  lastRunAt    DateTime?
+  nextRunAt    DateTime?
+  createdAt    DateTime    @default(now())
+
+  @@index([reportId])
+  @@index([nextRunAt, isActive])
+  @@map("report_schedules")
+}
+
+// ============================================================================
+// CROSS-CUTTING — Saved table views (D3)
+// ============================================================================
+
+model SavedView {
+  id        String   @id @default(cuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  /// e.g. "crm:opportunities", "hr:employees", "partners:deals"
+  scope     String
+  name      String
+  /// JSON-serialized filter object — shape is owned by each consuming page.
+  filters   Json
+  /// JSON-serialized sort: { field: string; direction: "asc" | "desc" }
+  sort      Json?
+  /// Optional column visibility overrides.
+  columns   Json?
+  isShared  Boolean  @default(false)
+  isDefault Boolean  @default(false)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([userId, scope])
+  @@map("saved_views")
+}
+
+// ============================================================================
+// CROSS-CUTTING — Tasks (unified to-dos across HR / CRM / Partners)
+// ============================================================================
+
+enum TaskStatus {
+  TODO
+  IN_PROGRESS
+  DONE
+  CANCELLED
+}
+
+enum TaskPriority {
+  LOW
+  MEDIUM
+  HIGH
+  URGENT
+}
+
+enum TaskType {
+  GENERAL
+  CALL
+  EMAIL
+  MEETING
+  FOLLOW_UP
+  ADMIN
+  ONBOARDING
+  REVIEW
+  APPROVAL
+}
+
+/// Polymorphic entity reference. `entityType` names the source domain;
+/// `entityId` is the row id in that domain. Kept as strings (not FKs) so a
+/// Task can attach to anything in CRM / HR / Partners without fanning the
+/// schema. Resolution is performed at read-time by the API.
+enum TaskEntityType {
+  CRM_OPPORTUNITY
+  CRM_COMPANY
+  CRM_CONTACT
+  CRM_CALL
+  HR_EMPLOYEE
+  HR_LEAVE_REQUEST
+  HR_OVERTIME_REQUEST
+  HR_INCIDENT
+  HR_REVIEW
+  HR_GOAL
+  PARTNER_LEAD
+  PARTNER_CLIENT
+  PARTNER_DEAL
+  PARTNER_REGISTRATION
+}
+
+model Task {
+  id          String       @id @default(cuid())
+  /// Module the task belongs to — drives sidebar scoping and permission checks.
+  module      String
+
+  title       String
+  description String       @default("")
+  type        TaskType     @default(GENERAL)
+  status      TaskStatus   @default(TODO)
+  priority    TaskPriority @default(MEDIUM)
+
+  assigneeId  String
+  assignee    User         @relation("TaskAssignee", fields: [assigneeId], references: [id], onDelete: Cascade)
+
+  createdById String
+  createdBy   User         @relation("TaskCreator", fields: [createdById], references: [id], onDelete: Cascade)
+
+  /// Optional polymorphic link — what entity this task relates to.
+  entityType  TaskEntityType?
+  entityId    String?
+
+  dueAt       DateTime?
+  remindAt    DateTime?
+
+  completedAt   DateTime?
+  completedById String?
+
+  /// Optional parent task (sub-tasks / checklist items).
+  parentId String?
+  parent   Task?    @relation("TaskSubtasks", fields: [parentId], references: [id], onDelete: Cascade)
+  children Task[]   @relation("TaskSubtasks")
+
+  /// Recurrence rule. Shape: { kind: "after_complete", intervalDays: number, until?: ISO }
+  /// — when the task is marked DONE, a fresh instance is spawned `intervalDays`
+  /// after completion. `until` (ISO date string) caps the recurrence.
+  recurrence Json?
+  /// When this task was spawned by a recurring template, points back to the
+  /// original template task. Cleared on the template itself.
+  recurrenceTemplateId String?
+
+  /// Optional workflow run that spawned this task.
+  workflowRunId String?
+
+  comments     TaskComment[]
+  watchers     TaskWatcher[]
+  timeEntries  TaskTimeEntry[]
+  attachments  TaskAttachment[]
+  dependsOn    TaskDependency[] @relation("TaskDependent")
+  blocksOthers TaskDependency[] @relation("TaskBlocker")
+  sequentialRunStep SequentialWorkflowRunStep?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([assigneeId, status, dueAt])
+  @@index([createdById])
+  @@index([entityType, entityId])
+  @@index([module, status])
+  @@index([parentId])
+  @@index([recurrenceTemplateId])
+  @@map("tasks")
+}
+
+model OnboardingTemplate {
+  id          String                    @id @default(cuid())
+  name        String                    @unique
+  description String                    @default("")
+  /// Target role/department this template fits — free text for now.
+  scope       String                    @default("general")
+  isActive    Boolean                   @default(true)
+  /// If true, used when no explicit templateId is passed.
+  isDefault   Boolean                   @default(false)
+  items       OnboardingTemplateItem[]
+  createdById String?
+  createdAt   DateTime                  @default(now())
+  updatedAt   DateTime                  @updatedAt
+
+  @@map("onboarding_templates")
+}
+
+model OnboardingTemplateItem {
+  id          String             @id @default(cuid())
+  templateId  String
+  template    OnboardingTemplate @relation(fields: [templateId], references: [id], onDelete: Cascade)
+  /// Display order within the template.
+  position    Int                @default(0)
+  title       String
+  description String             @default("")
+  /// TaskType enum value — kept as String so the schema doesn't depend on the
+  /// enum import order; validated at API time.
+  taskType    String             @default("GENERAL")
+  priority    String             @default("MEDIUM")
+  dueInDays   Int                @default(0)
+
+  @@index([templateId, position])
+  @@map("onboarding_template_items")
+}
+
+model TaskWatcher {
+  id        String   @id @default(cuid())
+  taskId    String
+  task      Task     @relation(fields: [taskId], references: [id], onDelete: Cascade)
+  userId    String
+  user      User     @relation("TaskWatcher", fields: [userId], references: [id], onDelete: Cascade)
+  createdAt DateTime @default(now())
+
+  @@unique([taskId, userId])
+  @@index([userId])
+  @@map("task_watchers")
+}
+
+/// Per-task time log. `endedAt` null = a running timer for this user.
+/// `durationMinutes` is filled when the entry is stopped (immutable thereafter).
+model TaskTimeEntry {
+  id              String    @id @default(cuid())
+  taskId          String
+  task            Task      @relation(fields: [taskId], references: [id], onDelete: Cascade)
+  userId          String
+  user            User      @relation("TaskTimeEntry", fields: [userId], references: [id], onDelete: Cascade)
+  startedAt       DateTime
+  endedAt         DateTime?
+  durationMinutes Int?
+  note            String    @default("")
+  createdAt       DateTime  @default(now())
+
+  @@index([taskId, userId])
+  @@index([userId, endedAt])
+  @@map("task_time_entries")
+}
+
+/// task `blockedById` must complete before `taskId` can move forward. Cycle
+/// detection enforced at API write time.
+// ============================================================================
+// SEQUENTIAL WORKFLOWS — n8n-style step-by-step automation
+// ============================================================================
+//
+// A `SequentialWorkflow` is an admin-defined ordered sequence of steps. Each
+// step assigns a task to a specific user (or role) with a budgeted time. When
+// the assignee marks the task DONE, the next step's task is auto-spawned for
+// the next assignee. SLAs evaluate timeliness on completion:
+//   - over budget          -> auto HR incident
+//   - under 50% of budget  -> auto HR bonus
+//
+// A run is the active instance of a workflow definition. Each step in a run
+// produces exactly one Task (linked via Task.sequentialRunStepId).
+
+enum SequentialRunStatus {
+  RUNNING
+  COMPLETED
+  CANCELLED
+}
+
+enum SequentialStepSlaResult {
+  PENDING
+  ON_TIME
+  LATE
+  EARLY_BONUS
+}
+
+model SequentialWorkflow {
+  id          String   @id @default(cuid())
+  name        String   @unique
+  description String   @default("")
+  /// Module this workflow belongs to — drives visibility + default task module.
+  module      String   @default("general")
+  isActive    Boolean  @default(true)
+  /// Reusable templates (default) can be triggered any number of times. CUSTOM
+  /// one-shot workflows execute exactly once and aren't surfaced in the
+  /// template picker after that run completes. Step timing for CUSTOM is given
+  /// as absolute `deadlineAt` per step, not relative `budgetHours`.
+  kind        SequentialWorkflowKind @default(TEMPLATE)
+  /// CUSTOM workflows store the user who owns the run; once consumed, the
+  /// workflow is auto-archived.
+  consumedAt  DateTime?
+  createdById String
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  steps SequentialWorkflowStep[]
+  runs  SequentialWorkflowRun[]
+
+  @@map("sequential_workflows")
+}
+
+enum SequentialWorkflowKind {
+  /// Reusable, triggered any number of times. Step duration = budgetHours.
+  TEMPLATE
+  /// One-shot. Step duration = absolute deadlineAt. Archived after the run.
+  CUSTOM
+}
+
+model SequentialWorkflowStep {
+  id           String             @id @default(cuid())
+  workflowId   String
+  workflow     SequentialWorkflow @relation(fields: [workflowId], references: [id], onDelete: Cascade)
+  /// 0-based ordinal — step ordering. Re-emitted by the builder on save.
+  position     Int
+  name         String
+  taskTitle    String
+  taskDescription String          @default("")
+  /// Whom the spawned task is assigned to. Either a literal userId, or one
+  /// of the special roles "creator" / "trigger_user" resolved at run time.
+  assigneeUserId String?
+  /// Optional fallback role for assignment (e.g. role-based routing). Free
+  /// text matched against the user's flat set of roles.
+  assigneeRole   String?
+  /// Hours of budget for TEMPLATE workflows. SLA evaluation uses this on
+  /// task completion. Ignored for CUSTOM workflows (which use deadlineAt).
+  budgetHours    Float              @default(8)
+  /// Absolute deadline for CUSTOM workflows ("the task must be done by
+  /// Friday 23:59"). Null for TEMPLATE. Resolved into the spawned task's
+  /// dueAt at run time.
+  deadlineAt     DateTime?
+  /// If true, breaching the budget/deadline creates an HR incident.
+  slaIncidentOnLate Boolean         @default(true)
+  /// If true, finishing under 50% creates an HR bonus record.
+  slaBonusOnEarly   Boolean         @default(true)
+  /// Optional task type override. Falls back to GENERAL.
+  taskType       String             @default("GENERAL")
+  taskPriority   String             @default("MEDIUM")
+
+  runSteps SequentialWorkflowRunStep[]
+
+  @@unique([workflowId, position])
+  @@index([workflowId])
+  @@map("sequential_workflow_steps")
+}
+
+model SequentialWorkflowRun {
+  id            String              @id @default(cuid())
+  workflowId    String
+  workflow      SequentialWorkflow  @relation(fields: [workflowId], references: [id], onDelete: Cascade)
+  triggeredById String
+  /// Optional context payload — typically the entity that triggered the run
+  /// (e.g. lead, deal, employee). Stored as { entityType, entityId, ... }.
+  context       Json?
+  status        SequentialRunStatus @default(RUNNING)
+  currentStepIndex Int              @default(0)
+  startedAt     DateTime            @default(now())
+  completedAt   DateTime?
+
+  steps SequentialWorkflowRunStep[]
+
+  @@index([workflowId])
+  @@index([status])
+  @@map("sequential_workflow_runs")
+}
+
+model SequentialWorkflowRunStep {
+  id        String                  @id @default(cuid())
+  runId     String
+  run       SequentialWorkflowRun   @relation(fields: [runId], references: [id], onDelete: Cascade)
+  stepId    String
+  step      SequentialWorkflowStep  @relation(fields: [stepId], references: [id], onDelete: Cascade)
+  position  Int
+  /// The Task that materializes this step.
+  taskId    String                  @unique
+  task      Task                    @relation(fields: [taskId], references: [id], onDelete: Cascade)
+  startedAt DateTime?
+  completedAt DateTime?
+  /// Actual duration in minutes once the step completes.
+  durationMinutes Int?
+  slaResult SequentialStepSlaResult @default(PENDING)
+  createdAt DateTime                @default(now())
+
+  @@index([runId, position])
+  @@map("sequential_workflow_run_steps")
+}
+
+model TaskDependency {
+  id          String   @id @default(cuid())
+  taskId      String
+  task        Task     @relation("TaskDependent", fields: [taskId], references: [id], onDelete: Cascade)
+  blockedById String
+  blockedBy   Task     @relation("TaskBlocker", fields: [blockedById], references: [id], onDelete: Cascade)
+  createdAt   DateTime @default(now())
+
+  @@unique([taskId, blockedById])
+  @@index([taskId])
+  @@index([blockedById])
+  @@map("task_dependencies")
+}
+
+model TaskComment {
+  id        String   @id @default(cuid())
+  taskId    String
+  task      Task     @relation(fields: [taskId], references: [id], onDelete: Cascade)
+  authorId  String
+  author    User     @relation("TaskCommentAuthor", fields: [authorId], references: [id], onDelete: Cascade)
+  body      String
+  /// Optional flag for system-generated comments (delegations, recurrence spawns, etc.).
+  isSystem  Boolean  @default(false)
+  createdAt DateTime @default(now())
+
+  @@index([taskId])
+  @@index([authorId])
+  @@map("task_comments")
+}
+
+/// File attached to a task. Anyone with task access (creator, assignee,
+/// watcher, platform admin) can attach. Attachments persist through workflow
+/// steps so downstream assignees see the upstream artifacts.
+model TaskAttachment {
+  id          String   @id @default(cuid())
+  taskId      String
+  task        Task     @relation(fields: [taskId], references: [id], onDelete: Cascade)
+  uploadedById String
+  uploadedBy  User     @relation("TaskAttachmentUploader", fields: [uploadedById], references: [id], onDelete: Cascade)
+  /// Display name as shown in the UI; not necessarily the on-disk name.
+  filename    String
+  /// MIME type (e.g. application/pdf). Kept generic; we don't restrict by type.
+  mimeType    String
+  /// Bytes. Used for display + a soft cap enforced at the API.
+  sizeBytes   Int
+  /// Storage URL or relative path; resolution depends on the storage backend.
+  /// For the current in-repo MVP, a relative path under /public/uploads/tasks/.
+  url         String
+  createdAt   DateTime @default(now())
+
+  @@index([taskId])
+  @@index([uploadedById])
+  @@map("task_attachments")
+}
+
+// ============================================================================
+// Q3 — HR Performance management (S1)
+// ============================================================================
+
+enum HrGoalStatus {
+  ACTIVE
+  ACHIEVED
+  ABANDONED
+}
+
+model HrGoal {
+  id          String       @id @default(cuid())
+  employeeId  String
+  title       String
+  description String       @default("")
+  /// 0-100; UI may render as a progress bar.
+  progressPct Int          @default(0)
+  status      HrGoalStatus @default(ACTIVE)
+  dueDate     DateTime?
+  createdAt   DateTime     @default(now())
+  updatedAt   DateTime     @updatedAt
+
+  @@index([employeeId, status])
+  @@map("hr_goals")
+}
+
+enum HrReviewKind {
+  SELF
+  MANAGER
+  PEER
+  THREE_SIXTY
+}
+
+model HrReviewCycle {
+  id        String     @id @default(cuid())
+  name      String
+  startDate DateTime
+  endDate   DateTime
+  isActive  Boolean    @default(true)
+  reviews   HrReview[]
+  createdAt DateTime   @default(now())
+
+  @@map("hr_review_cycles")
+}
+
+model HrReview {
+  id          String        @id @default(cuid())
+  cycleId     String
+  cycle       HrReviewCycle @relation(fields: [cycleId], references: [id], onDelete: Cascade)
+  subjectId   String // employee being reviewed
+  reviewerId  String? // null for SELF (subject is reviewer)
+  kind        HrReviewKind
+  /// Free-form responses keyed by question id.
+  responses   Json          @default("{}")
+  rating      Int?
+  submittedAt DateTime?
+  createdAt   DateTime      @default(now())
+
+  @@index([cycleId])
+  @@index([subjectId])
+  @@map("hr_reviews")
+}
+
+model HrFeedback {
+  id          String   @id @default(cuid())
+  fromUserId  String
+  toEmployeeId String
+  /// "kudos" or "constructive"
+  kind        String
+  message     String
+  visibility  String   @default("private") // "private" | "manager" | "team"
+  createdAt   DateTime @default(now())
+
+  @@index([toEmployeeId])
+  @@map("hr_feedback")
+}
+
+model HrSurvey {
+  id          String              @id @default(cuid())
+  title       String
+  description String              @default("")
+  /// JSON array of question objects.
+  questions   Json
+  isAnonymous Boolean             @default(true)
+  isActive    Boolean             @default(true)
+  responses   HrSurveyResponse[]
+  createdAt   DateTime            @default(now())
+
+  @@map("hr_surveys")
+}
+
+model HrSurveyResponse {
+  id        String   @id @default(cuid())
+  surveyId  String
+  survey    HrSurvey @relation(fields: [surveyId], references: [id], onDelete: Cascade)
+  /// userId or null when survey is anonymous (we still write the row to count responses).
+  userId    String?
+  answers   Json
+  createdAt DateTime @default(now())
+
+  @@index([surveyId])
+  @@map("hr_survey_responses")
+}
+
+// ============================================================================
+// Q3 — HR Recruitment / ATS (S2)
+// ============================================================================
+
+enum JobStatus {
+  DRAFT
+  OPEN
+  CLOSED
+}
+
+enum CandidateStage {
+  APPLIED
+  SCREEN
+  INTERVIEW
+  OFFER
+  HIRED
+  REJECTED
+}
+
+model Job {
+  id           String           @id @default(cuid())
+  slug         String           @unique
+  title        String
+  description  String
+  companyId    String
+  departmentId String?
+  status       JobStatus        @default(DRAFT)
+  applications JobApplication[]
+  createdAt    DateTime         @default(now())
+  updatedAt    DateTime         @updatedAt
+
+  @@index([status])
+  @@map("jobs")
+}
+
+model Candidate {
+  id           String           @id @default(cuid())
+  fullName     String
+  email        String           @unique
+  phone        String?
+  resumeUrl    String?
+  applications JobApplication[]
+  interviews   Interview[]
+  createdAt    DateTime         @default(now())
+
+  @@map("candidates")
+}
+
+model JobApplication {
+  id          String         @id @default(cuid())
+  jobId       String
+  job         Job            @relation(fields: [jobId], references: [id], onDelete: Cascade)
+  candidateId String
+  candidate   Candidate      @relation(fields: [candidateId], references: [id], onDelete: Cascade)
+  stage       CandidateStage @default(APPLIED)
+  notes       String         @default("")
+  /// Set when stage = HIRED to link to the resulting employee record.
+  employeeId  String?
+  createdAt   DateTime       @default(now())
+  updatedAt   DateTime       @updatedAt
+  scorecards  Scorecard[]
+
+  @@unique([jobId, candidateId])
+  @@index([jobId, stage])
+  @@map("job_applications")
+}
+
+model Interview {
+  id            String    @id @default(cuid())
+  candidateId   String
+  candidate     Candidate @relation(fields: [candidateId], references: [id], onDelete: Cascade)
+  applicationId String
+  scheduledAt   DateTime
+  durationMin   Int       @default(45)
+  /// Email of the interviewer (will reference users via email).
+  interviewerEmail String
+  meetingUrl    String?
+  notes         String    @default("")
+  createdAt     DateTime  @default(now())
+
+  @@index([candidateId])
+  @@map("interviews")
+}
+
+model Scorecard {
+  id            String         @id @default(cuid())
+  applicationId String
+  application   JobApplication @relation(fields: [applicationId], references: [id], onDelete: Cascade)
+  reviewerEmail String
+  /// Free-form scoring object.
+  scores        Json
+  recommendation String // "strong_yes" | "yes" | "no" | "strong_no"
+  notes         String         @default("")
+  createdAt     DateTime       @default(now())
+
+  @@index([applicationId])
+  @@map("scorecards")
+}
+
+// ============================================================================
+// Q3 — HR Expenses (S4)
+// ============================================================================
+
+enum HrExpenseStatus {
+  DRAFT
+  SUBMITTED
+  APPROVED
+  REJECTED
+  REIMBURSED
+}
+
+model HrExpenseCategory {
+  id        String    @id @default(cuid())
+  name      String    @unique
+  /// Optional GL code for accounting export.
+  glCode    String?
+  expenses  HrExpense[]
+  createdAt DateTime  @default(now())
+
+  @@map("hr_expense_categories")
+}
+
+model HrExpense {
+  id          String            @id @default(cuid())
+  employeeId  String
+  categoryId  String?
+  category    HrExpenseCategory? @relation(fields: [categoryId], references: [id])
+  amount      Decimal           @db.Decimal(12, 2)
+  currency    String            @default("EGP")
+  date        DateTime
+  description String            @default("")
+  receiptUrl  String?
+  /// OCR-extracted JSON for reviewer reference.
+  ocrPayload  Json?
+  status      HrExpenseStatus   @default(DRAFT)
+  approverId  String?
+  rejectionReason String?
+  reimbursementId String?       @unique
+  reimbursement HrReimbursement? @relation(fields: [reimbursementId], references: [id])
+  createdAt   DateTime          @default(now())
+  updatedAt   DateTime          @updatedAt
+
+  @@index([employeeId, status])
+  @@map("hr_expenses")
+}
+
+model HrReimbursement {
+  id          String   @id @default(cuid())
+  employeeId  String
+  totalAmount Decimal  @db.Decimal(12, 2)
+  /// Optional payroll period id this was settled in.
+  payrollPeriodId String?
+  paidAt      DateTime?
+  expense     HrExpense?
+  createdAt   DateTime @default(now())
+
+  @@index([employeeId])
+  @@map("hr_reimbursements")
+}
+
+// ============================================================================
+// Q3 — Document templates + e-signature (S5)
+// ============================================================================
+
+enum DocumentInstanceStatus {
+  DRAFT
+  SENT
+  SIGNED
+  DECLINED
+  EXPIRED
+}
+
+model DocumentTemplate {
+  id          String              @id @default(cuid())
+  scope       String // "hr" | "partners" | "global"
+  name        String
+  description String              @default("")
+  /// Mustache-style template body. {{variable}} placeholders.
+  body        String
+  /// Variables consumed by the template, e.g. ["employee.fullName", "contract.startDate"].
+  variables   String[]
+  instances   DocumentInstance[]
+  createdAt   DateTime            @default(now())
+  updatedAt   DateTime            @updatedAt
+
+  @@index([scope])
+  @@map("document_templates")
+}
+
+model DocumentInstance {
+  id           String                 @id @default(cuid())
+  templateId   String
+  template     DocumentTemplate       @relation(fields: [templateId], references: [id])
+  /// Rendered body with placeholders filled.
+  rendered     String
+  /// Resolved variable map.
+  variables    Json
+  /// Optional link to the signed PDF in storage.
+  signedPdfUrl String?
+  /// External provider's envelope id (DocuSign / Dropbox Sign).
+  externalId   String?
+  status       DocumentInstanceStatus @default(DRAFT)
+  /// What entity this instance is attached to, e.g. "HrEmployee:cmod...".
+  attachedTo   String?
+  expiresAt    DateTime?
+  createdAt    DateTime               @default(now())
+  updatedAt    DateTime               @updatedAt
+
+  @@index([templateId])
+  @@index([status])
+  @@map("document_instances")
+}
+
+// ============================================================================
+// Q3 — Partner tiers (S6)
+// ============================================================================
+
+model PartnerTier {
+  id              String   @id @default(cuid())
+  name            String   @unique
+  /// Rolling 90-day commission $ to qualify.
+  minRevenue90d   Decimal  @default(0) @db.Decimal(14, 2)
+  commissionRate  Float
+  /// Free-form perks list rendered to partners.
+  perks           Json     @default("[]")
+  rank            Int      @default(0)
+  createdAt       DateTime @default(now())
+
+  @@map("partner_tiers")
+}
+
+// ============================================================================
+// Q3 — Deal registration (S7)
+// ============================================================================
+
+enum DealRegistrationStatus {
+  PENDING
+  APPROVED
+  REJECTED
+  EXPIRED
+  CONVERTED
+}
+
+model PartnerDealRegistration {
+  id              String                 @id @default(cuid())
+  partnerId       String
+  prospectName    String
+  prospectDomain  String
+  /// Hash for fast conflict lookup (lowercased domain → sha256).
+  domainHash      String
+  status          DealRegistrationStatus @default(PENDING)
+  expiresAt       DateTime?
+  /// If a deal was created from this registration.
+  dealId          String?
+  /// If we detected a conflict (existing deal / customer / other registration).
+  conflictWith    String?
+  rejectionReason String?
+  createdAt       DateTime               @default(now())
+  updatedAt       DateTime               @updatedAt
+
+  @@unique([partnerId, prospectDomain])
+  @@index([domainHash])
+  @@index([status])
+  @@map("partner_deal_registrations")
+}
+
+// ============================================================================
+// Q3 — MDF requests (S8)
+// ============================================================================
+
+enum MdfStatus {
+  DRAFT
+  SUBMITTED
+  APPROVED
+  REJECTED
+  CLOSED
+}
+
+model PartnerMdfRequest {
+  id          String    @id @default(cuid())
+  partnerId   String
+  campaign    String
+  description String    @default("")
+  amount      Decimal   @db.Decimal(12, 2)
+  status      MdfStatus @default(DRAFT)
+  approverId  String?
+  rejectionReason String?
+  /// Required after campaign closes.
+  roiReport   String?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  @@index([partnerId, status])
+  @@map("partner_mdf_requests")
+}
+
+// ============================================================================
+// Q3 — CRM quotes & proposals (S9)
+// ============================================================================
+
+enum QuoteStatus {
+  DRAFT
+  SENT
+  ACCEPTED
+  EXPIRED
+  REJECTED
+}
+
+model Quote {
+  id              String      @id @default(cuid())
+  number          String      @unique
+  opportunityId   String?
+  currency        String      @default("EGP")
+  taxRatePct      Decimal     @default(0) @db.Decimal(5, 2)
+  discountPct     Decimal     @default(0) @db.Decimal(5, 2)
+  status          QuoteStatus @default(DRAFT)
+  validUntil      DateTime?
+  acceptedAt      DateTime?
+  signedPdfUrl    String?
+  externalSigningId String?
+  lines           QuoteLine[]
+  createdAt       DateTime    @default(now())
+  updatedAt       DateTime    @updatedAt
+
+  @@index([opportunityId])
+  @@index([status])
+  @@map("quotes")
+}
+
+model QuoteLine {
+  id          String  @id @default(cuid())
+  quoteId     String
+  quote       Quote   @relation(fields: [quoteId], references: [id], onDelete: Cascade)
+  productId   String?
+  description String
+  qty         Decimal @default(1) @db.Decimal(10, 2)
+  unitPrice   Decimal @db.Decimal(12, 2)
+
+  @@index([quoteId])
+  @@map("quote_lines")
+}
+
+model Proposal {
+  id            String   @id @default(cuid())
+  quoteId       String?  @unique
+  opportunityId String?
+  templateBody  String
+  variables     Json
+  pdfUrl        String?
+  createdAt     DateTime @default(now())
+
+  @@map("proposals")
+}
+
+// ============================================================================
+// Q3 — Public REST API + webhooks (S10)
+// ============================================================================
+
+model ApiKey {
+  id          String   @id @default(cuid())
+  ownerId     String
+  /// SHA-256 of the plaintext key. Never stored as plaintext.
+  hash        String   @unique
+  /// Display prefix shown to the user, e.g. "sk_live_abc12345…".
+  prefix      String
+  name        String
+  /// Allowlist of scopes, e.g. ["read:employees", "write:contacts"].
+  scopes      String[]
+  /// Per-minute request cap; 0 means use default.
+  rateLimit   Int      @default(0)
+  lastUsedAt  DateTime?
+  isActive    Boolean  @default(true)
+  createdAt   DateTime @default(now())
+
+  @@index([ownerId])
+  @@map("api_keys")
+}
+
+model WebhookEndpoint {
+  id          String              @id @default(cuid())
+  ownerId     String
+  url         String
+  /// Event types to subscribe to, e.g. ["deal.won", "employee.hired"].
+  events      String[]
+  /// HMAC secret for signing the delivery body.
+  secret      String
+  isActive    Boolean             @default(true)
+  failureCount Int                @default(0)
+  lastDeliveryAt DateTime?
+  createdAt   DateTime            @default(now())
+  deliveries  WebhookDelivery[]
+
+  @@index([ownerId])
+  @@map("webhook_endpoints")
+}
+
+enum WebhookDeliveryStatus {
+  PENDING
+  SUCCEEDED
+  FAILED
+}
+
+model WebhookDelivery {
+  id         String                @id @default(cuid())
+  endpointId String
+  endpoint   WebhookEndpoint       @relation(fields: [endpointId], references: [id], onDelete: Cascade)
+  event      String
+  payload    Json
+  status     WebhookDeliveryStatus @default(PENDING)
+  attempt    Int                   @default(0)
+  responseStatus Int?
+  responseBody   String?
+  createdAt  DateTime              @default(now())
+  deliveredAt DateTime?
+
+  @@index([endpointId])
+  @@index([status, createdAt])
+  @@map("webhook_deliveries")
+}
+
+// ============================================================================
+// Q4 — CRM cadences (G1)
+// ============================================================================
+
+enum CadenceStepKind {
+  EMAIL
+  CALL_TASK
+  LINKEDIN_TASK
+  WAIT
+}
+
+enum CadenceEnrollmentStatus {
+  ACTIVE
+  PAUSED
+  COMPLETED
+  CANCELLED
+}
+
+model Cadence {
+  id          String        @id @default(cuid())
+  name        String
+  description String        @default("")
+  isActive    Boolean       @default(true)
+  steps       CadenceStep[]
+  enrollments CadenceEnrollment[]
+  createdAt   DateTime      @default(now())
+  updatedAt   DateTime      @updatedAt
+
+  @@map("cadences")
+}
+
+model CadenceStep {
+  id            String          @id @default(cuid())
+  cadenceId     String
+  cadence       Cadence         @relation(fields: [cadenceId], references: [id], onDelete: Cascade)
+  /// 1-indexed position in the cadence.
+  position      Int
+  kind          CadenceStepKind
+  /// Days from enrollment that this step fires.
+  dayOffset     Int
+  /// For email steps: template id.
+  emailTemplateId String?
+  /// For task steps: title shown on the task.
+  taskTitle     String?
+
+  @@index([cadenceId])
+  @@map("cadence_steps")
+}
+
+model CadenceEnrollment {
+  id          String                  @id @default(cuid())
+  cadenceId   String
+  cadence     Cadence                 @relation(fields: [cadenceId], references: [id], onDelete: Cascade)
+  contactId   String
+  ownerId     String
+  status      CadenceEnrollmentStatus @default(ACTIVE)
+  /// 0-indexed step about to fire next.
+  nextStep    Int                     @default(0)
+  enrolledAt  DateTime                @default(now())
+  pausedAt    DateTime?
+  completedAt DateTime?
+
+  @@index([contactId])
+  @@index([status, nextStep])
+  @@map("cadence_enrollments")
+}
+
+// ============================================================================
+// Q4 — Custom objects (G2)
+// ============================================================================
+
+model CustomObject {
+  id          String   @id @default(cuid())
+  slug        String   @unique
+  name        String
+  description String   @default("")
+  /// Field schema: [{ name, type: "text"|"number"|"date"|"boolean"|"select"|"reference", options?, required? }]
+  fields      Json
+  /// Optional permission map: { read: ["role:CEO"], write: ["role:ADMIN"] }
+  permissions Json     @default("{}")
+  records     CustomRecord[]
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@map("custom_objects")
+}
+
+model CustomRecord {
+  id        String       @id @default(cuid())
+  objectId  String
+  object    CustomObject @relation(fields: [objectId], references: [id], onDelete: Cascade)
+  /// Field values keyed by field name.
+  data      Json
+  /// Optional reference map: { fieldName: ["recordId1", "recordId2"] }.
+  refs      Json         @default("{}")
+  createdAt DateTime     @default(now())
+  updatedAt DateTime     @updatedAt
+
+  @@index([objectId])
+  @@map("custom_records")
+}
+
+// ============================================================================
+// Q4 — White-label partner branding (G3)
+// ============================================================================
+
+model PartnerBranding {
+  id            String   @id @default(cuid())
+  partnerId     String   @unique
+  /// Optional custom domain override, e.g. "partners.acme.com".
+  customDomain  String?  @unique
+  /// Preferred subdomain on the platform's wildcard domain.
+  subdomain     String?  @unique
+  logoUrl       String?
+  primaryColor  String?
+  supportEmail  String?
+  customCtaText String?
+  updatedAt     DateTime @updatedAt
+
+  @@map("partner_branding")
+}
+
+// ============================================================================
+// Q4 — Co-sell account mapping (G4)
+// ============================================================================
+
+model PartnerAccountList {
+  id        String   @id @default(cuid())
+  partnerId String
+  /// Lowercased domain.
+  domain    String
+  /// SHA-256 of domain for matching without exposing partner intel.
+  domainHash String
+  addedAt   DateTime @default(now())
+
+  @@unique([partnerId, domain])
+  @@index([domainHash])
+  @@map("partner_account_lists")
+}
+
+model CoSellOpportunity {
+  id            String   @id @default(cuid())
+  opportunityId String
+  partnerId     String
+  /// Lifecycle marker; clients can extend.
+  stage         String   @default("matched")
+  notes         String   @default("")
+  createdAt     DateTime @default(now())
+
+  @@unique([opportunityId, partnerId])
+  @@index([opportunityId])
+  @@map("co_sell_opportunities")
+}
+
+// ============================================================================
+// Q4 — Partner payouts (G5)
+// ============================================================================
+
+enum PayoutStatus {
+  SCHEDULED
+  PROCESSING
+  PAID
+  FAILED
+}
+
+model PartnerPayout {
+  id          String         @id @default(cuid())
+  partnerId   String
+  partner     PartnerProfile @relation(fields: [partnerId], references: [id], onDelete: Cascade)
+  /// Sum of commissions in the period.
+  amount      Decimal        @db.Decimal(14, 2)
+  currency    String         @default("USD")
+  /// Stripe Connect payout id (or other provider).
+  externalId  String?
+  status      PayoutStatus   @default(SCHEDULED)
+  scheduledFor DateTime
+  paidAt      DateTime?
+  failureReason String?
+  createdAt   DateTime       @default(now())
+
+  @@index([partnerId, status])
+  @@map("partner_payouts")
+}
+
+model PartnerTaxForm {
+  id        String   @id @default(cuid())
+  partnerId String   @unique
+  /// "1099-NEC" | "W-8BEN" | etc.
+  formType  String
+  fileUrl   String
+  /// US tax year covered.
+  taxYear   Int
+  uploadedAt DateTime @default(now())
+
+  @@map("partner_tax_forms")
+}
+
+// ============================================================================
+// Q4 — Notification preferences (G6)
+// ============================================================================
+
+enum NotificationChannel {
+  IN_APP
+  EMAIL
+  PUSH
+  WHATSAPP
+}
+
+model NotificationPreference {
+  id        String              @id @default(cuid())
+  userId    String
+  /// Event type, e.g. "contract.approved", "deal.won".
+  eventType String
+  channel   NotificationChannel
+  enabled   Boolean             @default(true)
+
+  @@unique([userId, eventType, channel])
+  @@index([userId])
+  @@map("notification_preferences")
+}
+
+// ============================================================================
+// HR MODULE — User & Identity
+// ============================================================================
+
+model HrUserProfile {
+  id          String    @id @default(cuid())
+  userId      String    @unique
+  user        User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  // Legacy HR fields
+  isSuperuser Boolean   @default(false)
+  firstName   String    @default("")
+  lastName    String    @default("")
+  isStaff     Boolean   @default(false)
+  dateJoined  DateTime  @default(now())
+  username    String    @unique
+  phone       String    @default("")
+  avatar      String?
+  isActive    Boolean   @default(true)
+
+  // Relations
+  companies          HrUserCompany[]
+  roles              HrUserRole[]
+  employee           HrEmployee?
+  attendanceLogs     HrAttendanceLog[]    @relation("HrAttendanceLogCreatedBy")
+  leaveApprovals     HrLeaveRequest[]     @relation("HrLeaveApprovedBy")
+  submittedBonuses   HrBonus[]            @relation("HrBonusSubmittedBy")
+  approvedBonuses    HrBonus[]            @relation("HrBonusApprovedBy")
+  submittedIncidents HrIncident[]         @relation("HrIncidentSubmittedBy")
+  approvedIncidents  HrIncident[]         @relation("HrIncidentApprovedBy")
+  approvedOvertime   HrOvertimeRequest[]  @relation("HrOvertimeApprovedBy")
+  lockedSalaries     HrMonthlySalary[]    @relation("HrSalaryLockedBy")
+  paidPayrolls       HrPayrollPeriod[]    @relation("HrPayrollPaidBy")
+  lockedPayrolls     HrPayrollPeriod[]    @relation("HrPayrollLockedBy")
+  notifications      HrNotification[]
+  auditLogs          HrAuditLog[]
+  documents          HrEmployeeDocument[] @relation("HrDocumentUploadedBy")
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@map("hr_user_profiles")
+}
+
+model HrBlacklistedToken {
+  id            String   @id @default(cuid())
+  tokenId       String   @unique
+  blacklistedAt DateTime @default(now())
+
+  token HrOutstandingToken @relation(fields: [tokenId], references: [id])
+
+  @@map("hr_blacklisted_tokens")
+}
+
+model HrOutstandingToken {
+  id        String   @id @default(cuid())
+  jti       String   @unique
+  token     String
+  userId    String
+  expiresAt DateTime
+  createdAt DateTime @default(now())
+
+  blacklisted HrBlacklistedToken?
+
+  @@map("hr_outstanding_tokens")
+}
+
+model HrRole {
+  id   String @id @default(cuid())
+  name String @unique
+
+  users HrUserRole[]
+
+  @@map("hr_roles")
+}
+
+model HrUserRole {
+  id     String @id @default(cuid())
+  userId String
+  roleId String
+
+  role HrRole        @relation(fields: [roleId], references: [id])
+  user HrUserProfile @relation(fields: [userId], references: [userId])
+
+  @@unique([userId, roleId])
+  @@index([roleId])
+  @@index([userId])
+  @@map("hr_user_roles")
+}
+
+model HrUserCompany {
+  id        String @id @default(cuid())
+  userId    String
+  companyId String
+
+  company HrCompany     @relation(fields: [companyId], references: [id])
+  user    HrUserProfile @relation(fields: [userId], references: [userId])
+
+  @@unique([userId, companyId])
+  @@index([companyId])
+  @@index([userId])
+  @@map("hr_user_companies")
+}
+
+// ============================================================================
+// HR MODULE — Company & Department
+// ============================================================================
+
+model HrCompany {
+  id        String   @id @default(cuid())
+  nameEn    String
+  nameAr    String
+  logo      String?
+  industry  String   @default("")
+  address   String   @default("")
+  phone     String   @default("")
+  email     String   @default("")
+  taxId     String   @default("")
+  isActive  Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  users          HrUserCompany[]
+  departments    HrDepartment[]
+  employees      HrEmployee[]
+  payrollPeriods HrPayrollPeriod[]
+
+  @@map("hr_companies")
+}
+
+model HrDepartment {
+  id           String   @id @default(cuid())
+  nameEn       String
+  nameAr       String
+  isActive     Boolean  @default(true)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+  companyId    String
+  headOfDeptId String?
+
+  headOfDept HrEmployee?  @relation("HrDepartmentHead", fields: [headOfDeptId], references: [id])
+  company    HrCompany    @relation(fields: [companyId], references: [id])
+  employees  HrEmployee[] @relation("HrEmployeeDepartment")
+
+  @@unique([companyId, nameEn])
+  @@index([headOfDeptId])
+  @@index([companyId])
+  @@map("hr_departments")
+}
+
+// ============================================================================
+// HR MODULE — Employee
+// ============================================================================
+
+model HrEmployee {
+  id                    String    @id @default(cuid())
+  employeeId            String    @unique
+  fullNameEn            String
+  fullNameAr            String
+  nationalId            String    @unique
+  dateOfBirth           DateTime?
+  gender                String
+  personalEmail         String    @default("")
+  phone                 String    @default("")
+  address               String    @default("")
+  emergencyContactName  String    @default("")
+  emergencyContactPhone String    @default("")
+  photo                 String?
+  positionEn            String    @default("")
+  positionAr            String    @default("")
+  level                 String    @default("")
+  employmentType        String    @default("")
+  workModel             String    @default("")
+  contractStart         DateTime?
+  contractEnd           DateTime?
+  probationEnd          DateTime?
+  status                String    @default("active")
+  baseSalary            Decimal   @default(0) @db.Decimal(14, 2)
+  currency              String    @default("SAR")
+  bankName              String    @default("")
+  bankAccount           String    @default("")
+  iban                  String    @default("")
+  createdAt             DateTime  @default(now())
+  updatedAt             DateTime  @updatedAt
+  companyId             String
+  departmentId          String?
+  directManagerId       String?
+  shiftId               String?
+  hrUserProfileId       String?   @unique
+  userId                String?   @unique
+
+  // Relations
+  user             User?              @relation(fields: [userId], references: [id])
+  hrUserProfile    HrUserProfile?     @relation(fields: [hrUserProfileId], references: [id])
+  shift            HrShift?           @relation(fields: [shiftId], references: [id])
+  directManager    HrEmployee?        @relation("HrEmployeeManager", fields: [directManagerId], references: [id])
+  subordinates     HrEmployee[]       @relation("HrEmployeeManager")
+  department       HrDepartment?      @relation("HrEmployeeDepartment", fields: [departmentId], references: [id])
+  company          HrCompany          @relation(fields: [companyId], references: [id])
+  headOfDepartments HrDepartment[]    @relation("HrDepartmentHead")
+  documents        HrEmployeeDocument[]
+  attendanceLogs   HrAttendanceLog[]
+  leaveRequests    HrLeaveRequest[]
+  bonuses          HrBonus[]
+  incidents        HrIncident[]
+  overtimeRequests HrOvertimeRequest[]
+  monthlySalaries  HrMonthlySalary[]
+
+  @@index([shiftId])
+  @@index([directManagerId])
+  @@index([departmentId])
+  @@index([companyId])
+  @@map("hr_employees")
+}
+
+model HrEmployeeDocument {
+  id                 String   @id @default(cuid())
+  documentType       String
+  file               String
+  filename           String
+  fileSize           Int
+  uploadedByEmployee Boolean  @default(false)
+  uploadDate         DateTime @default(now())
+  createdAt          DateTime @default(now())
+  employeeId         String
+  uploadedById       String?
+
+  uploadedBy HrUserProfile? @relation("HrDocumentUploadedBy", fields: [uploadedById], references: [userId])
+  employee   HrEmployee     @relation(fields: [employeeId], references: [id])
+
+  @@index([uploadedById])
+  @@index([employeeId])
+  @@map("hr_employee_documents")
+}
+
+// ============================================================================
+// HR MODULE — Attendance
+// ============================================================================
+
+model HrShift {
+  id                 String   @id @default(cuid())
+  name               String
+  startTime          String
+  endTime            String
+  gracePeriodMinutes Int      @default(0)
+  dailyWorkHours     Decimal  @default(8) @db.Decimal(5, 2)
+  weeklyOffDay       Int      @default(5)
+  isDefault          Boolean  @default(false)
+  createdAt          DateTime @default(now())
+  updatedAt          DateTime @updatedAt
+
+  employees HrEmployee[]
+
+  @@map("hr_shifts")
+}
+
+model HrAttendanceLog {
+  id            String   @id @default(cuid())
+  date          DateTime
+  checkIn       String?
+  checkOut      String?
+  status        String
+  hoursWorked   Decimal  @default(0) @db.Decimal(5, 2)
+  overtimeHours Decimal  @default(0) @db.Decimal(5, 2)
+  isManual      Boolean  @default(false)
+  manualReason  String   @default("")
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+  createdById   String?
+  employeeId    String
+
+  employee  HrEmployee     @relation(fields: [employeeId], references: [id])
+  createdBy HrUserProfile? @relation("HrAttendanceLogCreatedBy", fields: [createdById], references: [userId])
+
+  @@unique([employeeId, date])
+  @@index([employeeId])
+  @@index([createdById])
+  @@map("hr_attendance_logs")
+}
+
+model HrLeaveType {
+  id               String   @id @default(cuid())
+  nameEn           String
+  nameAr           String
+  annualDays       Int      @default(0)
+  isPaid           Boolean  @default(true)
+  carryOverAllowed Boolean  @default(false)
+  maxCarryOverDays Int      @default(0)
+  createdAt        DateTime @default(now())
+
+  leaveRequests HrLeaveRequest[]
+
+  @@map("hr_leave_types")
+}
+
+model HrLeaveRequest {
+  id           String    @id @default(cuid())
+  startDate    DateTime
+  endDate      DateTime
+  daysCount    Int
+  reason       String    @default("")
+  status       String    @default("pending")
+  approvedAt   DateTime?
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+  approvedById String?
+  employeeId   String
+  leaveTypeId  String
+
+  leaveType  HrLeaveType    @relation(fields: [leaveTypeId], references: [id])
+  employee   HrEmployee     @relation(fields: [employeeId], references: [id])
+  approvedBy HrUserProfile? @relation("HrLeaveApprovedBy", fields: [approvedById], references: [userId])
+
+  @@index([leaveTypeId])
+  @@index([employeeId])
+  @@index([approvedById])
+  @@map("hr_leave_requests")
+}
+
+model HrAttendanceAutoRule {
+  id                   String   @id @default(cuid())
+  code                 String   @unique
+  name                 String
+  conditionDescription String   @default("")
+  thresholdValue       Int      @default(0)
+  timeWindowMonths     Int      @default(0)
+  action               String   @default("")
+  isActive             Boolean  @default(true)
+  createdAt            DateTime @default(now())
+
+  @@map("hr_attendance_auto_rules")
+}
+
+// ============================================================================
+// HR MODULE — Overtime
+// ============================================================================
+
+model HrOvertimePolicy {
+  id                  String   @id @default(cuid())
+  typeCode            String   @unique
+  nameEn              String
+  nameAr              String
+  rateMultiplier      Decimal  @default(1.5) @db.Decimal(5, 2)
+  minHours            Decimal  @default(0) @db.Decimal(5, 2)
+  maxHoursPerDay      Decimal  @default(4) @db.Decimal(5, 2)
+  maxHoursPerMonth    Decimal  @default(40) @db.Decimal(5, 2)
+  requiresPreApproval Boolean  @default(true)
+  approvalAuthority   String   @default("")
+  createdAt           DateTime @default(now())
+  updatedAt           DateTime @updatedAt
+
+  overtimeRequests HrOvertimeRequest[]
+
+  @@map("hr_overtime_policies")
+}
+
+model HrOvertimeRequest {
+  id               String    @id @default(cuid())
+  date             DateTime
+  hoursRequested   Decimal   @db.Decimal(5, 2)
+  reason           String    @default("")
+  evidence         String?
+  status           String    @default("pending")
+  approvedAt       DateTime?
+  denialReason     String    @default("")
+  calculatedAmount Decimal   @default(0) @db.Decimal(14, 2)
+  createdAt        DateTime  @default(now())
+  updatedAt        DateTime  @updatedAt
+  approvedById     String?
+  employeeId       String
+  overtimeTypeId   String
+
+  overtimePolicy HrOvertimePolicy @relation(fields: [overtimeTypeId], references: [id])
+  employee       HrEmployee       @relation(fields: [employeeId], references: [id])
+  approvedBy     HrUserProfile?   @relation("HrOvertimeApprovedBy", fields: [approvedById], references: [userId])
+
+  @@index([overtimeTypeId])
+  @@index([employeeId])
+  @@index([approvedById])
+  @@map("hr_overtime_requests")
+}
+
+// ============================================================================
+// HR MODULE — Incidents
+// ============================================================================
+
+model HrViolationCategory {
+  id                String   @id @default(cuid())
+  code              String   @unique
+  nameEn            String
+  nameAr            String
+  resetPeriodMonths Int      @default(12)
+  createdAt         DateTime @default(now())
+
+  violationRules HrViolationRule[]
+
+  @@map("hr_violation_categories")
+}
+
+model HrViolationRule {
+  id                   String   @id @default(cuid())
+  code                 String   @unique
+  nameEn               String
+  nameAr               String
+  offense1Action       String   @default("")
+  offense1DeductionPct Decimal  @default(0) @db.Decimal(5, 2)
+  offense2Action       String   @default("")
+  offense2DeductionPct Decimal  @default(0) @db.Decimal(5, 2)
+  offense3Action       String   @default("")
+  offense3DeductionPct Decimal  @default(0) @db.Decimal(5, 2)
+  offense4Action       String   @default("")
+  offense4DeductionPct Decimal  @default(0) @db.Decimal(5, 2)
+  offense5Action       String   @default("")
+  offense5DeductionPct Decimal  @default(0) @db.Decimal(5, 2)
+  createdAt            DateTime @default(now())
+  updatedAt            DateTime @updatedAt
+  categoryId           String
+
+  incidents HrIncident[]
+  category  HrViolationCategory @relation(fields: [categoryId], references: [id])
+
+  @@index([categoryId])
+  @@map("hr_violation_rules")
+}
+
+model HrIncident {
+  id              String    @id @default(cuid())
+  incidentDate    DateTime
+  offenseNumber   Int
+  actionTaken     String    @default("")
+  deductionPct    Decimal   @default(0) @db.Decimal(5, 2)
+  deductionAmount Decimal   @default(0) @db.Decimal(14, 2)
+  status          String    @default("pending")
+  comments        String    @default("")
+  evidence        String?
+  dismissedReason String    @default("")
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+  approvedById    String?
+  employeeId      String
+  submittedById   String
+  violationRuleId String
+
+  violationRule HrViolationRule @relation(fields: [violationRuleId], references: [id])
+  submittedBy   HrUserProfile   @relation("HrIncidentSubmittedBy", fields: [submittedById], references: [userId])
+  employee      HrEmployee      @relation(fields: [employeeId], references: [id])
+  approvedBy    HrUserProfile?  @relation("HrIncidentApprovedBy", fields: [approvedById], references: [userId])
+
+  @@index([violationRuleId])
+  @@index([submittedById])
+  @@index([employeeId])
+  @@index([approvedById])
+  @@map("hr_incidents")
+}
+
+// ============================================================================
+// HR MODULE — Bonuses
+// ============================================================================
+
+model HrBonusCategory {
+  id        String   @id @default(cuid())
+  code      String   @unique
+  nameEn    String
+  nameAr    String
+  createdAt DateTime @default(now())
+
+  bonusRules HrBonusRule[]
+
+  @@map("hr_bonus_categories")
+}
+
+model HrBonusRule {
+  id                String   @id @default(cuid())
+  code              String   @unique
+  nameEn            String
+  nameAr            String
+  valueType         String   @default("")
+  value             Decimal  @default(0) @db.Decimal(14, 2)
+  frequency         String   @default("")
+  maxPerMonth       Int      @default(0)
+  approvalAuthority String   @default("")
+  triggerCondition  String   @default("")
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+  categoryId        String
+
+  bonuses  HrBonus[]
+  category HrBonusCategory @relation(fields: [categoryId], references: [id])
+
+  @@index([categoryId])
+  @@map("hr_bonus_rules")
+}
+
+model HrBonus {
+  id            String    @id @default(cuid())
+  bonusDate     DateTime
+  bonusAmount   Decimal   @db.Decimal(14, 2)
+  comments      String    @default("")
+  evidence      String?
+  status        String    @default("pending")
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+  approvedById  String?
+  employeeId    String
+  submittedById String
+  bonusRuleId   String
+
+  bonusRule   HrBonusRule    @relation(fields: [bonusRuleId], references: [id])
+  submittedBy HrUserProfile  @relation("HrBonusSubmittedBy", fields: [submittedById], references: [userId])
+  employee    HrEmployee     @relation(fields: [employeeId], references: [id])
+  approvedBy  HrUserProfile? @relation("HrBonusApprovedBy", fields: [approvedById], references: [userId])
+
+  @@index([bonusRuleId])
+  @@index([submittedById])
+  @@index([employeeId])
+  @@index([approvedById])
+  @@map("hr_bonuses")
+}
+
+// ============================================================================
+// HR MODULE — Payroll
+// ============================================================================
+
+model HrPayrollPeriod {
+  id          String    @id @default(cuid())
+  month       Int
+  year        Int
+  status      String    @default("draft")
+  lockedAt    DateTime?
+  finalizedAt DateTime?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+  companyId   String
+  lockedById  String?
+  paidAt      DateTime?
+  paidById    String?
+
+  paidBy   HrUserProfile? @relation("HrPayrollPaidBy", fields: [paidById], references: [userId])
+  lockedBy HrUserProfile? @relation("HrPayrollLockedBy", fields: [lockedById], references: [userId])
+  company  HrCompany      @relation(fields: [companyId], references: [id])
+
+  @@unique([companyId, month, year])
+  @@index([paidById])
+  @@index([lockedById])
+  @@index([companyId])
+  @@map("hr_payroll_periods")
+}
+
+model HrMonthlySalary {
+  id              String    @id @default(cuid())
+  month           Int
+  year            Int
+  baseSalary      Decimal   @db.Decimal(14, 2)
+  overtimeAmount  Decimal   @default(0) @db.Decimal(14, 2)
+  totalBonuses    Decimal   @default(0) @db.Decimal(14, 2)
+  totalDeductions Decimal   @default(0) @db.Decimal(14, 2)
+  netSalary       Decimal   @db.Decimal(14, 2)
+  workDays        Int       @default(0)
+  absentDays      Int       @default(0)
+  lateCount       Int       @default(0)
+  overtimeHours   Decimal   @default(0) @db.Decimal(5, 2)
+  notes           String    @default("")
+  status          String    @default("draft")
+  lockedAt        DateTime?
+  finalizedAt     DateTime?
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+  employeeId      String
+  lockedById      String?
+
+  lockedBy HrUserProfile? @relation("HrSalaryLockedBy", fields: [lockedById], references: [userId])
+  employee HrEmployee     @relation(fields: [employeeId], references: [id])
+
+  @@unique([employeeId, month, year])
+  @@index([lockedById])
+  @@index([employeeId])
+  @@map("hr_monthly_salaries")
+}
+
+// ============================================================================
+// HR MODULE — Notifications, Settings, Audit
+// ============================================================================
+
+model HrNotification {
+  id                String   @id @default(cuid())
+  notificationType  String
+  title             String
+  message           String
+  isRead            Boolean  @default(false)
+  relatedObjectType String   @default("")
+  relatedObjectId   String?
+  createdAt         DateTime @default(now())
+  userId            String
+
+  user HrUserProfile @relation(fields: [userId], references: [userId])
+
+  @@index([userId])
+  @@map("hr_notifications")
+}
+
+model HrAppSetting {
+  id          String   @id @default(cuid())
+  key         String   @unique
+  value       String
+  description String   @default("")
+  category    String   @default("")
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@map("hr_app_settings")
+}
+
+model HrAuditLog {
+  id              String   @id @default(cuid())
+  action          String
+  entityType      String
+  entityId        String
+  fieldName       String   @default("")
+  oldValue        String   @default("")
+  newValue        String   @default("")
+  timestamp       DateTime @default(now())
+  ipAddress       String?
+  userId          String?
+
+  user HrUserProfile? @relation(fields: [userId], references: [userId])
+
+  @@index([userId])
+  @@index([entityType, entityId])
+  @@map("hr_audit_logs")
+}
+
+// ============================================================================
+// CRM MODULE — Enums
+// ============================================================================
+
+enum CrmRole {
+  REP
+  MANAGER
+  TECH_DIRECTOR
+  ACCOUNT_MGR
+  FINANCE
+  CEO
+  ADMIN
+}
+
+enum CrmOpportunityStage {
+  NEW
+  CONTACTED
+  DISCOVERY
+  QUALIFIED
+  TECH_MEETING
+  PROPOSAL_SENT
+  NEGOTIATION
+  VERBAL_YES
+  POSTPONED
+  WON
+  LOST
+}
+
+enum CrmPriority {
+  HOT
+  WARM
+  COLD
+}
+
+enum CrmDealType {
+  ONE_TIME
+  MONTHLY
+  ANNUAL
+  SAAS
+  MIXED
+  RETAINER
+}
+
+enum CrmCurrency {
+  EGP
+  USD
+  SAR
+  AED
+  QAR
+}
+
+enum CrmNextActionType {
+  FOLLOW_UP
+  CALL_LATER
+  REOFFER_REPRICE
+  PROPOSAL_REQUIRED
+  WHATSAPP_MESSAGE
+  SCHEDULE_MEETING
+  SEND_CONTRACT
+  COLLECT_PAYMENT
+  INTERNAL_REVIEW
+  CEO_APPROVAL
+}
+
+enum CrmCallType {
+  INITIAL_OUTREACH
+  FOLLOW_UP
+  DISCOVERY
+  TECHNICAL
+  PROPOSAL_WALKTHRU
+  NEGOTIATION
+  CLOSING
+  CHECK_IN
+  SUPPORT
+}
+
+enum CrmCallOutcome {
+  POSITIVE
+  NEUTRAL
+  NEGATIVE
+  NO_ANSWER
+  VOICEMAIL
+  WRONG_NUMBER
+  MEETING_BOOKED
+  PROPOSAL_REQUEST
+  WON
+  LOST
+  RESCHEDULE
+  NOT_INTERESTED
+}
+
+enum CrmClientCategory {
+  A_PLUS @map("A+")
+  A
+  B_PLUS @map("B+")
+  B
+  C_PLUS @map("C+")
+  C
+}
+
+enum CrmAttachmentKind {
+  PROPOSAL
+  CONTRACT
+  BRIEF
+  EMAIL
+  OTHER
+}
+
+// ============================================================================
+// CRM MODULE — User Profile
+// ============================================================================
+
+model CrmUserProfile {
+  id               String       @id @default(cuid())
+  userId           String       @unique
+  user             User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  fullName         String       @default("")
+  fullNameAr       String?
+  phone            String?
+  avatarUrl        String?
+  role             CrmRole      @default(REP)
+  entityId         String?
+  entity           CrmEntity?   @relation(fields: [entityId], references: [id])
+  monthlyTargetEGP Decimal?     @db.Decimal(12, 2)
+  active           Boolean      @default(true)
+
+  // CRM relations
+  ownedOpportunities    CrmOpportunity[] @relation("CrmOpportunityOwner")
+  deliveryOpportunities CrmOpportunity[] @relation("CrmDeliveryOwner")
+  techSupportOpps       CrmOpportunity[] @relation("CrmTechSupport")
+  assignedCompanies     CrmCompany[]
+  calls                 CrmCall[]
+  meetings              CrmMeeting[]     @relation("CrmMeetingScheduler")
+  dailyReports          CrmDailyReport[] @relation("CrmDailyReportRep")
+  activityLogs          CrmActivityLog[]
+  notes                 CrmNote[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([entityId])
+  @@index([role])
+  @@map("crm_user_profiles")
+}
+
+// ============================================================================
+// CRM MODULE — Entity (B Group subsidiaries)
+// ============================================================================
+
+model CrmEntity {
+  id     String  @id @default(cuid())
+  code   String  @unique
+  nameEn String
+  nameAr String
+  color  String
+  active Boolean @default(true)
+
+  users         CrmUserProfile[]
+  opportunities CrmOpportunity[]
+  products      CrmProduct[]
+  lossReasons   CrmLossReason[]
+  stageConfigs  CrmStageConfig[]
+  leadSources   CrmLeadSource[]
+
+  @@map("crm_entities")
+}
+
+// ============================================================================
+// CRM MODULE — Companies & Contacts
+// ============================================================================
+
+model CrmCompany {
+  id           String           @id @default(cuid())
+  nameEn       String
+  nameAr       String?
+  brandName    String?
+  industry     String?
+  website      String?
+  phone        String?
+  address      String?
+  country      String           @default("EG")
+  city         String?
+  category     CrmClientCategory?
+  notes        String?
+  assignedToId String?
+  assignedTo   CrmUserProfile?  @relation(fields: [assignedToId], references: [id])
+  createdAt    DateTime         @default(now())
+  updatedAt    DateTime         @updatedAt
+
+  contacts      CrmContact[]
+  opportunities CrmOpportunity[]
+  calls         CrmCall[]
+  meetings      CrmMeeting[]
+
+  @@index([assignedToId])
+  @@index([country])
+  @@index([category])
+  @@map("crm_companies")
+}
+
+model CrmContact {
+  id        String   @id @default(cuid())
+  companyId String
+  company   CrmCompany @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  fullName  String
+  role      String?
+  email     String?
+  phone     String?
+  whatsapp  String?
+  isPrimary Boolean  @default(false)
+  linkedIn  String?
+  notes     String?
+  createdAt DateTime @default(now())
+
+  opportunities CrmOpportunity[] @relation("CrmPrimaryContact")
+
+  @@index([companyId])
+  @@index([email])
+  @@map("crm_contacts")
+}
+
+// ============================================================================
+// CRM MODULE — Opportunities
+// ============================================================================
+
+model CrmOpportunity {
+  id               String              @id @default(cuid())
+  code             String              @unique
+  companyId        String
+  company          CrmCompany          @relation(fields: [companyId], references: [id])
+  primaryContactId String?
+  primaryContact   CrmContact?         @relation("CrmPrimaryContact", fields: [primaryContactId], references: [id])
+  ownerId          String
+  owner            CrmUserProfile      @relation("CrmOpportunityOwner", fields: [ownerId], references: [id])
+  entityId         String
+  entity           CrmEntity           @relation(fields: [entityId], references: [id])
+
+  title            String
+  stage            CrmOpportunityStage @default(NEW)
+  priority         CrmPriority         @default(COLD)
+  leadSource       String?
+  dealType         CrmDealType         @default(ONE_TIME)
+
+  // Financial
+  estimatedValue    Decimal  @db.Decimal(14, 2)
+  currency          CrmCurrency @default(EGP)
+  estimatedValueEGP Decimal  @db.Decimal(14, 2)
+  probabilityPct    Int
+  weightedValueEGP  Decimal  @db.Decimal(14, 2)
+
+  // Product linkage
+  products CrmOpportunityProduct[]
+
+  // Timeline
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
+  dateContacted     DateTime?
+  dateDiscovery     DateTime?
+  dateProposalSent  DateTime?
+  expectedCloseDate DateTime?
+  dateClosed        DateTime?
+  deliveryStartDate DateTime?
+
+  // People
+  techSupportId   String?
+  techSupport     CrmUserProfile? @relation("CrmTechSupport", fields: [techSupportId], references: [id])
+  deliveryOwnerId String?
+  deliveryOwner   CrmUserProfile? @relation("CrmDeliveryOwner", fields: [deliveryOwnerId], references: [id])
+
+  // Next step discipline
+  nextAction     CrmNextActionType?
+  nextActionText String?
+  nextActionDate DateTime?
+
+  // Close / Loss
+  lossReasonId     String?
+  lossReason       CrmLossReason? @relation(fields: [lossReasonId], references: [id])
+  lostToCompetitor String?
+
+  // Documents
+  proposalUrl String?
+  contractUrl String?
+
+  // Notes & Context
+  description      String?
+  techRequirements String?
+
+  // External sync
+  notionPageId String? @unique
+
+  // Audit
+  stageChanges CrmStageHistory[]
+  calls        CrmCall[]
+  meetings     CrmMeeting[]
+  notes        CrmNote[]
+  activityLogs CrmActivityLog[]
+  attachments  CrmAttachment[]
+
+  @@index([companyId])
+  @@index([ownerId])
+  @@index([entityId])
+  @@index([stage])
+  @@index([priority])
+  @@index([expectedCloseDate])
+  @@index([nextActionDate])
+  @@map("crm_opportunities")
+}
+
+model CrmOpportunityProduct {
+  id            String         @id @default(cuid())
+  opportunityId String
+  opportunity   CrmOpportunity @relation(fields: [opportunityId], references: [id], onDelete: Cascade)
+  productId     String
+  product       CrmProduct     @relation(fields: [productId], references: [id])
+  quantity      Decimal        @default(1) @db.Decimal(10, 2)
+  unitPriceEGP  Decimal        @db.Decimal(14, 2)
+  discountPct   Decimal        @default(0) @db.Decimal(5, 2)
+
+  @@unique([opportunityId, productId])
+  @@map("crm_opportunity_products")
+}
+
+model CrmStageHistory {
+  id            String               @id @default(cuid())
+  opportunityId String
+  opportunity   CrmOpportunity       @relation(fields: [opportunityId], references: [id], onDelete: Cascade)
+  fromStage     CrmOpportunityStage?
+  toStage       CrmOpportunityStage
+  changedAt     DateTime             @default(now())
+  changedById   String
+  durationDays  Int?
+
+  @@index([opportunityId])
+  @@map("crm_stage_histories")
+}
+
+// ============================================================================
+// CRM MODULE — Call Log
+// ============================================================================
+
+model CrmCall {
+  id            String          @id @default(cuid())
+  code          String          @unique
+  opportunityId String?
+  opportunity   CrmOpportunity? @relation(fields: [opportunityId], references: [id])
+  companyId     String?
+  company       CrmCompany?     @relation(fields: [companyId], references: [id])
+  contactId     String?
+  contactName   String?
+  callerId      String
+  caller        CrmUserProfile  @relation(fields: [callerId], references: [id])
+
+  callType       CrmCallType
+  outcome        CrmCallOutcome
+  durationMins   Int            @default(0)
+  callAt         DateTime       @default(now())
+  nextActionText String?
+  nextActionDate DateTime?
+  notes          String?
+
+  @@index([callerId, callAt])
+  @@index([opportunityId])
+  @@index([companyId])
+  @@index([contactId])
+  @@map("crm_calls")
+}
+
+// ============================================================================
+// CRM MODULE — Daily reports (replaces ad-hoc call logging)
+// ============================================================================
+
+model CrmDailyReport {
+  id              String         @id @default(cuid())
+  repId           String
+  rep             CrmUserProfile @relation("CrmDailyReportRep", fields: [repId], references: [id])
+  /// Calendar day this report covers (UTC midnight).
+  reportDate      DateTime
+  callsCount      Int            @default(0)
+  meetingsBooked  Int            @default(0)
+  meetingsHeld    Int            @default(0)
+  newLeads        Int            @default(0)
+  notes           String         @default("")
+  createdAt       DateTime       @default(now())
+  updatedAt       DateTime       @updatedAt
+
+  @@unique([repId, reportDate])
+  @@index([reportDate])
+  @@map("crm_daily_reports")
+}
+
+// ============================================================================
+// CRM MODULE — Technical Meeting Booking
+// ============================================================================
+
+enum CrmMeetingType {
+  DEMO
+  OFFICE_VISIT
+  FOLLOWUP
+  PROPOSAL
+  ONBOARDING
+}
+
+enum CrmMeetingStatus {
+  WAITING
+  CONFIRMED
+  DONE
+  CANCELLED
+}
+
+model CrmMeeting {
+  id              String           @id @default(cuid())
+  code            String           @unique
+  /// Optional linked opportunity / company.
+  opportunityId   String?
+  opportunity     CrmOpportunity?  @relation(fields: [opportunityId], references: [id])
+  companyId       String?
+  company         CrmCompany?      @relation(fields: [companyId], references: [id])
+  contactName     String?
+  contactPhone    String?
+  /// Sales rep who booked the meeting (and whose slot is "occupied" by it).
+  scheduledById   String
+  scheduledBy     CrmUserProfile   @relation("CrmMeetingScheduler", fields: [scheduledById], references: [id])
+
+  startAt         DateTime
+  endAt           DateTime
+  durationMinutes Int
+  meetingType     CrmMeetingType   @default(DEMO)
+  customerNeed    String?
+  notes           String?
+  status          CrmMeetingStatus @default(WAITING)
+
+  createdAt       DateTime         @default(now())
+  updatedAt       DateTime         @updatedAt
+
+  @@index([scheduledById, startAt])
+  @@index([startAt])
+  @@index([status])
+  @@map("crm_meetings")
+}
+
+// ============================================================================
+// CRM MODULE — Products
+// ============================================================================
+
+model CrmProduct {
+  id            String      @id @default(cuid())
+  code          String      @unique
+  entityId      String
+  entity        CrmEntity   @relation(fields: [entityId], references: [id])
+  category      String
+  nameEn        String
+  nameAr        String
+  description   String?
+  descriptionAr String?
+  basePrice     Decimal     @db.Decimal(14, 2)
+  currency      CrmCurrency
+  dealType      CrmDealType
+  active        Boolean     @default(true)
+
+  opportunities CrmOpportunityProduct[]
+
+  @@index([entityId, category])
+  @@index([active])
+  @@map("crm_products")
+}
+
+// ============================================================================
+// CRM MODULE — Notes & Activity
+// ============================================================================
+
+model CrmNote {
+  id            String          @id @default(cuid())
+  opportunityId String?
+  opportunity   CrmOpportunity? @relation(fields: [opportunityId], references: [id], onDelete: Cascade)
+  companyId     String?
+  authorId      String
+  author        CrmUserProfile  @relation(fields: [authorId], references: [id])
+  content       String          @db.Text
+  createdAt     DateTime        @default(now())
+
+  @@index([opportunityId])
+  @@index([companyId])
+  @@map("crm_notes")
+}
+
+model CrmActivityLog {
+  id            String          @id @default(cuid())
+  opportunityId String?
+  opportunity   CrmOpportunity? @relation(fields: [opportunityId], references: [id], onDelete: Cascade)
+  actorId       String
+  actor         CrmUserProfile  @relation(fields: [actorId], references: [id])
+  action        String
+  metadata      Json?
+  createdAt     DateTime        @default(now())
+
+  @@index([opportunityId, createdAt])
+  @@index([actorId, createdAt])
+  @@map("crm_activity_logs")
+}
+
+model CrmAttachment {
+  id            String            @id @default(cuid())
+  opportunityId String
+  opportunity   CrmOpportunity    @relation(fields: [opportunityId], references: [id], onDelete: Cascade)
+  filename      String
+  url           String
+  sizeBytes     Int
+  mimeType      String
+  kind          CrmAttachmentKind
+  uploadedById  String
+  createdAt     DateTime          @default(now())
+
+  @@map("crm_attachments")
+}
+
+// ============================================================================
+// CRM MODULE — Configuration Tables
+// ============================================================================
+
+model CrmStageConfig {
+  id             String              @id @default(cuid())
+  entityId       String?
+  entity         CrmEntity?          @relation(fields: [entityId], references: [id])
+  stage          CrmOpportunityStage
+  probabilityPct Int
+  slaHours       Int?
+  displayOrder   Int
+
+  @@unique([entityId, stage])
+  @@map("crm_stage_configs")
+}
+
+model CrmLossReason {
+  id       String     @id @default(cuid())
+  code     String
+  labelEn  String
+  labelAr  String
+  entityId String?
+  entity   CrmEntity? @relation(fields: [entityId], references: [id])
+  active   Boolean    @default(true)
+
+  opportunities CrmOpportunity[]
+
+  @@unique([entityId, code])
+  @@map("crm_loss_reasons")
+}
+
+model CrmLeadSource {
+  id       String     @id @default(cuid())
+  code     String
+  labelEn  String
+  labelAr  String
+  entityId String?
+  entity   CrmEntity? @relation(fields: [entityId], references: [id])
+  active   Boolean    @default(true)
+
+  @@unique([entityId, code])
+  @@map("crm_lead_sources")
+}
+
+model CrmFxRate {
+  id        String      @id @default(cuid())
+  currency  CrmCurrency @unique
+  toEGP     Decimal     @db.Decimal(12, 4)
+  updatedAt DateTime    @updatedAt
+
+  @@map("crm_fx_rates")
+}
+
+model CrmSystemConfig {
+  key   String @id
+  value String
+
+  @@map("crm_system_configs")
+}
+
+// ============================================================================
+// PARTNERS MODULE — Enums
+// ============================================================================
+
+enum PartnerLeadStatus {
+  NEW
+  CONTACTED
+  QUALIFIED
+  LOST
+}
+
+enum PartnerDealStatus {
+  PENDING
+  WON
+  LOST
+}
+
+enum PartnerContractStatus {
+  REQUESTED
+  APPROVED
+  REJECTED
+}
+
+enum PartnerInvoiceStatus {
+  REQUESTED
+  APPROVED
+  REJECTED
+}
+
+enum PartnerCommissionStatus {
+  PENDING
+  APPROVED
+  PAID
+}
+
+enum PartnerNotificationType {
+  CONTRACT_APPROVED
+  CONTRACT_REJECTED
+  INVOICE_APPROVED
+  INVOICE_REJECTED
+  COMMISSION_APPROVED
+  COMMISSION_PAID
+  DEAL_WON
+  GENERAL
+}
+
+// ============================================================================
+// PARTNERS MODULE — Profile
+// ============================================================================
+
+model PartnerProfile {
+  id             String   @id @default(cuid())
+  userId         String   @unique
+  user           User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  companyName    String
+  contactPhone   String?
+  commissionRate Float    @default(10)
+  isActive       Boolean  @default(true)
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  leads       PartnerLead[]
+  clients     PartnerClient[]
+  deals       PartnerDeal[]
+  contracts   PartnerContract[]
+  invoices    PartnerInvoice[]
+  commissions PartnerCommission[]
+  payouts     PartnerPayout[]
+
+  @@map("partner_profiles")
+}
+
+// ============================================================================
+// PARTNERS MODULE — Leads & Clients
+// ============================================================================
+
+model PartnerLead {
+  id                  String            @id @default(cuid())
+  partnerId           String
+  partner             PartnerProfile    @relation(fields: [partnerId], references: [id])
+  name                String
+  email               String?
+  phone               String?
+  company             String?
+  status              PartnerLeadStatus @default(NEW)
+  notes               String?
+  convertedToClientId String?           @unique
+  convertedToClient   PartnerClient?    @relation("PartnerLeadConversion", fields: [convertedToClientId], references: [id])
+  createdAt           DateTime          @default(now())
+  updatedAt           DateTime          @updatedAt
+
+  @@index([partnerId])
+  @@index([status])
+  @@index([partnerId, status])
+  @@map("partner_leads")
+}
+
+model PartnerClient {
+  id        String         @id @default(cuid())
+  partnerId String
+  partner   PartnerProfile @relation(fields: [partnerId], references: [id])
+  name      String
+  email     String?
+  phone     String?
+  company   String?
+  createdAt DateTime       @default(now())
+  updatedAt DateTime       @updatedAt
+
+  convertedFromLead PartnerLead? @relation("PartnerLeadConversion")
+  deals             PartnerDeal[]
+
+  @@index([partnerId])
+  @@map("partner_clients")
+}
+
+// ============================================================================
+// PARTNERS MODULE — Services & Deals
+// ============================================================================
+
+model PartnerService {
+  id          String   @id @default(cuid())
+  name        String
+  description String?
+  basePrice   Float
+  isActive    Boolean  @default(true)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  deals PartnerDeal[]
+
+  @@map("partner_services")
+}
+
+model PartnerDeal {
+  id        String            @id @default(cuid())
+  partnerId String
+  partner   PartnerProfile    @relation(fields: [partnerId], references: [id])
+  clientId  String
+  client    PartnerClient     @relation(fields: [clientId], references: [id])
+  serviceId String
+  service   PartnerService    @relation(fields: [serviceId], references: [id])
+  value     Float
+  status    PartnerDealStatus @default(PENDING)
+  notes     String?
+  wonAt     DateTime?
+  createdAt DateTime          @default(now())
+  updatedAt DateTime          @updatedAt
+
+  contracts  PartnerContract[]
+  invoices   PartnerInvoice[]
+  commission PartnerCommission?
+
+  @@index([partnerId])
+  @@index([clientId])
+  @@index([serviceId])
+  @@index([status])
+  @@index([partnerId, status])
+  @@map("partner_deals")
+}
+
+// ============================================================================
+// PARTNERS MODULE — Contracts & Invoices
+// ============================================================================
+
+model PartnerContract {
+  id              String                @id @default(cuid())
+  partnerId       String
+  partner         PartnerProfile        @relation(fields: [partnerId], references: [id])
+  dealId          String
+  deal            PartnerDeal           @relation(fields: [dealId], references: [id])
+  status          PartnerContractStatus @default(REQUESTED)
+  rejectionReason String?
+  pdfUrl          String?
+  requestedAt     DateTime              @default(now())
+  reviewedAt      DateTime?
+  reviewedBy      String?
+  createdAt       DateTime              @default(now())
+  updatedAt       DateTime              @updatedAt
+
+  @@index([partnerId])
+  @@index([dealId])
+  @@index([status])
+  @@map("partner_contracts")
+}
+
+model PartnerInvoice {
+  id              String               @id @default(cuid())
+  partnerId       String
+  partner         PartnerProfile       @relation(fields: [partnerId], references: [id])
+  dealId          String
+  deal            PartnerDeal          @relation(fields: [dealId], references: [id])
+  status          PartnerInvoiceStatus @default(REQUESTED)
+  amount          Float
+  rejectionReason String?
+  pdfUrl          String?
+  requestedAt     DateTime             @default(now())
+  reviewedAt      DateTime?
+  reviewedBy      String?
+  createdAt       DateTime             @default(now())
+  updatedAt       DateTime             @updatedAt
+
+  @@index([partnerId])
+  @@index([dealId])
+  @@index([status])
+  @@map("partner_invoices")
+}
+
+// ============================================================================
+// PARTNERS MODULE — Commissions
+// ============================================================================
+
+model PartnerCommission {
+  id         String                  @id @default(cuid())
+  partnerId  String
+  partner    PartnerProfile          @relation(fields: [partnerId], references: [id])
+  dealId     String                  @unique
+  deal       PartnerDeal             @relation(fields: [dealId], references: [id])
+  amount     Float
+  rate       Float
+  status     PartnerCommissionStatus @default(PENDING)
+  approvedAt DateTime?
+  paidAt     DateTime?
+  createdAt  DateTime                @default(now())
+  updatedAt  DateTime                @updatedAt
+
+  @@index([partnerId])
+  @@index([dealId])
+  @@index([status])
+  @@index([partnerId, status])
+  @@map("partner_commissions")
+}
+
+// ============================================================================
+// PARTNERS MODULE — Notifications & Audit
+// ============================================================================
+
+model PartnerNotification {
+  id        String                  @id @default(cuid())
+  userId    String
+  type      PartnerNotificationType @default(GENERAL)
+  title     String
+  message   String
+  isRead    Boolean                 @default(false)
+  metadata  Json?
+  createdAt DateTime                @default(now())
+  updatedAt DateTime                @updatedAt
+
+  @@index([userId])
+  @@index([userId, isRead])
+  @@map("partner_notifications")
+}
+
+model PartnerAuditLog {
+  id        String   @id @default(cuid())
+  userId    String
+  action    String
+  entity    String
+  entityId  String
+  oldData   Json?
+  newData   Json?
+  ipAddress String?
+  createdAt DateTime @default(now())
+
+  @@index([userId])
+  @@index([entity, entityId])
+  @@index([createdAt])
+  @@map("partner_audit_logs")
+}
