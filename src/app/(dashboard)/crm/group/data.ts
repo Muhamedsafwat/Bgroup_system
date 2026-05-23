@@ -2,6 +2,7 @@ import { db } from "@/lib/db";
 import type { SessionUser } from "@/types";
 import { scopeOpportunityByRole } from "@/lib/crm/rbac";
 import { computeHygieneScore, getOverdueFollowups, getAgingProposals, getStaleLeads, getMissingNextActions } from "@/lib/crm/business/alerts";
+import { countStalled } from "@/lib/crm/business/stalled";
 
 /**
  * Sales targets are sourced from `CrmUserProfile.monthlyTargetEGP` per rep.
@@ -275,6 +276,133 @@ export async function getGroupDashboardData(
     getStaleLeads(alertableOpps).length +
     getMissingNextActions(alertableOpps).length;
 
+  // Tier-0 #9: coverage ratio = open weighted pipeline / remaining quota
+  // gap. Single number that tells you if the quarter is at risk. A
+  // ratio below ~3x is the standard "I need to prospect more" signal
+  // for mid-market sales orgs. We compute it once at team-level here
+  // and per-rep on the leaderboard so the dashboard surfaces both.
+  // Remaining-quota = teamTarget − wonValueMTD. Guard against div-by-0
+  // and negative gaps (already over quota = ratio = ∞ → null).
+  const remainingTeamQuota = Math.max(0, teamTarget - wonValueMTD);
+  const teamCoverageRatio =
+    remainingTeamQuota > 0
+      ? Math.round((weightedPipeline / remainingTeamQuota) * 100) / 100
+      : null;
+
+  // Per-rep coverage on the leaderboard. Same formula, scoped to each
+  // rep's target − wonValue. Reps with no target (target=0) get null.
+  const leaderboardWithCoverage = leaderboard.map((rep) => {
+    const gap = Math.max(0, rep.target - rep.wonValue);
+    const coverage =
+      rep.target > 0 && gap > 0
+        ? Math.round((rep.weightedPipeline / gap) * 100) / 100
+        : null;
+    return { ...rep, coverage };
+  });
+
+  // Tier-0 #10: anti-gaming flags on the leaderboard. Surfaces patterns
+  // that suggest the leaderboard number is being manipulated rather than
+  // earned. None of these are accusatory on their own — they're "look
+  // here next" signals for a 1:1 conversation. Three signals, each a
+  // boolean per rep:
+  //   - lateMonthSpike: > 60% of this month's WON value closed in the
+  //                     last 5 days (cramming activity at month-end).
+  //   - lowAcvHighVolume: > 5 wins this month with avg ACV < 10% of the
+  //                       org average — could be padding the count.
+  //   - stageBouncebacks: ≥ 3 stage-history rows in 30d where the SAME
+  //                       opp moved backwards then forwards in the
+  //                       pipeline (artificial stage churn).
+  const FIVE_DAYS_MS = 5 * 24 * 60 * 60 * 1000;
+  const lateThreshold = new Date(now.getTime() - FIVE_DAYS_MS);
+  const orgAvgWon = wonOpps.length > 0 ? wonValueMTD / wonOpps.length : 0;
+
+  // Per-rep MTD wins + late-window wins for the spike signal.
+  const wonByRep = new Map<string, { count: number; value: number; lateValue: number }>();
+  for (const o of wonOpps) {
+    const k = o.owner.id;
+    const cur = wonByRep.get(k) ?? { count: 0, value: 0, lateValue: 0 };
+    const v = Number(o.estimatedValueEGP);
+    cur.count += 1;
+    cur.value += v;
+    if (o.dateClosed && o.dateClosed > lateThreshold) cur.lateValue += v;
+    wonByRep.set(k, cur);
+  }
+
+  // Stage-bounceback signal — read recent history for the reps on the
+  // leaderboard only (keeps the query tight). A "bounceback" is any
+  // pair of consecutive history rows for the same opp where the
+  // displayOrder went backwards then forwards across them.
+  const repIds = leaderboardWithCoverage.map((r) => r.userId);
+  const recentChanges =
+    repIds.length > 0
+      ? await db.crmStageHistory.findMany({
+          where: {
+            changedAt: { gte: new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000) },
+            changedById: { in: repIds },
+          },
+          select: {
+            opportunityId: true,
+            changedById: true,
+            fromStage: true,
+            toStage: true,
+            changedAt: true,
+          },
+          orderBy: [{ opportunityId: "asc" }, { changedAt: "asc" }],
+        })
+      : [];
+
+  // Re-use stageConfigRows we already pulled to map stage → displayOrder.
+  const stageOrderMap = new Map<string, number>();
+  for (const cfg of stageConfigRows) stageOrderMap.set(cfg.stage, cfg.displayOrder);
+  const bouncebacksByRep = new Map<string, number>();
+  // Walk each opp's chronological history and count "backward then
+  // forward" zig-zags. Resets the prev pointer per opp.
+  let prevOppId: string | null = null;
+  let lastOrder: number | null = null;
+  let wasBackward = false;
+  for (const h of recentChanges) {
+    if (h.opportunityId !== prevOppId) {
+      prevOppId = h.opportunityId;
+      lastOrder = stageOrderMap.get(h.toStage) ?? null;
+      wasBackward = false;
+      continue;
+    }
+    const curOrder = stageOrderMap.get(h.toStage) ?? null;
+    if (lastOrder != null && curOrder != null) {
+      if (curOrder < lastOrder) {
+        wasBackward = true;
+      } else if (curOrder > lastOrder && wasBackward) {
+        bouncebacksByRep.set(
+          h.changedById,
+          (bouncebacksByRep.get(h.changedById) ?? 0) + 1
+        );
+        wasBackward = false;
+      }
+    }
+    lastOrder = curOrder;
+  }
+
+  const leaderboardWithFlags = leaderboardWithCoverage.map((rep) => {
+    const w = wonByRep.get(rep.userId);
+    const lateMonthSpike =
+      w && w.value > 0 ? w.lateValue / w.value > 0.6 : false;
+    const lowAcvHighVolume =
+      w && w.count > 5 && orgAvgWon > 0 ? w.value / w.count < orgAvgWon * 0.1 : false;
+    const stageBouncebacks = (bouncebacksByRep.get(rep.userId) ?? 0) >= 3;
+    const flags: string[] = [];
+    if (lateMonthSpike) flags.push("late-month-spike");
+    if (lowAcvHighVolume) flags.push("low-acv-high-volume");
+    if (stageBouncebacks) flags.push("stage-bouncebacks");
+    return { ...rep, flags };
+  });
+
+  // Tier-1 #13 — stalled-deals count for the dashboard widget. Reuses
+  // the openOpps set we already loaded (so no extra Prisma query for
+  // the opp list) and joins to CrmStageHistory + CrmStageConfig.maxDays.
+  const stalledCount = await countStalled(
+    openOpps.map((o) => ({ id: o.id, stage: o.stage, createdAt: o.createdAt }))
+  );
+
   return {
     kpis: {
       openOpps: openOpps.length,
@@ -282,8 +410,11 @@ export async function getGroupDashboardData(
       wonCountMTD: wonOpps.length,
       wonValueMTD: Math.round(wonValueMTD),
       teamTarget: Math.round(teamTarget),
+      remainingQuota: Math.round(remainingTeamQuota),
+      coverageRatio: teamCoverageRatio,
+      stalledCount,
     },
-    leaderboard,
+    leaderboard: leaderboardWithFlags,
     topHotOpportunities: topHot,
     pipelineByEntity: Object.values(entityGroups),
     pipelineByStage,

@@ -95,6 +95,126 @@ export function OpportunityListClient({
   const [transferReason, setTransferReason] = useState("");
   const [transferring, setTransferring] = useState(false);
 
+  // Tier-0 #5 — extra bulk actions beyond reassign. The action select
+  // routes to /api/crm/opportunities/bulk with a tagged-union body.
+  // Set-stage / set-priority dialogs are inline below for tightness.
+  const [bulkBusy, setBulkBusy] = useState(false);
+  const [stageDialog, setStageDialog] = useState(false);
+  const [stageDialogValue, setStageDialogValue] = useState("");
+  const [priorityDialog, setPriorityDialog] = useState(false);
+  const [priorityDialogValue, setPriorityDialogValue] = useState<"HOT" | "WARM" | "COLD">("WARM");
+  const [deleteDialog, setDeleteDialog] = useState(false);
+
+  async function runBulk(body: Record<string, unknown>) {
+    setBulkBusy(true);
+    try {
+      const res = await fetch("/api/crm/opportunities/bulk", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ ids: Array.from(selected), ...body }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        toast.error(data.error ?? "Bulk action failed");
+        return;
+      }
+      const skipped = data.skipped > 0 ? ` · ${data.skipped} skipped` : "";
+      toast.success(`Updated ${data.affected} opportunit${data.affected === 1 ? "y" : "ies"}${skipped}`);
+      setSelected(new Set());
+      setStageDialog(false);
+      setPriorityDialog(false);
+      setDeleteDialog(false);
+      router.refresh();
+    } finally {
+      setBulkBusy(false);
+    }
+  }
+
+  // Tier-0 #6 — saved-view picker. Lists this user's views + every
+  // shared view scoped to crm:opportunities. Selecting one applies its
+  // saved filters to the URL search params, triggering the existing
+  // server-side filter pipeline.
+  type SavedView = {
+    id: string;
+    name: string;
+    filtersJson: Record<string, unknown>;
+    isShared: boolean;
+    mine: boolean;
+    owner: { id: string; fullName: string } | null;
+  };
+  const [savedViews, setSavedViews] = useState<SavedView[]>([]);
+  const [savedViewName, setSavedViewName] = useState("");
+  const [savedViewShared, setSavedViewShared] = useState(false);
+  const [savedViewDialog, setSavedViewDialog] = useState(false);
+  const [savedViewBusy, setSavedViewBusy] = useState(false);
+
+  async function loadSavedViews() {
+    try {
+      const res = await fetch("/api/crm/saved-views?scope=crm:opportunities");
+      if (res.ok) {
+        const data = await res.json();
+        setSavedViews(data.views ?? []);
+      }
+    } catch {
+      // Non-fatal — the picker just stays empty.
+    }
+  }
+  // Lazy-load on first interaction with the picker; avoid a noisy
+  // fetch for every visitor who never opens the dropdown.
+  function ensureSavedViews() {
+    if (savedViews.length === 0) loadSavedViews();
+  }
+
+  function applySavedView(v: SavedView) {
+    const params = new URLSearchParams();
+    for (const [k, val] of Object.entries(v.filtersJson)) {
+      if (val != null && String(val).length > 0) params.set(k, String(val));
+    }
+    router.push(`/crm/opportunities?${params.toString()}`);
+  }
+
+  async function saveCurrentView() {
+    if (!savedViewName.trim()) return;
+    setSavedViewBusy(true);
+    try {
+      const params = Object.fromEntries(searchParams.entries());
+      const res = await fetch("/api/crm/saved-views", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          scope: "crm:opportunities",
+          name: savedViewName.trim(),
+          filtersJson: params,
+          isShared: savedViewShared,
+        }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        toast.error(data.error ?? "Couldn't save view");
+        return;
+      }
+      toast.success(`View "${savedViewName}" saved`);
+      setSavedViewDialog(false);
+      setSavedViewName("");
+      setSavedViewShared(false);
+      loadSavedViews();
+    } finally {
+      setSavedViewBusy(false);
+    }
+  }
+
+  async function deleteSavedView(id: string) {
+    if (!confirm("Delete this saved view?")) return;
+    const res = await fetch(`/api/crm/saved-views/${id}`, { method: "DELETE" });
+    if (res.ok) {
+      toast.success("View deleted");
+      loadSavedViews();
+    } else {
+      const data = await res.json().catch(() => ({}));
+      toast.error(data.error ?? "Delete failed");
+    }
+  }
+
   function toggleOne(id: string, on: boolean) {
     setSelected((prev) => {
       const next = new Set(prev);
@@ -230,18 +350,99 @@ export function OpportunityListClient({
         </div>
       </div>
 
+      {/* Tier-0 #6 — saved-view picker. Always visible (mine ∪ shared)
+          but disabled when the dropdown has no entries yet. Save-current
+          button bottles up the active URL params as a named view. */}
+      <div className="flex items-center gap-2 flex-wrap">
+        <Select
+          value=""
+          onValueChange={(id) => {
+            const v = savedViews.find((x) => x.id === id);
+            if (v) applySavedView(v);
+          }}
+        >
+          <SelectTrigger className="w-56 h-8" onClick={ensureSavedViews}>
+            <SelectValue
+              placeholder={locale === "ar" ? "تطبيق عرض محفوظ…" : "Apply saved view…"}
+            />
+          </SelectTrigger>
+          <SelectContent>
+            {savedViews.length === 0 ? (
+              <SelectItem value="__empty__" disabled>
+                {locale === "ar" ? "(لا توجد عروض محفوظة)" : "(no saved views yet)"}
+              </SelectItem>
+            ) : (
+              savedViews.map((v) => (
+                <SelectItem key={v.id} value={v.id}>
+                  {v.name}{" "}
+                  <span className="text-xs text-muted-foreground">
+                    {v.mine ? "" : `· ${v.owner?.fullName ?? ""}`}
+                    {v.isShared ? " · shared" : ""}
+                  </span>
+                </SelectItem>
+              ))
+            )}
+          </SelectContent>
+        </Select>
+        <Button
+          size="sm"
+          variant="outline"
+          className="h-8"
+          onClick={() => {
+            ensureSavedViews();
+            setSavedViewDialog(true);
+          }}
+        >
+          {locale === "ar" ? "حفظ كعرض" : "Save current as view"}
+        </Button>
+        {savedViews.filter((v) => v.mine).length > 0 && (
+          <Select
+            value=""
+            onValueChange={(id) => id && deleteSavedView(id)}
+          >
+            <SelectTrigger className="w-32 h-8">
+              <SelectValue placeholder={locale === "ar" ? "حذف…" : "Delete…"} />
+            </SelectTrigger>
+            <SelectContent>
+              {savedViews
+                .filter((v) => v.mine)
+                .map((v) => (
+                  <SelectItem key={v.id} value={v.id}>
+                    {v.name}
+                  </SelectItem>
+                ))}
+            </SelectContent>
+          </Select>
+        )}
+      </div>
+
       {/* Bulk-action bar (admin / manager) — appears once anything is selected */}
       {canTransfer && selected.size > 0 && (
-        <div className="flex items-center gap-3 rounded-lg border border-primary/40 bg-primary/5 px-3 py-2">
+        <div className="flex items-center gap-2 flex-wrap rounded-lg border border-primary/40 bg-primary/5 px-3 py-2">
           <span className="text-sm font-medium">
-            {selected.size} selected
+            {selected.size} {locale === "ar" ? "محدد" : "selected"}
           </span>
-          <Button size="sm" onClick={() => setTransferOpen(true)}>
+          <Button size="sm" onClick={() => setTransferOpen(true)} disabled={bulkBusy}>
             <ArrowRightLeft className="h-3.5 w-3.5 me-1.5" />
-            Transfer to another rep
+            {locale === "ar" ? "نقل" : "Transfer"}
+          </Button>
+          <Button size="sm" variant="outline" onClick={() => setPriorityDialog(true)} disabled={bulkBusy}>
+            {locale === "ar" ? "تغيير الأولوية" : "Set priority"}
+          </Button>
+          <Button size="sm" variant="outline" onClick={() => setStageDialog(true)} disabled={bulkBusy}>
+            {locale === "ar" ? "تغيير المرحلة" : "Set stage"}
+          </Button>
+          <Button
+            size="sm"
+            variant="outline"
+            className="text-destructive hover:text-destructive"
+            onClick={() => setDeleteDialog(true)}
+            disabled={bulkBusy}
+          >
+            {locale === "ar" ? "حذف" : "Delete"}
           </Button>
           <Button size="sm" variant="ghost" onClick={() => setSelected(new Set())}>
-            Clear
+            {locale === "ar" ? "مسح" : "Clear"}
           </Button>
         </div>
       )}
@@ -439,6 +640,152 @@ export function OpportunityListClient({
           </DialogContent>
         </Dialog>
       )}
+
+      {/* Tier-0 #5 — bulk-set-priority dialog */}
+      <Dialog open={priorityDialog} onOpenChange={setPriorityDialog}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>
+              {locale === "ar"
+                ? `تغيير الأولوية لـ ${selected.size} فرصة`
+                : `Set priority for ${selected.size} opportunit${selected.size === 1 ? "y" : "ies"}`}
+            </DialogTitle>
+          </DialogHeader>
+          <div>
+            <Select value={priorityDialogValue} onValueChange={(v) => setPriorityDialogValue(v as "HOT" | "WARM" | "COLD")}>
+              <SelectTrigger>
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="HOT">{t.priorities.HOT}</SelectItem>
+                <SelectItem value="WARM">{t.priorities.WARM}</SelectItem>
+                <SelectItem value="COLD">{t.priorities.COLD}</SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setPriorityDialog(false)} disabled={bulkBusy}>
+              {locale === "ar" ? "إلغاء" : "Cancel"}
+            </Button>
+            <Button
+              onClick={() => runBulk({ action: "set-priority", priority: priorityDialogValue })}
+              disabled={bulkBusy}
+            >
+              {bulkBusy && <Loader2 className="h-4 w-4 me-1.5 animate-spin" />}
+              {locale === "ar" ? "تطبيق" : "Apply"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Tier-0 #5 — bulk-set-stage dialog. Free-text stage code so it
+          matches whatever the admin curated in CrmStageConfig. */}
+      <Dialog open={stageDialog} onOpenChange={setStageDialog}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>
+              {locale === "ar"
+                ? `تغيير المرحلة لـ ${selected.size} فرصة`
+                : `Set stage for ${selected.size} opportunit${selected.size === 1 ? "y" : "ies"}`}
+            </DialogTitle>
+          </DialogHeader>
+          <div>
+            <Input
+              value={stageDialogValue}
+              onChange={(e) => setStageDialogValue(e.target.value)}
+              placeholder="e.g. NEGOTIATION"
+              autoFocus
+            />
+            <p className="text-xs text-muted-foreground mt-1.5">
+              {locale === "ar"
+                ? "ادخل رمز المرحلة كما هو معرّف في إعدادات المراحل."
+                : "Type the stage code exactly as configured in Stage Config (e.g. NEGOTIATION, VERBAL_YES)."}
+            </p>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setStageDialog(false)} disabled={bulkBusy}>
+              {locale === "ar" ? "إلغاء" : "Cancel"}
+            </Button>
+            <Button
+              onClick={() => runBulk({ action: "set-stage", newStage: stageDialogValue.trim() })}
+              disabled={bulkBusy || !stageDialogValue.trim()}
+            >
+              {bulkBusy && <Loader2 className="h-4 w-4 me-1.5 animate-spin" />}
+              {locale === "ar" ? "تطبيق" : "Apply"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Tier-0 #5 — bulk soft-delete confirmation */}
+      <Dialog open={deleteDialog} onOpenChange={setDeleteDialog}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle className="text-destructive">
+              {locale === "ar"
+                ? `حذف ${selected.size} فرصة؟`
+                : `Delete ${selected.size} opportunit${selected.size === 1 ? "y" : "ies"}?`}
+            </DialogTitle>
+          </DialogHeader>
+          <p className="text-sm text-muted-foreground">
+            {locale === "ar"
+              ? "حذف ناعم — الصفقات تختفي من القوائم لكن سجل الأنشطة يبقى. يمكن لمشرف إعادتها."
+              : "Soft-delete — opps disappear from lists but the activity history is preserved. An admin can restore them later."}
+          </p>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setDeleteDialog(false)} disabled={bulkBusy}>
+              {locale === "ar" ? "إلغاء" : "Cancel"}
+            </Button>
+            <Button
+              variant="destructive"
+              onClick={() => runBulk({ action: "soft-delete" })}
+              disabled={bulkBusy}
+            >
+              {bulkBusy && <Loader2 className="h-4 w-4 me-1.5 animate-spin" />}
+              {locale === "ar" ? "حذف" : "Delete"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Tier-0 #6 — save-current-view dialog */}
+      <Dialog open={savedViewDialog} onOpenChange={setSavedViewDialog}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>{locale === "ar" ? "حفظ كعرض" : "Save current view"}</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-3">
+            <Input
+              value={savedViewName}
+              onChange={(e) => setSavedViewName(e.target.value)}
+              placeholder={locale === "ar" ? "اسم العرض" : "View name"}
+              autoFocus
+            />
+            {canTransfer && (
+              <label className="flex items-center gap-2 text-sm cursor-pointer">
+                <Checkbox
+                  checked={savedViewShared}
+                  onCheckedChange={(v) => setSavedViewShared(!!v)}
+                />
+                <span>
+                  {locale === "ar"
+                    ? "مشاركة مع كل المستخدمين (مدير/مشرف فقط)"
+                    : "Share with everyone (manager/admin only)"}
+                </span>
+              </label>
+            )}
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setSavedViewDialog(false)} disabled={savedViewBusy}>
+              {locale === "ar" ? "إلغاء" : "Cancel"}
+            </Button>
+            <Button onClick={saveCurrentView} disabled={savedViewBusy || !savedViewName.trim()}>
+              {savedViewBusy && <Loader2 className="h-4 w-4 me-1.5 animate-spin" />}
+              {locale === "ar" ? "حفظ" : "Save"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

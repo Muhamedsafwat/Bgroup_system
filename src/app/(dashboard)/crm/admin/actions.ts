@@ -372,9 +372,18 @@ export async function getStageConfigs() {
 export async function updateStageConfig(id: string, data: Record<string, unknown>) {
   await requireAdmin();
   const parsed = updateStageConfigSchema.parse(data);
+  // Map `requiredFields` (validated as array) onto the schema's
+  // `requiredFieldsJson` column. Keeping the API name field-friendly
+  // (the admin UI thinks in fields, not in JSON blobs).
+  const { requiredFields, ...rest } = parsed;
   const config = await db.crmStageConfig.update({
     where: { id },
-    data: parsed,
+    data: {
+      ...rest,
+      ...(requiredFields !== undefined
+        ? { requiredFieldsJson: requiredFields }
+        : {}),
+    },
   });
   revalidatePath("/crm/admin/stage-config");
   return JSON.parse(JSON.stringify(config));
@@ -409,6 +418,17 @@ export async function createStageConfig(input: Record<string, unknown>) {
       customLabelEn: parsed.customLabelEn ?? null,
       customLabelAr: parsed.customLabelAr ?? null,
       isActive: true,
+      stageType: parsed.stageType ?? "open",
+      forecastCategory: parsed.forecastCategory ?? "pipeline",
+      targetDays: parsed.targetDays ?? null,
+      maxDays: parsed.maxDays ?? null,
+      // Prisma's Json column rejects literal `null`; the sentinel
+      // `Prisma.JsonNull` is the only way to write "no value" — but
+      // since the column is already nullable, omitting the key when
+      // we have no array is the simplest correct path.
+      ...(parsed.requiredFields
+        ? { requiredFieldsJson: parsed.requiredFields }
+        : {}),
     },
   });
   revalidatePath("/crm/admin/stage-config");

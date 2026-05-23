@@ -86,26 +86,41 @@ export async function getContacts(session: SessionUser, filters?: ContactFilters
   //    with rows created before the join existed). Both are filtered
   //    through the role-aware opp scope so a REP sees only their own
   //    deals' contacts.
-  const oppContactRows = await db.crmOpportunityContact.findMany({
-    where: {
-      ...(search
-        ? {
-            OR: [
-              { name: { contains: search, mode: "insensitive" as const } },
-              { email: { contains: search, mode: "insensitive" as const } },
-              { phone: { contains: search, mode: "insensitive" as const } },
-            ],
-          }
-        : {}),
-      opportunity: { ...oppScope, deletedAt: null },
-    },
-    include: {
-      opportunity: {
-        select: { id: true, code: true, title: true, customerCompanyName: true },
-      },
-    },
-    orderBy: [{ isPrimary: "desc" }, { createdAt: "asc" }],
-  });
+  // Defensive against a stale `globalThis.prisma` reference in dev —
+  // when a new model is added to the schema, the generated client is
+  // updated but the cached PrismaClient instance keeps its old shape
+  // until the dev server restarts. Without this guard, getContacts
+  // throws "Cannot read properties of undefined (reading 'findMany')"
+  // and the entire /crm/contacts page 500s. In production the cache
+  // is rebuilt on cold start so this branch is unreachable.
+  const oppContactRows =
+    typeof db.crmOpportunityContact?.findMany === "function"
+      ? await db.crmOpportunityContact.findMany({
+          where: {
+            ...(search
+              ? {
+                  OR: [
+                    { name: { contains: search, mode: "insensitive" as const } },
+                    { email: { contains: search, mode: "insensitive" as const } },
+                    { phone: { contains: search, mode: "insensitive" as const } },
+                  ],
+                }
+              : {}),
+            opportunity: { ...oppScope, deletedAt: null },
+          },
+          include: {
+            opportunity: {
+              select: { id: true, code: true, title: true, customerCompanyName: true },
+            },
+          },
+          orderBy: [{ isPrimary: "desc" }, { createdAt: "asc" }],
+        })
+      : [];
+  if (oppContactRows.length === 0 && typeof db.crmOpportunityContact?.findMany !== "function") {
+    console.warn(
+      "[getContacts] db.crmOpportunityContact unavailable — stale Prisma client. Restart dev server."
+    );
+  }
 
   const inlineOpps = await db.crmOpportunity.findMany({
     where: {

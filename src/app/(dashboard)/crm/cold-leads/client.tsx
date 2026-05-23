@@ -23,7 +23,10 @@ import {
   XCircle,
   Clock,
   Trash2,
+  Folder,
+  List,
 } from "lucide-react";
+import { FoldersView } from "./folders-view";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -130,6 +133,15 @@ export function ColdLeadsClient({
   const [dispositionFor, setDispositionFor] = useState<Lead | null>(null);
   const [editTarget, setEditTarget] = useState<Lead | null>(null);
 
+  // View mode — "leads" is the original flat directory; "folders" is the
+  // upload-batch grid (one card per Excel file that's been imported).
+  // Manager+admin only — reps don't manage upload batches.
+  const [view, setView] = useState<"leads" | "folders">("leads");
+  // When the user drills into a folder, we stay on the leads view but
+  // pin the list to that batch. A small "Filtered to folder: X" banner
+  // appears above the bucket tabs with a clear button.
+  const [batchFilter, setBatchFilter] = useState<{ id: string; label: string } | null>(null);
+
   const fetchRows = useCallback(async () => {
     setLoading(true);
     setSelected(new Set());
@@ -145,6 +157,7 @@ export function ColdLeadsClient({
       if (category) params.set("category", category);
       if (location) params.set("location", location);
       if (assignedTo !== "ALL") params.set("assignedToId", assignedTo);
+      if (batchFilter) params.set("batchId", batchFilter.id);
       params.set("page", String(page));
       const res = await fetch(`/api/crm/cold-leads?${params.toString()}`);
       if (res.ok) {
@@ -156,7 +169,7 @@ export function ColdLeadsClient({
     } finally {
       setLoading(false);
     }
-  }, [bucket, q, industry, category, location, assignedTo, statusFilter, page]);
+  }, [bucket, q, industry, category, location, assignedTo, statusFilter, page, batchFilter]);
 
   useEffect(() => {
     fetchRows();
@@ -408,6 +421,91 @@ export function ColdLeadsClient({
         </div>
       </div>
 
+      {/* View toggle — manager/admin only. The folder view groups leads
+          by their upload batch (one card per imported file); the leads
+          view is the original flat directory. When the user drills into
+          a folder card we flip back to the leads view with a
+          `batchFilter` set, so they always see the actual lead rows. */}
+      {isManagerOrAdmin && (
+        <div className="inline-flex items-center rounded-md border bg-card p-0.5">
+          <button
+            type="button"
+            onClick={() => setView("leads")}
+            className={cn(
+              "h-7 px-3 text-xs font-medium rounded-sm transition-colors flex items-center gap-1.5",
+              view === "leads"
+                ? "bg-primary text-primary-foreground"
+                : "text-muted-foreground hover:text-foreground"
+            )}
+          >
+            <List className="h-3.5 w-3.5" />
+            {locale === "ar" ? "كل العملاء" : "All leads"}
+          </button>
+          <button
+            type="button"
+            onClick={() => {
+              setView("folders");
+              // Clear any active batch filter — the folders grid is the
+              // top-level navigation; drilling in re-applies a filter.
+              setBatchFilter(null);
+            }}
+            className={cn(
+              "h-7 px-3 text-xs font-medium rounded-sm transition-colors flex items-center gap-1.5",
+              view === "folders"
+                ? "bg-primary text-primary-foreground"
+                : "text-muted-foreground hover:text-foreground"
+            )}
+          >
+            <Folder className="h-3.5 w-3.5" />
+            {locale === "ar" ? "المجلدات" : "Folders"}
+          </button>
+        </div>
+      )}
+
+      {/* Folder-filter banner — shows when the user drilled into a folder
+          from the folders view. Clicking the X clears the filter without
+          flipping back to the folders grid. */}
+      {view === "leads" && batchFilter && (
+        <div className="flex items-center gap-2 rounded-md border bg-muted/40 px-3 py-2 text-sm">
+          <Folder className="h-4 w-4 text-muted-foreground shrink-0" />
+          <span className="text-muted-foreground">
+            {locale === "ar" ? "مفلتر حسب المجلد:" : "Filtered to folder:"}
+          </span>
+          <span className="font-medium truncate">{batchFilter.label}</span>
+          <Button
+            variant="ghost"
+            size="sm"
+            className="h-6 px-2 text-xs ms-auto"
+            onClick={() => {
+              setBatchFilter(null);
+              setPage(1);
+            }}
+          >
+            <X className="h-3.5 w-3.5 me-1" />
+            {locale === "ar" ? "إزالة" : "Clear"}
+          </Button>
+        </div>
+      )}
+
+      {/* Folders grid — only when the toggle is on "folders". The grid
+          owns its own fetch lifecycle; clicking a folder card calls back
+          to flip to leads view with the right batch filter. */}
+      {view === "folders" && isManagerOrAdmin && (
+        <FoldersView
+          reps={reps}
+          onOpenFolder={(id, label) => {
+            setBatchFilter({ id, label });
+            setView("leads");
+            setPage(1);
+          }}
+        />
+      )}
+
+      {/* The rest of the original UI (bucket tabs, filters, table) only
+          renders in the leads view. Gated by the same condition. */}
+      {view === "leads" && (
+        <>
+
       {/* Bucket tabs */}
       <Tabs value={bucket} onValueChange={(v) => { setBucket(v); setPage(1); }}>
         <TabsList className="flex-wrap h-auto">
@@ -658,6 +756,8 @@ export function ColdLeadsClient({
           </div>
         </div>
       </Card>
+        </>
+      )}
 
       <ImportDialog
         open={importOpen}

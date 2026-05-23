@@ -4,6 +4,7 @@ import { z } from "zod";
 import { auth } from "@/lib/auth";
 import { db } from "@/lib/db";
 import { describeZodError } from "@/lib/zod-errors";
+import { isManagerOrAdmin } from "@/lib/crm/admin-gates";
 
 /**
  * POST /api/crm/cold-leads/distribute
@@ -24,21 +25,12 @@ const schema = z.object({
   repIds: z.array(z.string()).min(1, "Pick at least one rep"),
 });
 
-function callerCanDistribute(session: Session | null) {
-  if (!session?.user) return false;
-  const role = session.user.crmRole;
-  const platformAdmin =
-    !!session.user.hrRoles?.includes("super_admin") ||
-    (!!session.user.modules?.includes("partners") && !session.user.partnerId);
-  return platformAdmin || role === "ADMIN" || role === "MANAGER";
-}
-
 export async function POST(request: Request) {
   const session = (await auth()) as Session | null;
   if (!session?.user?.id) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
-  if (!callerCanDistribute(session)) {
+  if (!isManagerOrAdmin(session)) {
     return NextResponse.json({ error: "Forbidden" }, { status: 403 });
   }
 

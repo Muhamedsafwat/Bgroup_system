@@ -5,10 +5,12 @@ import { Header } from "@/components/layout/Header";
 import { MobileBottomNav } from "@/components/layout/MobileBottomNav";
 import { CommandPaletteProvider } from "@/components/layout/CommandPaletteProvider";
 import { OnboardingWizard } from "@/components/onboarding/Wizard";
+import { ImpersonationBanner } from "@/components/layout/ImpersonationBanner";
 
 export function DashboardShell({ children }: { children: React.ReactNode }) {
   return (
     <CommandPaletteProvider>
+      <ImpersonationBanner />
       <div className="flex min-h-screen bg-background text-foreground">
         {/* Desktop sidebar (>= md) */}
         <div className="hidden md:flex">

@@ -2329,6 +2329,28 @@ model CrmColdLeadImport {
 /// Audit trail of every time a rep touches a cold lead. The `disposition`
 /// is the bucket the rep dropped the lead into; `notes` carry any text the
 /// rep wrote (objection, call back date the prospect asked for, etc).
+/// Tier-1 #14 — SLA policy per cold-lead status. Admin defines:
+///   targetMinutes — first response / next action SLA from `assignedAt`
+///                   (NEW: 5 / ASSIGNED: 1440 / NO_ANSWER: 720)
+///   reminderPct   — % elapsed at which to remind the rep (50 = halfway)
+///   breachAction  — what to do when SLA breached:
+///                     "notify-manager" (default)
+///                     "reassign-unassigned" — flip to assignedToId=null
+///                     "no-op" (just log)
+/// One row per status; a status with no policy row = no SLA enforced.
+model CrmLeadSlaPolicy {
+  id            String            @id @default(cuid())
+  status        CrmColdLeadStatus @unique
+  targetMinutes Int
+  reminderPct   Int               @default(50)
+  breachAction  String            @default("notify-manager")
+  active        Boolean           @default(true)
+  createdAt     DateTime          @default(now())
+  updatedAt     DateTime          @updatedAt
+
+  @@map("crm_lead_sla_policies")
+}
+
 model CrmColdLeadDisposition {
   id           String            @id @default(cuid())
   coldLeadId   String
@@ -2491,6 +2513,11 @@ model CrmUserProfile {
   coldLeadDispositions  CrmColdLeadDisposition[] @relation("CrmColdLeadDispositioner")
   activityLogs          CrmActivityLog[]
   notes                 CrmNote[]
+  savedViews            CrmSavedView[]   @relation("CrmSavedViewOwner")
+  quotas                CrmQuota[]       @relation("CrmQuotaRep")
+  capacity              CrmRepCapacity?  @relation("CrmRepCapacity")
+  forecastSubmissions   CrmForecastSubmission[] @relation("CrmForecastManager")
+  dashboards            CrmDashboard[]   @relation("CrmDashboardOwner")
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -2653,6 +2680,27 @@ model CrmOpportunity {
   /// contact for backwards-compat with rows created before the join
   /// existed; new contacts always go here. Cascade-deletes with the opp.
   contacts CrmOpportunityContact[]
+  /// Tier-1 #11 — MEDDPICC qualification snapshot (1:1). Created
+  /// lazily on first save from the opp detail page.
+  meddpicc CrmOpportunityMeddpicc?
+  /// Tier-1 #23 — mutual action plan (1:1).
+  closePlan CrmClosePlan?
+  /// Tier-1 #27 — competitors many-to-many.
+  competitors CrmOpportunityCompetitor[]
+  /// Tier-2 #31 — which pipeline this opp belongs to. Null = default.
+  pipelineId String?
+  pipeline   CrmPipeline? @relation(fields: [pipelineId], references: [id], onDelete: SetNull)
+  /// Tier-2 #37 — custom-field values keyed by CrmCustomFieldDef.slug.
+  /// Shape: `{ "industry_tier": "A", "expected_arr": 50000 }`. Values
+  /// are validated server-side against the field's `definition` JSON
+  /// at write time.
+  customValuesJson Json?
+  /// Tier-1 #28 — manager's per-opp forecast-category override on top
+  /// of the stage default. Lets a manager pin a deal to Commit even
+  /// though its stage maps to BestCase, for example.
+  forecastCategoryOverride String?
+  /// Tier-2 #40 — slippage history (one row per expectedCloseDate change).
+  closeDateHistory CrmCloseDateHistory[]
 
   // Timeline
   createdAt         DateTime  @default(now())
@@ -2734,6 +2782,43 @@ model CrmOpportunityProduct {
   @@map("crm_opportunity_products")
 }
 
+/// Tier-1 #11 — MEDDPICC qualification snapshot for one opportunity.
+/// One-to-one with CrmOpportunity. Each of the 8 letters gets a 0-3
+/// score (none / weak / decent / strong) so we can roll up a deal-
+/// health number, plus a free-text "notes" field per letter for the
+/// rep to capture context ("Champion: Hala in procurement, met 3x").
+/// Stored normalised (not as JSON on the opp) so historical snapshots
+/// can be exported, audit trails work via Prisma's standard log
+/// patterns, and per-field reporting (which letters are weakest in
+/// our funnel?) is just a normal aggregate. `null` score means
+/// "not assessed yet" so we don't conflate "explicitly bad" with
+/// "haven't asked yet".
+model CrmOpportunityMeddpicc {
+  id            String         @id @default(cuid())
+  opportunityId String         @unique
+  opportunity   CrmOpportunity @relation(fields: [opportunityId], references: [id], onDelete: Cascade)
+  metricsScore           Int?
+  metricsNotes           String?
+  economicBuyerScore     Int?
+  economicBuyerNotes     String?
+  decisionCriteriaScore  Int?
+  decisionCriteriaNotes  String?
+  decisionProcessScore   Int?
+  decisionProcessNotes   String?
+  paperProcessScore      Int?
+  paperProcessNotes      String?
+  identifyPainScore      Int?
+  identifyPainNotes      String?
+  championScore          Int?
+  championNotes          String?
+  competitionScore       Int?
+  competitionNotes       String?
+  updatedAt     DateTime       @updatedAt
+  createdAt     DateTime       @default(now())
+
+  @@map("crm_opportunity_meddpicc")
+}
+
 /// One row per contact person on an opportunity. Free-text (not FK'd to
 /// CrmContact) because reps capture contacts inline during the deal — the
 /// curated CrmContact directory is admin-managed and only covers companies
@@ -2752,6 +2837,14 @@ model CrmOpportunityContact {
   whatsapp      String?
   isPrimary     Boolean        @default(false)
   notes         String?
+  /// Tier-1 #12 — stakeholder role + influence + sentiment. `roleType`
+  /// is one of: Champion / EconomicBuyer / DecisionMaker / Influencer
+  /// / Blocker / EndUser / Coach (free text so admins can extend).
+  /// `influence` 1-5 (low to high). `sentiment` "For" / "Neutral" /
+  /// "Against". All nullable so existing contact rows stay valid.
+  roleType   String?
+  influence  Int?
+  sentiment  String?
   createdAt     DateTime       @default(now())
   updatedAt     DateTime       @updatedAt
 
@@ -2759,6 +2852,153 @@ model CrmOpportunityContact {
   @@index([email])
   @@index([phone])
   @@map("crm_opportunity_contacts")
+}
+
+/// Tier-1 #15 + #17 — per-rep capacity + routing weight.
+/// `maxOpenLeads` caps how many ASSIGNED + NO_ANSWER cold leads a rep
+/// can hold; routing skips reps over the cap. `routingWeight` is the
+/// round-robin weight (1 = default, 2 = senior gets twice as many,
+/// 0.5 = ramping new hire gets half). Implemented as a separate
+/// table rather than columns on CrmUserProfile so the schema doesn't
+/// bloat for the 95% of installs that don't need either knob.
+model CrmRepCapacity {
+  id            String         @id @default(cuid())
+  repId         String         @unique
+  rep           CrmUserProfile @relation("CrmRepCapacity", fields: [repId], references: [id], onDelete: Cascade)
+  maxOpenLeads  Int?
+  routingWeight Float          @default(1.0)
+  skillTags     String[]       @default([])
+  pausedUntil   DateTime?
+  createdAt     DateTime       @default(now())
+  updatedAt     DateTime       @updatedAt
+
+  @@map("crm_rep_capacities")
+}
+
+/// Tier-1 #16 — per-status recycle policy. When a lead stays in a
+/// "stuck" status (NO_ANSWER, WAITING_LIST, NOT_INTERESTED) past the
+/// cooldown OR has been recycled `maxAttempts` times, the recycle
+/// job moves it to ARCHIVED — or back to the unassigned pool, per
+/// `recycleTarget`.
+model CrmLeadRecyclePolicy {
+  id            String            @id @default(cuid())
+  status        CrmColdLeadStatus @unique
+  cooldownDays  Int
+  maxAttempts   Int               @default(3)
+  recycleTarget String            @default("unassigned-pool") // "unassigned-pool" | "archive" | "original-rep"
+  active        Boolean           @default(true)
+  createdAt     DateTime          @default(now())
+  updatedAt     DateTime          @updatedAt
+
+  @@map("crm_lead_recycle_policies")
+}
+
+/// Tier-1 #23 — mutual action plan (close plan). One per opp, with
+/// repeatable items. Public `shareToken` lets the buyer view a
+/// read-only version without a CRM login.
+model CrmClosePlan {
+  id            String              @id @default(cuid())
+  opportunityId String              @unique
+  opportunity   CrmOpportunity      @relation(fields: [opportunityId], references: [id], onDelete: Cascade)
+  title         String              @default("Mutual Action Plan")
+  shareToken    String?             @unique
+  items         CrmClosePlanItem[]
+  createdAt     DateTime            @default(now())
+  updatedAt     DateTime            @updatedAt
+
+  @@map("crm_close_plans")
+}
+
+model CrmClosePlanItem {
+  id           String        @id @default(cuid())
+  planId       String
+  plan         CrmClosePlan  @relation(fields: [planId], references: [id], onDelete: Cascade)
+  title        String
+  ownerSide    String        @default("us") // "us" | "them"
+  dueDate      DateTime?
+  status       String        @default("open") // open | done | blocked
+  orderIndex   Int           @default(0)
+  notes        String?
+  createdAt    DateTime      @default(now())
+  updatedAt    DateTime      @updatedAt
+
+  @@index([planId])
+  @@map("crm_close_plan_items")
+}
+
+/// Tier-1 #24 — admin-attached playbook content per stage. Rich
+/// markdown / HTML the rep sees inline on the opp sidebar when the
+/// opp is in that stage.
+model CrmStagePlaybook {
+  id        String   @id @default(cuid())
+  stage     String   @unique
+  bodyMd    String
+  active    Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@map("crm_stage_playbooks")
+}
+
+/// Tier-1 #25 — activity quotas per stage (calls / meetings within N
+/// days before the opp is allowed to leave the stage). Admin-defined,
+/// validated in `changeStage` alongside required-fields gating.
+model CrmStageActivityQuota {
+  id           String  @id @default(cuid())
+  stage        String
+  activityType String  // "call" | "meeting" | "email"
+  minCount     Int
+  windowDays   Int     @default(30)
+  active       Boolean @default(true)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  @@unique([stage, activityType])
+  @@map("crm_stage_activity_quotas")
+}
+
+/// Tier-1 #27 — admin-curated competitor list + per-opp many-to-many.
+model CrmCompetitor {
+  id        String                      @id @default(cuid())
+  name      String                      @unique
+  active    Boolean                     @default(true)
+  notes     String?
+  createdAt DateTime                    @default(now())
+  opps      CrmOpportunityCompetitor[]
+
+  @@map("crm_competitors")
+}
+
+model CrmOpportunityCompetitor {
+  id            String         @id @default(cuid())
+  opportunityId String
+  opportunity   CrmOpportunity @relation(fields: [opportunityId], references: [id], onDelete: Cascade)
+  competitorId  String
+  competitor    CrmCompetitor  @relation(fields: [competitorId], references: [id], onDelete: Cascade)
+  wasPrimary    Boolean        @default(false)
+  createdAt     DateTime       @default(now())
+
+  @@unique([opportunityId, competitorId])
+  @@index([opportunityId])
+  @@map("crm_opportunity_competitors")
+}
+
+/// Tier-1 #28 — manager forecast submission overlay. One row per
+/// (manager, period, category) — the manager's judgement on what
+/// they'll actually deliver, alongside the system roll-up.
+model CrmForecastSubmission {
+  id              String         @id @default(cuid())
+  managerId       String
+  manager         CrmUserProfile @relation("CrmForecastManager", fields: [managerId], references: [id], onDelete: Cascade)
+  periodKey       String         // YYYY-MM for monthly, YYYY-Q1 for quarterly
+  commitEGP       Decimal        @db.Decimal(14, 2)
+  bestCaseEGP     Decimal        @db.Decimal(14, 2)
+  notes           String?
+  submittedAt     DateTime       @default(now())
+
+  @@unique([managerId, periodKey])
+  @@index([periodKey])
+  @@map("crm_forecast_submissions")
 }
 
 model CrmStageHistory {
@@ -3000,9 +3240,312 @@ model CrmStageConfig {
   probabilityPct Int
   slaHours       Int?
   displayOrder   Int
+  /// Tier-0 item 2 — stage semantics. `stageType` lets reports stop
+  /// hard-coding `stage === "WON"`, and `forecastCategory` powers a
+  /// Salesforce-style commit/best-case roll-up on top of the existing
+  /// weighted pipeline. Both default to "open"/"pipeline" so existing
+  /// rows behave the same as today until an admin re-categorises them.
+  stageType        String?  @default("open")   // open | won | lost | abandoned
+  forecastCategory String?  @default("pipeline") // pipeline | bestCase | commit | closed | omitted
+  /// Tier-0 item 3 — stalled-deal detection. Computed against
+  /// CrmStageHistory entries: if `now - lastChangedAt > maxDays` the
+  /// opp shows a "stalled X days" badge on the kanban card and a
+  /// "stuck deals" widget on the group dashboard.
+  targetDays Int?
+  maxDays    Int?
+  /// Tier-0 item 1 — required-fields gating. JSON list of opportunity
+  /// field paths that must be non-null before an opp can EXIT this
+  /// stage (drag-drop or stage change). Shape: `["estimatedValue",
+  /// "nextActionDate", "primaryContactId"]`. Empty/null = no gate
+  /// (current behaviour). Enforced server-side in `changeStage`.
+  requiredFieldsJson Json?
+  /// Tier-2 #31 — which pipeline this stage belongs to. Null = legacy
+  /// default pipeline (rows created before the migration).
+  pipelineId String?
+  pipeline   CrmPipeline? @relation(fields: [pipelineId], references: [id], onDelete: SetNull)
 
   @@unique([entityId, stage])
   @@map("crm_stage_configs")
+}
+
+/// Tier-1 #30 — admin "act as" / impersonation. One active session
+/// per admin (unique on adminUserId). The auth JWT callback looks
+/// for a row keyed by the actually-signed-in user; if present, the
+/// downstream session reports the TARGET user but tags `actingAs`
+/// with the admin's id so the banner can render "Return to admin".
+///
+/// Audit trail: start/stop both write CrmImpersonationAudit rows.
+model CrmImpersonationSession {
+  id           String   @id @default(cuid())
+  adminUserId  String   @unique
+  targetUserId String
+  startedAt    DateTime @default(now())
+  reason       String?
+
+  @@map("crm_impersonation_sessions")
+}
+
+model CrmImpersonationAudit {
+  id           String   @id @default(cuid())
+  adminUserId  String
+  targetUserId String
+  event        String
+  reason       String?
+  ipAddress    String?
+  at           DateTime @default(now())
+
+  @@index([adminUserId])
+  @@index([targetUserId])
+  @@map("crm_impersonation_audits")
+}
+
+/// Tier-2 #34 — configurable lead status state machine. Replaces the
+/// hardcoded transitions enforced today in the disposition endpoint.
+/// One row per allowed (from, to) pair. Empty table = anything goes
+/// (back-compat for installs that haven't configured it).
+model CrmLeadStatusTransition {
+  id              String            @id @default(cuid())
+  fromStatus      CrmColdLeadStatus
+  toStatus        CrmColdLeadStatus
+  requiresReason  Boolean           @default(false)
+  allowedRoles    String[]          @default([])
+  active          Boolean           @default(true)
+  createdAt       DateTime          @default(now())
+
+  @@unique([fromStatus, toStatus])
+  @@map("crm_lead_status_transitions")
+}
+
+/// Tier-2 #36 — workflow / automation engine. Admin builds:
+///   trigger    event description (e.g. "opp.stage.changed",
+///              "lead.assignedAt.elapsed", "schedule.cron")
+///   condition  JSON predicate evaluated against the trigger payload
+///   action     JSON describing what to do (create task, set field,
+///              POST webhook, send email, reassign, etc.)
+///
+/// `suppressionWindowMinutes` prevents re-firing on the same entity
+/// within the window (default 1440 = 24h) so alert fatigue stays in
+/// check. `lastFiredAt` is the runtime bookkeeping.
+model CrmWorkflow {
+  id                      String   @id @default(cuid())
+  name                    String
+  description             String?
+  triggerKind             String
+  triggerConfig           Json?
+  conditionJson           Json?
+  actionJson              Json
+  suppressionWindowMinutes Int     @default(1440)
+  isActive                Boolean  @default(true)
+  lastFiredAt             DateTime?
+  createdAt               DateTime @default(now())
+  updatedAt               DateTime @updatedAt
+  runs                    CrmWorkflowRun[]
+
+  @@index([triggerKind])
+  @@map("crm_workflows")
+}
+
+model CrmWorkflowRun {
+  id          String      @id @default(cuid())
+  workflowId  String
+  workflow    CrmWorkflow @relation(fields: [workflowId], references: [id], onDelete: Cascade)
+  status      String      // queued | running | success | failed | suppressed
+  entityType  String?
+  entityId    String?
+  payloadJson Json?
+  resultJson  Json?
+  error       String?
+  firedAt     DateTime    @default(now())
+  finishedAt  DateTime?
+
+  @@index([workflowId, firedAt])
+  @@index([entityId])
+  @@map("crm_workflow_runs")
+}
+
+/// Tier-2 #38 — saved dashboard layouts. Each dashboard is a list of
+/// widget configs (the renderer maps `kind` → React component). One
+/// row per (owner, name). Sharing model mirrors CrmSavedView.
+model CrmDashboard {
+  id        String         @id @default(cuid())
+  ownerId   String
+  owner     CrmUserProfile @relation("CrmDashboardOwner", fields: [ownerId], references: [id], onDelete: Cascade)
+  name      String
+  layoutJson Json          // array of { kind, params, x, y, w, h }
+  isShared  Boolean        @default(false)
+  createdAt DateTime       @default(now())
+  updatedAt DateTime       @updatedAt
+
+  @@index([ownerId])
+  @@map("crm_dashboards")
+}
+
+/// Tier-2 #39 — alert rules engine. Each rule is a saved query +
+/// notification config. The nightly evaluator scans against
+/// `predicateJson` and notifies matching opps once per `suppressionDays`.
+model CrmAlertRule {
+  id              String   @id @default(cuid())
+  name            String
+  scope           String   // "opportunity" | "coldLead"
+  predicateJson   Json     // structured filter: { field, op, value }[]
+  channels        String[] @default(["in-app"])
+  suppressionDays Int      @default(1)
+  isActive        Boolean  @default(true)
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  @@map("crm_alert_rules")
+}
+
+/// Tier-2 #40 — slippage tracking. Every change to
+/// `expectedCloseDate` writes a row here so admins can run "deals
+/// slipped > 30 days cumulative" reports.
+model CrmCloseDateHistory {
+  id            String         @id @default(cuid())
+  opportunityId String
+  opportunity   CrmOpportunity @relation(fields: [opportunityId], references: [id], onDelete: Cascade)
+  oldDate       DateTime?
+  newDate       DateTime?
+  changedAt     DateTime       @default(now())
+  changedById   String
+
+  @@index([opportunityId])
+  @@map("crm_close_date_history")
+}
+
+/// Tier-2 #43 — rejected rows from CSV / Excel imports. Each row is
+/// a single rejected lead with the original row data + the reason it
+/// was blocked. Admin re-reviews from this queue and bulk re-imports
+/// the cleaned set.
+model CrmColdLeadImportReject {
+  id            String   @id @default(cuid())
+  importBatchId String?
+  rowNumber     Int
+  rawJson       Json
+  reason        String
+  createdAt     DateTime @default(now())
+
+  @@index([importBatchId])
+  @@map("crm_cold_lead_import_rejects")
+}
+
+/// Tier-2 #31 — multiple named pipelines. Each pipeline has its own
+/// stages (CrmStageConfig.pipelineId references this), probabilities,
+/// rotting thresholds, required-field gates. The default pipeline
+/// holds existing rows when `pipelineId` is null on either side so
+/// upgrades don't break anything.
+///
+///   kind = "new-business" | "renewal" | "expansion" | custom
+///
+/// `defaultForKind` lets one row per kind be the auto-target for new
+/// opps of that kind (e.g. "auto-create renewal opp in this pipeline
+/// when X closes WON").
+model CrmPipeline {
+  id              String   @id @default(cuid())
+  name            String   @unique
+  kind            String   @default("new-business")
+  defaultForKind  Boolean  @default(false)
+  isActive        Boolean  @default(true)
+  displayOrder    Int      @default(0)
+  description     String?
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  stageConfigs CrmStageConfig[]
+  opportunities CrmOpportunity[]
+
+  @@map("crm_pipelines")
+}
+
+/// Tier-2 #37 — custom-fields meta-schema. Admin defines a typed
+/// field per object (opportunity / contact / lead / company). The
+/// `definition` JSON carries field-type-specific config (picklist
+/// options, min/max for numbers, regex for text, etc.).
+///
+///   objectType  "opportunity" | "contact" | "coldLead" | "company"
+///   kind        "text" | "number" | "picklist" | "date" | "boolean" | "lookup"
+///   slug        snake_case identifier, unique per object
+///
+/// Values are stored on the corresponding entity via the matching
+/// `customValuesJson` column (added in this migration to Opportunity,
+/// Contact, Cold Lead, Company). One JSON column avoids N joins
+/// per row read at the cost of slightly weaker queryability —
+/// acceptable for an admin-defined schema where most queries are
+/// against the core (non-custom) columns.
+model CrmCustomFieldDef {
+  id          String  @id @default(cuid())
+  objectType  String
+  slug        String
+  label       String
+  kind        String
+  required    Boolean @default(false)
+  definition  Json?
+  displayOrder Int    @default(0)
+  active      Boolean @default(true)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@unique([objectType, slug])
+  @@index([objectType])
+  @@map("crm_custom_field_defs")
+}
+
+/// Tier-1 #18 — per-rep, per-period quota with ramping support. Replaces
+/// the simple `monthlyTargetEGP` for orgs that want quarterly/annual
+/// targets, ramped numbers for new hires, or split quotas (new business
+/// vs. expansion). The legacy column stays as the default fallback for
+/// reps without explicit quota rows.
+///
+///   period          "monthly" | "quarterly" | "annual"
+///   periodStart     first day of the period (UTC midnight) — keys the row
+///   amountEGP       the quota in EGP for the entire period
+///   splitKind       optional: "new-business" / "expansion" / "all" (default)
+///                   so the same rep can have multiple parallel quotas.
+///   notes           free text for HR ("ramped 75% — month 2 of onboarding")
+///
+/// Unique on (repId, period, periodStart, splitKind) so re-setting a
+/// quota replaces in place rather than stacking.
+model CrmQuota {
+  id          String         @id @default(cuid())
+  repId       String
+  rep         CrmUserProfile @relation("CrmQuotaRep", fields: [repId], references: [id], onDelete: Cascade)
+  period      String
+  periodStart DateTime
+  amountEGP   Decimal        @db.Decimal(14, 2)
+  splitKind   String         @default("all")
+  notes       String?
+  createdAt   DateTime       @default(now())
+  updatedAt   DateTime       @updatedAt
+
+  @@unique([repId, period, periodStart, splitKind])
+  @@index([repId])
+  @@index([periodStart])
+  @@map("crm_quotas")
+}
+
+/// Tier-0 item 6 — saved smart views. Admin-curated, URL-shareable
+/// filtered views on opportunities / cold-leads / contacts / calls.
+/// `scope` is `"<module>:<resource>"` (e.g. "crm:opportunities") so the
+/// same table serves every list page. `filtersJson` is the encoded
+/// query-string parameters the list page already accepts (q, status,
+/// owner, batchId, etc.) — applied client-side when a view is loaded.
+/// `isShared = true` makes the view visible to every CRM user;
+/// otherwise it's the creator's personal view. No team-level sharing
+/// yet — kept simple for the first cut.
+model CrmSavedView {
+  id          String         @id @default(cuid())
+  ownerId     String
+  owner       CrmUserProfile @relation("CrmSavedViewOwner", fields: [ownerId], references: [id], onDelete: Cascade)
+  scope       String
+  name        String
+  filtersJson Json
+  isShared    Boolean        @default(false)
+  createdAt   DateTime       @default(now())
+  updatedAt   DateTime       @updatedAt
+
+  @@index([scope])
+  @@index([ownerId])
+  @@map("crm_saved_views")
 }
 
 /**

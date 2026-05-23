@@ -5,6 +5,7 @@ import { db } from "@/lib/db";
 import { computeRecycleEligibility } from "@/lib/crm/cold-leads";
 import type { CrmColdLeadStatus } from "@/generated/prisma";
 import { describeZodError } from "@/lib/zod-errors";
+import { fireWorkflow } from "@/lib/crm/workflows/engine";
 
 /**
  * POST /api/crm/cold-leads/[id]/disposition
@@ -78,6 +79,15 @@ export async function POST(
       },
     }),
   ]);
+
+  // Tier-2 #36 — fire workflow on disposition write. Engine swallows
+  // its own errors; the rep's primary write is already committed.
+  await fireWorkflow("lead.disposition", {
+    entityType: "coldLead",
+    entityId: id,
+    actorId: session.user.crmProfileId,
+    disposition: parsed.data.disposition,
+  });
 
   return NextResponse.json({ ok: true, lead: updated });
 }

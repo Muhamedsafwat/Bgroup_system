@@ -5,6 +5,7 @@ import { scopeOpportunityByRole, scopeCompanyByRole } from "@/lib/crm/rbac";
 import { getRequiredSession } from "@/lib/crm/session";
 import { generateOpportunityCode } from "@/lib/crm/business/auto-code";
 import { recomputeOpportunityFinancials } from "@/lib/crm/business/pipeline";
+import { fireWorkflow } from "@/lib/crm/workflows/engine";
 import {
   canTransition,
   getTransitionRequirements,
@@ -320,6 +321,17 @@ export async function createOpportunity(input: CreateOpportunityInput) {
 
   revalidatePath("/crm/opportunities");
   revalidatePath("/my");
+
+  // Tier-2 #36 — fire opp.created workflow.
+  await fireWorkflow("opp.created", {
+    entityType: "opportunity",
+    entityId: opp.id,
+    actorId: session.id,
+    priority: opp.priority,
+    estimatedValueEGP: Number(opp.estimatedValueEGP),
+    entityCode: opp.code,
+  });
+
   return JSON.parse(JSON.stringify(opp));
 }
 
@@ -346,6 +358,29 @@ export async function updateOpportunity(id: string, input: UpdateOpportunityInpu
       updateData[key] = value ? new Date(value as string) : null;
     } else {
       updateData[key] = value;
+    }
+  }
+
+  // Tier-2 #40 — slippage tracking. Log every expectedCloseDate
+  // change to CrmCloseDateHistory so admin reports can compute
+  // cumulative slip per opp. We capture this BEFORE applying the
+  // update so `oldDate` is the pre-change value.
+  if (parsed.expectedCloseDate !== undefined) {
+    const newDate = parsed.expectedCloseDate
+      ? new Date(parsed.expectedCloseDate)
+      : null;
+    const oldDate = existing.expectedCloseDate;
+    const changed =
+      (oldDate?.getTime() ?? null) !== (newDate?.getTime() ?? null);
+    if (changed) {
+      await db.crmCloseDateHistory.create({
+        data: {
+          opportunityId: id,
+          oldDate,
+          newDate,
+          changedById: session.id,
+        },
+      });
     }
   }
 
@@ -548,8 +583,42 @@ export async function changeStage(opportunityId: string, input: StageChangeInput
   // a seed stage from Stage Config — the rep dropdown still listed it.
   const targetConfig = await db.crmStageConfig.findFirst({
     where: { stage: parsed.toStage, isActive: true },
-    select: { id: true },
+    select: { id: true, requiredFieldsJson: true },
   });
+
+  // Tier-0 #1: required-fields gating. The SOURCE stage carries a list of
+  // opp fields that must be populated before an opp can leave it. Empty /
+  // null array = no gate (current behaviour). Configured by admin in
+  // Stage Config; enforced here so reps can't drag a deal forward with
+  // an empty amount or no next action.
+  const sourceConfig = await db.crmStageConfig.findFirst({
+    where: { stage: opp.stage, isActive: true },
+    select: { requiredFieldsJson: true },
+  });
+  const requiredFields = Array.isArray(sourceConfig?.requiredFieldsJson)
+    ? (sourceConfig.requiredFieldsJson as string[])
+    : [];
+  if (requiredFields.length) {
+    const missing: string[] = [];
+    for (const field of requiredFields) {
+      // Read directly off the opp object. `opp` is the row already
+      // loaded above with the role-scoped where; every field on the
+      // CrmOpportunity model is on it. We treat null + empty string
+      // + zero-length array as "missing"; everything else passes.
+      const val = (opp as unknown as Record<string, unknown>)[field];
+      const isMissing =
+        val === null ||
+        val === undefined ||
+        (typeof val === "string" && val.trim().length === 0) ||
+        (Array.isArray(val) && val.length === 0);
+      if (isMissing) missing.push(field);
+    }
+    if (missing.length) {
+      throw new Error(
+        `Can't leave "${opp.stage}" yet — fill in: ${missing.join(", ")}`
+      );
+    }
+  }
   if (!targetConfig) {
     throw new Error(
       `Stage "${parsed.toStage}" isn't configured in Stage Config. Ask an admin to enable it.`
@@ -649,6 +718,18 @@ export async function changeStage(opportunityId: string, input: StageChangeInput
   revalidatePath(`/crm/opportunities/${opportunityId}`);
   revalidatePath("/crm/opportunities");
   revalidatePath("/my");
+
+  // Tier-2 #36 — fire workflow runtime on stage change. Decoupled
+  // from the primary write (the engine swallows its own errors so a
+  // workflow problem can't break the stage change for the rep).
+  await fireWorkflow("opp.stage.changed", {
+    entityType: "opportunity",
+    entityId: opportunityId,
+    actorId: session.id,
+    fromStage: opp.stage,
+    toStage: parsed.toStage,
+    durationDays,
+  });
 
   return { warning: transition.warning };
 }

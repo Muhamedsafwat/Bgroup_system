@@ -154,7 +154,7 @@ function getHrNav(roles: string[], t: SidebarT): NavSection[] {
 
 // ─── CRM Navigation ──────────────────────────────────────���─────────
 
-function getCrmNav(crmRole: string | undefined, t: SidebarT): NavSection[] {
+function getCrmNav(crmRole: string | undefined, t: SidebarT, isAr: boolean): NavSection[] {
   const sections: NavSection[] = [];
   const isManager = crmRole === "MANAGER" || crmRole === "ADMIN";
 
@@ -189,11 +189,69 @@ function getCrmNav(crmRole: string | undefined, t: SidebarT): NavSection[] {
   // but the lookup tables (stage config, FX rates, entities, etc.) stay
   // ADMIN-only because they change how the whole system behaves.
   if (isManager) {
+    // Tier-0 additions: audit log, loss analytics, territory reassign
+    // are all manager+admin tools (the four new admin pages on top of
+    // the existing Users entry). Settings stays ADMIN-only.
     const adminItems: NavItem[] = [
       { href: "/crm/admin/users", label: t.allUsers, icon: UserCog },
+      {
+        href: "/crm/admin/audit-log",
+        label: isAr ? "سجل التدقيق" : "Audit log",
+        icon: ClipboardList,
+      },
+      {
+        href: "/crm/admin/loss-analytics",
+        label: isAr ? "تحليل الخسائر" : "Loss analytics",
+        icon: FileBarChart,
+      },
+      {
+        href: "/crm/admin/sales-report",
+        label: isAr ? "تقرير المبيعات" : "Sales report",
+        icon: FileBarChart,
+      },
+      {
+        href: "/crm/admin/reassign-territory",
+        label: isAr ? "إعادة توزيع الإقليم" : "Reassign territory",
+        icon: UserCog,
+      },
+      // Custom dashboards are owner-scoped at the data layer (every
+      // user manages their own + sees shared ones), but the page
+      // lives under /crm/admin/* for sidebar grouping. The proxy's
+      // catch-all `/crm/admin` rule lets MANAGER + ADMIN reach it, so
+      // we expose the sidebar entry to both — previously only ADMIN
+      // saw it, which broke discovery for MANAGERs even though they
+      // could navigate by URL.
+      {
+        href: "/crm/admin/dashboards",
+        label: isAr ? "لوحات مخصصة" : "Custom dashboards",
+        icon: LayoutDashboard,
+      },
     ];
     if (crmRole === "ADMIN") {
-      adminItems.push({ href: "/admin/settings", label: t.settings, icon: Settings });
+      // Tier-2 platform-config features — admin only (settings-class).
+      adminItems.push(
+        {
+          href: "/crm/admin/pipelines",
+          label: isAr ? "خطوط البيع" : "Pipelines",
+          icon: Layers,
+        },
+        {
+          href: "/crm/admin/workflows",
+          label: isAr ? "الأتمتة" : "Workflows",
+          icon: Layers,
+        },
+        {
+          href: "/crm/admin/custom-fields",
+          label: isAr ? "حقول مخصصة" : "Custom fields",
+          icon: Settings,
+        },
+        {
+          href: "/crm/admin/alert-rules",
+          label: isAr ? "قواعد التنبيه" : "Alert rules",
+          icon: Bell,
+        },
+        { href: "/admin/settings", label: t.settings, icon: Settings },
+      );
     }
     sections.push({ title: t.sectionAdmin, items: adminItems });
   }
@@ -290,7 +348,7 @@ export function Sidebar() {
   const { data: session } = useSession();
   const [collapsed, setCollapsed] = useState(false);
   const [accountOpen, setAccountOpen] = useState(false);
-  const { t } = useLocale();
+  const { t, locale } = useLocale();
   const tSidebar = t.sidebar;
 
   const modules = session?.user?.modules || [];
@@ -336,7 +394,7 @@ export function Sidebar() {
     const hrRoles = session?.user?.hrRoles || [];
     sections = getHrNav(hrRoles, tSidebar);
   } else if (activeModule === "crm") {
-    sections = getCrmNav(session?.user?.crmRole, tSidebar);
+    sections = getCrmNav(session?.user?.crmRole, tSidebar, locale === "ar");
   } else if (activeModule === "partners") {
     const isPartnersAdmin = !session?.user?.partnerId;
     sections = getPartnersNav(isPartnersAdmin, tSidebar);

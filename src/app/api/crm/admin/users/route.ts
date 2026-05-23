@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import type { Session } from "next-auth";
 import { auth } from "@/lib/auth";
 import { db } from "@/lib/db";
+import { isManagerOrAdmin } from "@/lib/crm/admin-gates";
 
 /**
  * GET /api/crm/admin/users
@@ -19,21 +20,13 @@ import { db } from "@/lib/db";
  *
  * Gated by the proxy `/api/crm/admin` rule (ADMIN/MANAGER + platform admin).
  */
-function callerAllowed(session: Session | null) {
-  if (!session?.user) return false;
-  const role = session.user.crmRole;
-  const platformAdmin =
-    !!session.user.hrRoles?.includes("super_admin") ||
-    (!!session.user.modules?.includes("partners") && !session.user.partnerId);
-  return platformAdmin || role === "ADMIN" || role === "MANAGER";
-}
 
 export async function GET() {
   const session = (await auth()) as Session | null;
   if (!session?.user?.id) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
-  if (!callerAllowed(session)) {
+  if (!isManagerOrAdmin(session)) {
     return NextResponse.json({ error: "Forbidden" }, { status: 403 });
   }
 
