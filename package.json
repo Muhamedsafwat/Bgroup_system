@@ -8,7 +8,7 @@
     "start": "next start",
     "lint": "eslint",
     "test:e2e": "playwright test",
-    "migration:generate": "node scripts/generate_migration.js",
+    "migration:generate": "node scripts/generate_migration.js"
   },
   "dependencies": {
     "@auth/prisma-adapter": "^2.11.2",
