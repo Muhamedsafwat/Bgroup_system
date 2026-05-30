@@ -188,14 +188,28 @@ export async function POST(req: Request) {
           assignedToId: fromRep.id,
           status: { in: ["ASSIGNED", "NO_ANSWER", "WAITING_LIST"] },
         },
-        select: { id: true },
+        // Pull status so we can preserve the rep's prior disposition
+        // for everything except untouched ASSIGNED rows. NO_ANSWER /
+        // WAITING_LIST carry real call-attempt history; flipping
+        // them to ASSIGNED would make the new rep re-dial leads
+        // the source rep already burned.
+        select: { id: true, status: true },
       });
       const now = new Date();
       for (let i = 0; i < leads.length; i++) {
         const newOwner = toRepIds[i % toRepIds.length];
+        const preserveStatus = leads[i].status !== "ASSIGNED";
         await tx.crmColdLead.update({
           where: { id: leads[i].id },
-          data: { assignedToId: newOwner, assignedAt: now, status: "ASSIGNED" },
+          data: {
+            assignedToId: newOwner,
+            assignedAt: now,
+            // Only reset status to ASSIGNED for rows that were
+            // already ASSIGNED (no disposition yet). NO_ANSWER and
+            // WAITING_LIST stay so the new rep can see they need a
+            // recycle action, not a fresh call.
+            ...(preserveStatus ? {} : { status: "ASSIGNED" as const }),
+          },
         });
       }
       result.coldLeads = leads.length;

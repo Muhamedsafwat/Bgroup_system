@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import { useSession } from "next-auth/react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -46,6 +47,7 @@ export function ImpersonateClient({ users, recent }: { users: U[]; recent: Audit
   const [confirming, setConfirming] = useState<U | null>(null);
   const [reason, setReason] = useState("");
   const [busy, setBusy] = useState(false);
+  const { update: refreshSession } = useSession();
 
   const filtered = users.filter((u) => {
     const q = filter.trim().toLowerCase();
@@ -76,8 +78,14 @@ export function ImpersonateClient({ users, recent }: { users: U[]; recent: Audit
       toast.success(`Now acting as ${confirming.email}`);
       setConfirming(null);
       setReason("");
-      // Hard reload so the next request rebuilds the JWT and picks
-      // up the impersonation row.
+      // Force NextAuth to re-issue the JWT NOW (trigger='update' in
+      // the jwt callback), instead of waiting up to 60s for the
+      // staleness window to expire. Without this, the admin would
+      // hard-reload into their OWN account and only see the swap
+      // take effect on a later request.
+      await refreshSession();
+      // Hard reload so the next request rebuilds the page with the
+      // refreshed token + the impersonation row picked up.
       setTimeout(() => window.location.assign("/"), 200);
     } finally {
       setBusy(false);
