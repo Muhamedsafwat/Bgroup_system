@@ -221,7 +221,34 @@ export async function createOpportunity(input: CreateOpportunityInput) {
   );
 
   const code = await generateOpportunityCode();
-  const title = parsed.title || customerCompanyName || code;
+  // Trim BEFORE the fallback chain so a whitespace-only title
+  // doesn't beat the customerCompanyName fallback. Without this,
+  // `parsed.title = "   "` is truthy in `||` and we'd end up with
+  // an empty title — but the column is non-null, so we'd insert
+  // an empty string and break list rendering + collide with any
+  // other accidental-empty-title row.
+  const titleCandidate = (parsed.title ?? "").trim();
+  const title = titleCandidate || customerCompanyName || code;
+
+  // Opportunity titles are globally unique (case-insensitive,
+  // soft-deleted rows excluded). Enforced by a partial unique
+  // index on LOWER(title) WHERE deletedAt IS NULL — see
+  // prisma/sql/add-opportunity-title-unique.sql. We pre-check
+  // here so reps get a clean message instead of a Prisma P2002
+  // surfacing as a 500. The DB index is the authoritative gate
+  // for the race window.
+  const dupeTitle = await db.crmOpportunity.findFirst({
+    where: {
+      title: { equals: title, mode: "insensitive" },
+      deletedAt: null,
+    },
+    select: { id: true, code: true },
+  });
+  if (dupeTitle) {
+    throw new Error(
+      `An opportunity named "${title}" already exists (${dupeTitle.code}). Pick a different name.`,
+    );
+  }
 
   const opp = await db.$transaction(async (tx) => {
     const created = await tx.crmOpportunity.create({
@@ -356,8 +383,38 @@ export async function updateOpportunity(id: string, input: UpdateOpportunityInpu
     if (key === "contacts") continue;
     if (key === "expectedCloseDate" || key === "nextActionDate") {
       updateData[key] = value ? new Date(value as string) : null;
+    } else if (key === "title" && typeof value === "string") {
+      // Trim aggressively so " Acme " and "Acme" collide with the
+      // case-insensitive index (whitespace would otherwise let
+      // dupes slip past LOWER()).
+      updateData[key] = value.trim();
     } else {
       updateData[key] = value;
+    }
+  }
+
+  // Title uniqueness pre-check. Only fires when the user is
+  // actually changing the title — same-value PATCH is a no-op.
+  // Enforced authoritatively by the partial unique index; this
+  // call exists to surface a friendly error before the Prisma
+  // P2002 path.
+  if (
+    typeof updateData.title === "string" &&
+    updateData.title.toLowerCase() !== existing.title.toLowerCase()
+  ) {
+    const newTitle = updateData.title as string;
+    const dupeTitle = await db.crmOpportunity.findFirst({
+      where: {
+        title: { equals: newTitle, mode: "insensitive" },
+        deletedAt: null,
+        NOT: { id },
+      },
+      select: { id: true, code: true },
+    });
+    if (dupeTitle) {
+      throw new Error(
+        `An opportunity named "${newTitle}" already exists (${dupeTitle.code}). Pick a different name.`,
+      );
     }
   }
 

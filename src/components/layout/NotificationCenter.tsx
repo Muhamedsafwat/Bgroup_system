@@ -17,7 +17,7 @@ import { toast } from "sonner";
 
 type UnifiedNotification = {
   id: string;
-  module: "hr" | "partners";
+  module: "hr" | "partners" | "crm";
   title: string;
   message: string;
   isRead: boolean;
@@ -25,7 +25,7 @@ type UnifiedNotification = {
   href?: string;
 };
 
-type Tab = "all" | "unread" | "hr" | "partners";
+type Tab = "all" | "unread" | "hr" | "crm" | "partners";
 
 async function fetchNotifications(): Promise<{
   notifications: UnifiedNotification[];
@@ -36,7 +36,7 @@ async function fetchNotifications(): Promise<{
   return res.json();
 }
 
-async function markRead(id: string, module: "hr" | "partners") {
+async function markRead(id: string, module: "hr" | "partners" | "crm") {
   const res = await fetch("/api/notifications/read", {
     method: "PATCH",
     headers: { "Content-Type": "application/json" },
@@ -109,6 +109,8 @@ export function NotificationCenter() {
         return notifications.filter((n) => !n.isRead);
       case "hr":
         return notifications.filter((n) => n.module === "hr");
+      case "crm":
+        return notifications.filter((n) => n.module === "crm");
       case "partners":
         return notifications.filter((n) => n.module === "partners");
       default:
@@ -186,12 +188,13 @@ export function NotificationCenter() {
         </div>
 
         <Tabs value={tab} onValueChange={(v) => setTab(v as Tab)}>
-          <TabsList className="grid grid-cols-4 mx-2 my-2">
+          <TabsList className="grid grid-cols-5 mx-2 my-2">
             <TabsTrigger value="all">All</TabsTrigger>
             <TabsTrigger value="unread">
               Unread{unreadCount > 0 ? ` (${unreadCount})` : ""}
             </TabsTrigger>
             <TabsTrigger value="hr">HR</TabsTrigger>
+            <TabsTrigger value="crm">CRM</TabsTrigger>
             <TabsTrigger value="partners">Partners</TabsTrigger>
           </TabsList>
           <TabsContent value={tab} className="m-0">
