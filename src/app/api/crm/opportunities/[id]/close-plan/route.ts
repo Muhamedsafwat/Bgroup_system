@@ -115,6 +115,19 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     notes: parsed.data.notes ?? null,
     ...(dueDate !== undefined ? { dueDate } : {}),
   };
+  if (parsed.data.id) {
+    // Verify the referenced item belongs to THIS opp's plan. Without
+    // this guard, a REP with access to opp O1 could pass an itemId
+    // from O2's plan and rewrite it — the URL-level gate() only
+    // covers O1.
+    const existing = await db.crmClosePlanItem.findUnique({
+      where: { id: parsed.data.id },
+      select: { planId: true },
+    });
+    if (!existing || existing.planId !== plan.id) {
+      return NextResponse.json({ error: "Not found" }, { status: 404 });
+    }
+  }
   const item = parsed.data.id
     ? await db.crmClosePlanItem.update({
         where: { id: parsed.data.id },
@@ -140,6 +153,16 @@ export async function DELETE(req: Request, { params }: { params: Promise<{ id: s
   const itemId = url.searchParams.get("itemId");
   if (!itemId) {
     return NextResponse.json({ error: "itemId is required" }, { status: 400 });
+  }
+  // Same cross-opp tampering vector as the POST update path:
+  // verify the item's planId belongs to THIS opp before deleting.
+  const plan = await loadOrCreatePlan(id);
+  const existing = await db.crmClosePlanItem.findUnique({
+    where: { id: itemId },
+    select: { planId: true },
+  });
+  if (!existing || existing.planId !== plan.id) {
+    return NextResponse.json({ error: "Not found" }, { status: 404 });
   }
   await db.crmClosePlanItem.delete({ where: { id: itemId } });
   return NextResponse.json({ ok: true });

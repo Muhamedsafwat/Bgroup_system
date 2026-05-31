@@ -1,7 +1,6 @@
 "use client";
 
 import { useSession } from "next-auth/react";
-import { useRouter } from "next/navigation";
 import { useState } from "react";
 import { AlertTriangle, LogOut } from "lucide-react";
 import { toast } from "sonner";
@@ -15,8 +14,7 @@ import { Button } from "@/components/ui/button";
  * the JWT without the impersonation swap.
  */
 export function ImpersonationBanner() {
-  const { data: session } = useSession();
-  const router = useRouter();
+  const { data: session, update: sessionUpdate } = useSession();
   const [busy, setBusy] = useState(false);
   const actingAs = session?.user?.actingAs;
   if (!actingAs) return null;
@@ -30,9 +28,10 @@ export function ImpersonationBanner() {
         toast.error(data.error ?? "Couldn't stop impersonation");
         return;
       }
-      // Force the JWT to refresh on the next request. NextAuth picks
-      // up the missing CrmImpersonationSession row and snaps back.
-      router.refresh();
+      // Force NextAuth to re-issue the JWT NOW (trigger='update' in
+      // the jwt callback), so the snap-back is immediate rather than
+      // waiting up to 60s for the staleness window to expire.
+      await sessionUpdate();
       // Hard reload so the entire app re-evaluates auth state from
       // scratch, avoiding stale client caches.
       setTimeout(() => window.location.reload(), 200);

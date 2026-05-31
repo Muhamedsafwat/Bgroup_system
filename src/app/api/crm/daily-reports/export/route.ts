@@ -4,6 +4,7 @@ import ExcelJS from "exceljs";
 import { auth } from "@/lib/auth";
 import { db } from "@/lib/db";
 import type { Prisma } from "@/generated/prisma";
+import { isManagerOrAdmin } from "@/lib/crm/admin-gates";
 
 /**
  * GET /api/crm/daily-reports/export
@@ -37,14 +38,6 @@ import type { Prisma } from "@/generated/prisma";
  * New leads, Notes. The filename is the date range so re-downloads
  * don't collide.
  */
-function isManagerOrAdmin(session: Session) {
-  return (
-    session.user.crmRole === "MANAGER" ||
-    session.user.crmRole === "ADMIN" ||
-    !!session.user.hrRoles?.includes("super_admin")
-  );
-}
-
 const DATE_REGEX = /^\d{4}-\d{2}-\d{2}$/;
 
 export async function GET(req: Request) {

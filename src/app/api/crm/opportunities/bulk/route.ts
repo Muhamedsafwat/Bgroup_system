@@ -6,6 +6,7 @@ import { db } from "@/lib/db";
 import { describeZodError } from "@/lib/zod-errors";
 import { scopeOpportunityByRole } from "@/lib/crm/rbac";
 import type { SessionUser } from "@/types";
+import { isManagerOrAdmin } from "@/lib/crm/admin-gates";
 
 /**
  * POST /api/crm/opportunities/bulk
@@ -27,14 +28,6 @@ import type { SessionUser } from "@/types";
  * Returns `{ ok: true, affected: N }` so the UI knows how many rows
  * actually changed (silent skips happen when an id wasn't visible).
  */
-function isManagerOrAdmin(session: Session) {
-  return (
-    session.user.crmRole === "MANAGER" ||
-    session.user.crmRole === "ADMIN" ||
-    !!session.user.hrRoles?.includes("super_admin")
-  );
-}
-
 const baseSchema = z.object({
   ids: z.array(z.string().min(1)).min(1, "Pick at least one opportunity").max(500),
 });
@@ -80,7 +73,15 @@ export async function POST(req: Request) {
 
   // Reassign + delete are manager/admin-only — REPs shouldn't be able
   // to mass-move their own opps to someone else or wipe them.
-  if ((action === "reassign-owner" || action === "soft-delete") && !isManagerOrAdmin(session)) {
+  // set-stage is ALSO manager/admin-only: a rep mass-jumping their
+  // own opps to WON would skip every forecasting / audit / commission
+  // signal (the single-opp pipeline route validates and history-logs;
+  // here we batch, and the right answer for non-managers is "no").
+  // set-priority stays open so reps can re-tier their own pipeline.
+  if (
+    (action === "reassign-owner" || action === "soft-delete" || action === "set-stage") &&
+    !isManagerOrAdmin(session)
+  ) {
     return NextResponse.json({ error: "Forbidden" }, { status: 403 });
   }
 
@@ -146,11 +147,38 @@ export async function POST(req: Request) {
         { status: 400 }
       );
     }
-    const res = await db.crmOpportunity.updateMany({
+    // Fetch fromStage per row so we can write history (the single-
+    // opp path at /api/crm/pipeline does the same). Mirror dateClosed
+    // semantics for WON/LOST. We skip rows that are already in the
+    // target stage so the audit log doesn't gain no-op rows.
+    const newStage = parsed.data.newStage;
+    const rows = await db.crmOpportunity.findMany({
       where: { id: { in: visibleIds } },
-      data: { stage: parsed.data.newStage },
+      select: { id: true, stage: true },
     });
-    affected = res.count;
+    const toChange = rows.filter((r) => r.stage !== newStage);
+    const closesDeal = newStage === "WON" || newStage === "LOST";
+    // Transaction so partial failure doesn't leave history rows
+    // pointing at unchanged opps (or vice versa). Bounded by max 500
+    // ids per request (zod) so the tx stays inside Neon's window.
+    await db.$transaction([
+      db.crmOpportunity.updateMany({
+        where: { id: { in: toChange.map((r) => r.id) } },
+        data: {
+          stage: newStage,
+          ...(closesDeal ? { dateClosed: new Date() } : {}),
+        },
+      }),
+      db.crmStageHistory.createMany({
+        data: toChange.map((r) => ({
+          opportunityId: r.id,
+          fromStage: r.stage,
+          toStage: newStage,
+          changedById: crmProfileId,
+        })),
+      }),
+    ]);
+    affected = toChange.length;
   } else if (action === "soft-delete") {
     const res = await db.crmOpportunity.updateMany({
       where: { id: { in: visibleIds } },

@@ -221,15 +221,44 @@ export function clausesToJson(clauses: Clause[], shape: "array" | "all" | "any")
  * Inverse: parse stored JSON back into editable clauses. Returns []
  * when the stored value is null / empty / unrecognised so the
  * builder UI starts fresh rather than crashing.
+ *
+ * Normalises legacy / hand-written data on the way in: an `in`
+ * clause whose value was stored as a string ("HOT, WARM") is
+ * silently dead in the engine (its Array.isArray check fails). We
+ * coerce it into a string[] so the builder, the round-trip, and
+ * the engine all agree on the shape.
  */
+function normaliseClause(raw: unknown): Clause | null {
+  if (!raw || typeof raw !== "object") return null;
+  const o = raw as { field?: unknown; op?: unknown; value?: unknown };
+  if (typeof o.field !== "string" || typeof o.op !== "string") return null;
+  let value = o.value as Clause["value"];
+  if (o.op === "in" && typeof value === "string") {
+    value = value
+      .split(",")
+      .map((s) => s.trim())
+      .filter(Boolean);
+  }
+  return { field: o.field, op: o.op, value: value ?? null };
+}
+
 export function clausesFromJson(stored: unknown): Clause[] {
   if (!stored) return [];
-  if (Array.isArray(stored)) return stored as Clause[];
+  if (Array.isArray(stored)) {
+    return stored.map(normaliseClause).filter((c): c is Clause => c !== null);
+  }
   if (typeof stored === "object" && stored !== null) {
     const o = stored as { all?: unknown; any?: unknown; field?: unknown };
-    if (Array.isArray(o.all)) return o.all as Clause[];
-    if (Array.isArray(o.any)) return o.any as Clause[];
-    if ("field" in o && "op" in o) return [stored as Clause];
+    if (Array.isArray(o.all)) {
+      return o.all.map(normaliseClause).filter((c): c is Clause => c !== null);
+    }
+    if (Array.isArray(o.any)) {
+      return o.any.map(normaliseClause).filter((c): c is Clause => c !== null);
+    }
+    if ("field" in o && "op" in o) {
+      const single = normaliseClause(o);
+      return single ? [single] : [];
+    }
   }
   return [];
 }

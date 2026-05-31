@@ -192,12 +192,17 @@ async function runAction(
       return { kind, ok: false, reason: "set-field requires opportunity entity + field" };
     }
     // Whitelist to prevent malicious workflows from rewriting FK
-    // columns or audit timestamps. Extend as needed.
+    // columns or audit timestamps. `stage` is deliberately NOT in
+    // the list: the stage-change pipeline (CrmStageHistory write,
+    // requiredFieldsJson gate, dateClosed, re-entrant
+    // `opp.stage.changed` fire) must run on every transition. A
+    // direct set-field on stage would skip all of it. If a workflow
+    // needs to advance stage, it should call a dedicated action
+    // that goes through changeStage().
     const allowed = new Set([
       "priority",
       "nextAction",
       "nextActionText",
-      "stage",
       "leadSource",
       "description",
       "techRequirements",
@@ -280,9 +285,14 @@ export async function fireWorkflow(
 
       matched += 1;
 
-      // Suppression: skip if a successful run for this workflow on
-      // this entity fired within the window. Same entity = same
-      // entityId.
+      // Suppression: skip if ANY recent run for this workflow on this
+      // entity fired within the window — success OR failure. If we
+      // only counted successes, a workflow with an unknown action
+      // kind would fail-and-retry on every triggering event forever
+      // (no success row ever, suppression never engages), polluting
+      // the run table and any downstream alerting. Including
+      // "failed" makes a broken workflow fail noisily once per
+      // window so the admin notices, instead of silently spamming.
       if (!opts.ignoreSuppression && wf.suppressionWindowMinutes > 0 && payload.entityId) {
         const cutoff = new Date(
           Date.now() - wf.suppressionWindowMinutes * 60_000
@@ -291,7 +301,7 @@ export async function fireWorkflow(
           where: {
             workflowId: wf.id,
             entityId: payload.entityId,
-            status: "success",
+            status: { in: ["success", "failed"] },
             firedAt: { gte: cutoff },
           },
           select: { id: true },

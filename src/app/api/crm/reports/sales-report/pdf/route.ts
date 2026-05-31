@@ -1,9 +1,47 @@
 import { NextResponse } from "next/server";
 import type { Session } from "next-auth";
-import puppeteer from "puppeteer";
 import { auth } from "@/lib/auth";
 import { db } from "@/lib/db";
 import { isManagerOrAdmin } from "@/lib/crm/admin-gates";
+
+/**
+ * Browser launcher with serverless detection.
+ *
+ * The bundled `puppeteer` package ships a ~170 MB Chromium binary,
+ * which exceeds Vercel's 50 MB function-size cap AND is the wrong
+ * binary for Lambda's runtime anyway. On serverless we lazily import
+ * `puppeteer-core` + `@sparticuz/chromium-min` which provides the
+ * right binary. Local dev keeps the convenient `puppeteer.launch()`
+ * with a system-installed Chromium so devs don't have to set up the
+ * @sparticuz path on Windows/macOS.
+ *
+ * Detection: `process.env.AWS_LAMBDA_FUNCTION_NAME` is set on every
+ * Vercel serverless function. Override with `PDF_FORCE_CHROMIUM_MIN=1`
+ * if a self-hosted deploy also needs the minimal binary.
+ */
+async function launchBrowser() {
+  const isServerless =
+    !!process.env.AWS_LAMBDA_FUNCTION_NAME ||
+    process.env.PDF_FORCE_CHROMIUM_MIN === "1";
+  if (isServerless) {
+    const chromium = (await import("@sparticuz/chromium-min")).default;
+    const puppeteerCore = (await import("puppeteer-core")).default;
+    return puppeteerCore.launch({
+      args: chromium.args,
+      defaultViewport: { width: 1280, height: 800 },
+      executablePath: await chromium.executablePath(
+        process.env.CHROMIUM_REMOTE_URL ??
+          "https://github.com/Sparticuz/chromium/releases/download/v131.0.1/chromium-v131.0.1-pack.tar",
+      ),
+      headless: true,
+    });
+  }
+  const puppeteer = (await import("puppeteer")).default;
+  return puppeteer.launch({
+    headless: true,
+    args: ["--no-sandbox", "--disable-dev-shm-usage"],
+  });
+}
 
 /**
  * GET /api/crm/reports/sales-report/pdf?from=YYYY-MM-DD&to=YYYY-MM-DD
@@ -224,15 +262,10 @@ export async function GET(req: Request) {
   });
 
   // ── Puppeteer render ─────────────────────────────────────────
-  // Launch flags chosen for compatibility — `--no-sandbox` lets the
-  // endpoint run in containerised production environments without a
-  // pre-configured sandbox user, and `--disable-dev-shm-usage` avoids
-  // the /dev/shm exhaustion that crashes Chrome inside small Docker
-  // images. Local dev doesn't care about either flag.
-  const browser = await puppeteer.launch({
-    headless: true,
-    args: ["--no-sandbox", "--disable-dev-shm-usage"],
-  });
+  // Launches a Chromium that fits the current runtime — bundled
+  // puppeteer on dev, puppeteer-core + @sparticuz/chromium-min on
+  // serverless (see `launchBrowser` for the env detection).
+  const browser = await launchBrowser();
   try {
     const page = await browser.newPage();
     await page.setContent(html, { waitUntil: "domcontentloaded" });

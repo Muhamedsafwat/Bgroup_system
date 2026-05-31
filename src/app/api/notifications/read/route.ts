@@ -6,13 +6,13 @@ import { publish } from "@/lib/events/bus";
 import { describeZodError } from "@/lib/zod-errors";
 
 const bodySchema = z.object({
-  module: z.enum(["hr", "partners"]),
+  module: z.enum(["hr", "partners", "crm"]),
   id: z.string().min(1),
 });
 
 const allBodySchema = z.object({
   scope: z.literal("all"),
-  module: z.enum(["hr", "partners"]).optional(),
+  module: z.enum(["hr", "partners", "crm"]).optional(),
 });
 
 export async function PATCH(req: Request) {
@@ -44,6 +44,14 @@ export async function PATCH(req: Request) {
         })
       );
     }
+    if (!allParsed.data.module || allParsed.data.module === "crm") {
+      ops.push(
+        db.crmNotification.updateMany({
+          where: { userId, isRead: false },
+          data: { isRead: true },
+        })
+      );
+    }
     await Promise.all(ops);
     publish({ type: "data.invalidate", userId, payload: { queryKeys: [["notifications"]] } });
     return NextResponse.json({ ok: true });
@@ -61,8 +69,14 @@ export async function PATCH(req: Request) {
       data: { isRead: true },
     });
     if (r.count === 0) return NextResponse.json({ error: "Not found" }, { status: 404 });
-  } else {
+  } else if (parsed.data.module === "partners") {
     const r = await db.partnerNotification.updateMany({
+      where: { id: parsed.data.id, userId },
+      data: { isRead: true },
+    });
+    if (r.count === 0) return NextResponse.json({ error: "Not found" }, { status: 404 });
+  } else {
+    const r = await db.crmNotification.updateMany({
       where: { id: parsed.data.id, userId },
       data: { isRead: true },
     });

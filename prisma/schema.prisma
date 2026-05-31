@@ -2518,6 +2518,8 @@ model CrmUserProfile {
   capacity              CrmRepCapacity?  @relation("CrmRepCapacity")
   forecastSubmissions   CrmForecastSubmission[] @relation("CrmForecastManager")
   dashboards            CrmDashboard[]   @relation("CrmDashboardOwner")
+  authoredComments      CrmOpportunityComment[]          @relation("CrmCommentAuthor")
+  commentMentions       CrmOpportunityCommentMention[]   @relation("CrmCommentMentions")
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -2687,6 +2689,8 @@ model CrmOpportunity {
   closePlan CrmClosePlan?
   /// Tier-1 #27 — competitors many-to-many.
   competitors CrmOpportunityCompetitor[]
+  /// In-opp discussion thread (1:N) — see CrmOpportunityComment.
+  comments    CrmOpportunityComment[]
   /// Tier-2 #31 — which pipeline this opp belongs to. Null = default.
   pipelineId String?
   pipeline   CrmPipeline? @relation(fields: [pipelineId], references: [id], onDelete: SetNull)
@@ -2981,6 +2985,80 @@ model CrmOpportunityCompetitor {
   @@unique([opportunityId, competitorId])
   @@index([opportunityId])
   @@map("crm_opportunity_competitors")
+}
+
+/// In-opp discussion thread. Reps and managers leave comments on a
+/// specific opportunity, optionally @-mentioning each other. Each
+/// mention writes a CrmNotification row so the mentioned user sees
+/// "X mentioned you on <opp>" in the bell.
+///
+/// The body is plain text with `@<crmProfileId>` tokens for mentions
+/// (so renames don't break old comments — we resolve to the live
+/// profile at render time). The client renders these as linked chips.
+model CrmOpportunityComment {
+  id            String                          @id @default(cuid())
+  opportunityId String
+  opportunity   CrmOpportunity                  @relation(fields: [opportunityId], references: [id], onDelete: Cascade)
+  authorId      String
+  author        CrmUserProfile                  @relation("CrmCommentAuthor", fields: [authorId], references: [id])
+  body          String
+  mentions      CrmOpportunityCommentMention[]
+  /// Edited comments stamp `editedAt`; deletes are soft (deletedAt)
+  /// so the audit trail stays intact.
+  editedAt      DateTime?
+  deletedAt     DateTime?
+  createdAt     DateTime                        @default(now())
+  updatedAt     DateTime                        @updatedAt
+
+  @@index([opportunityId, createdAt])
+  @@index([authorId])
+  @@map("crm_opportunity_comments")
+}
+
+model CrmOpportunityCommentMention {
+  id              String                @id @default(cuid())
+  commentId       String
+  comment         CrmOpportunityComment @relation(fields: [commentId], references: [id], onDelete: Cascade)
+  /// CrmUserProfile id of the mentioned user. We mention by CRM
+  /// profile (not User.id) because the dropdown picker only knows
+  /// CRM users — every mention is in the CRM scope.
+  mentionedUserId String
+  mentioned       CrmUserProfile        @relation("CrmCommentMentions", fields: [mentionedUserId], references: [id])
+  createdAt       DateTime              @default(now())
+
+  @@unique([commentId, mentionedUserId])
+  @@index([mentionedUserId])
+  @@map("crm_opportunity_comment_mentions")
+}
+
+/// CRM-side notification bucket. Mirrors HrNotification +
+/// PartnerNotification so the unified /api/notifications endpoint
+/// fans out to all three modules. Today's only producer is comment
+/// mentions on opps; future producers (workflow notify-in-app,
+/// alert-rule fan-out, lead-SLA reminders) will append rows here
+/// rather than reusing CrmActivityLog (which is a hard audit log,
+/// not user-targeted).
+model CrmNotification {
+  id        String   @id @default(cuid())
+  /// Auth User id (NOT crmProfile id) — keeps it consistent with
+  /// HrNotification + PartnerNotification so the unified read
+  /// endpoint can dispatch by `session.user.id`.
+  userId    String
+  type      String   /// e.g. "mention", "comment_reply", future kinds
+  title     String
+  message   String
+  isRead    Boolean  @default(false)
+  /// Where the bell click should navigate (e.g. "/crm/opportunities/<id>").
+  href      String?
+  /// Arbitrary blob — `{ opportunityId, commentId, mentionedById }`
+  /// for mentions.
+  metadata  Json?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([userId, isRead])
+  @@index([userId, createdAt])
+  @@map("crm_notifications")
 }
 
 /// Tier-1 #28 — manager forecast submission overlay. One row per
