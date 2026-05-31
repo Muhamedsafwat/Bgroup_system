@@ -35,6 +35,20 @@ type Entity = { id: string; code: string; nameEn: string; nameAr: string };
 type LeadSource = { id: string; code: string; labelEn: string; labelAr: string };
 type Company = { id: string; nameEn: string; nameAr: string | null };
 type Product = { id: string; code: string; nameEn: string; nameAr: string; entityId: string; basePrice: number; currency: string };
+type Rep = { id: string; fullName: string; fullNameAr: string | null; role: string };
+
+/// One row in the additional-contacts list. Mirrors the
+/// opportunityContactSchema; the `id` field is present for existing rows
+/// so the server can update in place, absent for newly-added ones.
+type ContactRow = {
+  id?: string;
+  name: string;
+  role?: string | null;
+  phone?: string | null;
+  email?: string | null;
+  whatsapp?: string | null;
+  notes?: string | null;
+};
 
 /**
  * Initial values when editing — supplied by the edit page. When omitted the
@@ -49,6 +63,9 @@ type OpportunityFormInitial = {
   customerContactName?: string | null;
   customerContactPhone?: string | null;
   customerContactEmail?: string | null;
+  /// Repeatable extra contacts beyond the primary trio above. Hydrated
+  /// from CrmOpportunityContact rows by the edit page loader.
+  contacts?: ContactRow[];
   companyId?: string | null;
   primaryContactId?: string | null;
   entityId: string;
@@ -75,6 +92,9 @@ export function OpportunityForm({
   userEntityId,
   locale,
   initial,
+  reps,
+  currentUserId,
+  currentOwnerId,
 }: {
   entities: Entity[];
   leadSources: LeadSource[];
@@ -83,6 +103,16 @@ export function OpportunityForm({
   userEntityId: string | null;
   locale: Locale;
   initial?: OpportunityFormInitial;
+  /// When supplied (caller is MANAGER/ADMIN), the form renders an "Assign
+  /// to" picker so the manager can create / reassign on behalf of any rep.
+  /// REPs never see this section.
+  reps?: Rep[];
+  /// The caller's own CRM profile id — the picker defaults to "myself" on
+  /// create so a manager working on their own deal doesn't have to pick.
+  currentUserId?: string;
+  /// On edit, the existing opp's owner id so the picker reflects current
+  /// state instead of the caller.
+  currentOwnerId?: string;
 }) {
   const { t } = useLocale();
   const router = useRouter();
@@ -120,6 +150,7 @@ export function OpportunityForm({
           description: initial.description ?? undefined,
           techRequirements: initial.techRequirements ?? undefined,
           productIds: initial.productIds ?? [],
+          ownerId: currentOwnerId ?? undefined,
         }
       : {
           customerCompanyName: "",
@@ -132,6 +163,9 @@ export function OpportunityForm({
           dealType: "ONE_TIME",
           nextAction: "FOLLOW_UP",
           productIds: [],
+          // Default to the caller — managers explicitly pick a different
+          // rep when they want to "act as" them.
+          ownerId: currentUserId ?? undefined,
           nextActionDate: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000)
             .toISOString()
             .split("T")[0],
@@ -146,6 +180,26 @@ export function OpportunityForm({
   );
   const [productSearch, setProductSearch] = useState("");
 
+  // Extra contacts beyond the headline trio — repeatable rows the rep can
+  // add/remove freely. Persisted to CrmOpportunityContact via the
+  // `contacts` field on the create/update opp action.
+  const [extraContacts, setExtraContacts] = useState<ContactRow[]>(
+    initial?.contacts ?? []
+  );
+
+  function addContact() {
+    setExtraContacts((prev) => [
+      ...prev,
+      { name: "", role: "", phone: "", email: "" },
+    ]);
+  }
+  function updateContact(idx: number, patch: Partial<ContactRow>) {
+    setExtraContacts((prev) => prev.map((c, i) => (i === idx ? { ...c, ...patch } : c)));
+  }
+  function removeContact(idx: number) {
+    setExtraContacts((prev) => prev.filter((_, i) => i !== idx));
+  }
+
   function toggleProduct(id: string) {
     setSelectedProductIds((prev) => {
       const next = prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id];
@@ -159,7 +213,17 @@ export function OpportunityForm({
   const estimatedValue = watch("estimatedValue");
 
   async function onSubmit(data: CreateOpportunityInput) {
-    const payload = { ...data, productIds: selectedProductIds };
+    // Strip blank rows (rep clicked "Add" but never typed a name).
+    const cleanedContacts = extraContacts
+      .map((c) => ({
+        id: c.id,
+        name: c.name.trim(),
+        role: c.role?.trim() || null,
+        phone: c.phone?.trim() || null,
+        email: c.email?.trim() || null,
+      }))
+      .filter((c) => c.name.length > 0);
+    const payload = { ...data, productIds: selectedProductIds, contacts: cleanedContacts };
     try {
       if (isEdit && initial) {
         // Strip fields the update schema doesn't accept (companyId, entityId
@@ -283,6 +347,114 @@ export function OpportunityForm({
                 ? "كل الحقول اختيارية — يمكنك إضافتها لاحقًا بعد المكالمة الأولى."
                 : "All optional — fill in what you have, add the rest after the first call."}
             </p>
+          </div>
+
+          {/* Additional contacts — any number of extra people on the deal.
+              The first contact above is the "primary"; everything here is
+              the rest of the cast (decision maker, technical lead,
+              procurement, finance, etc.). Empty rows are dropped on save. */}
+          <div className="space-y-2 pt-3 border-t border-border">
+            <div className="flex items-center justify-between">
+              <Label className="text-sm font-semibold">
+                {locale === "ar" ? "جهات اتصال إضافية" : "Additional contacts"}
+                {extraContacts.length > 0 && (
+                  <span className="ms-2 text-xs font-normal text-muted-foreground">
+                    ({extraContacts.length})
+                  </span>
+                )}
+              </Label>
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                onClick={addContact}
+                className="h-7 px-2 text-xs"
+              >
+                <Plus className="h-3.5 w-3.5 me-1" />
+                {locale === "ar" ? "إضافة" : "Add contact"}
+              </Button>
+            </div>
+            {extraContacts.length === 0 && (
+              <p className="text-[11px] text-muted-foreground">
+                {locale === "ar"
+                  ? "للصفقات التي يشترك فيها أكثر من شخص — مثل صانع القرار، المسؤول الفني، إدارة المشتريات."
+                  : "For deals with multiple stakeholders — decision maker, technical lead, procurement, etc."}
+              </p>
+            )}
+            <div className="space-y-3">
+              {extraContacts.map((c, idx) => (
+                <div
+                  key={c.id ?? `new-${idx}`}
+                  className="rounded-md border border-border bg-muted/20 p-3 space-y-2"
+                >
+                  <div className="flex items-center justify-between">
+                    <span className="text-xs text-muted-foreground">
+                      {locale === "ar" ? `جهة اتصال ${idx + 2}` : `Contact ${idx + 2}`}
+                    </span>
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="sm"
+                      onClick={() => removeContact(idx)}
+                      className="h-6 w-6 p-0 text-muted-foreground hover:text-destructive"
+                      aria-label={locale === "ar" ? "حذف" : "Remove"}
+                    >
+                      <X className="h-3.5 w-3.5" />
+                    </Button>
+                  </div>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                    <div>
+                      <Label className="text-xs">
+                        {locale === "ar" ? "الاسم" : "Name"} *
+                      </Label>
+                      <Input
+                        value={c.name}
+                        onChange={(e) => updateContact(idx, { name: e.target.value })}
+                        placeholder={
+                          locale === "ar" ? "مثل: أحمد محمود" : "e.g. Ahmed Mahmoud"
+                        }
+                      />
+                    </div>
+                    <div>
+                      <Label className="text-xs">
+                        {locale === "ar" ? "الدور" : "Role"}
+                      </Label>
+                      <Input
+                        value={c.role ?? ""}
+                        onChange={(e) => updateContact(idx, { role: e.target.value })}
+                        placeholder={
+                          locale === "ar" ? "مثل: مدير المشتريات" : "e.g. Procurement"
+                        }
+                      />
+                    </div>
+                    <div>
+                      <Label className="text-xs">
+                        {locale === "ar" ? "الهاتف" : "Phone"}
+                      </Label>
+                      <Input
+                        type="tel"
+                        inputMode="tel"
+                        value={c.phone ?? ""}
+                        onChange={(e) => updateContact(idx, { phone: e.target.value })}
+                        placeholder="+20 100 123 4567"
+                      />
+                    </div>
+                    <div>
+                      <Label className="text-xs">
+                        {locale === "ar" ? "البريد الإلكتروني" : "Email"}
+                      </Label>
+                      <Input
+                        type="email"
+                        inputMode="email"
+                        value={c.email ?? ""}
+                        onChange={(e) => updateContact(idx, { email: e.target.value })}
+                        placeholder="contact@example.com"
+                      />
+                    </div>
+                  </div>
+                </div>
+              ))}
+            </div>
           </div>
         </CardContent>
       </Card>
@@ -588,6 +760,45 @@ export function OpportunityForm({
           </div>
         </CardContent>
       </Card>
+
+      {/* Owner picker — MANAGER/ADMIN only. On create this is the "act as
+          the rep" workflow; on edit it reassigns the opp without needing
+          the bulk transfer endpoint. REPs never see this card. */}
+      {reps && reps.length > 0 && (
+        <Card>
+          <CardHeader>
+            <CardTitle className="text-lg">
+              {locale === "ar" ? "تعيين إلى" : "Assign to"}
+            </CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-2">
+            <Label>{locale === "ar" ? "المالك" : "Owner"}</Label>
+            <Select
+              value={watch("ownerId") ?? ""}
+              onValueChange={(v) => setValue("ownerId", v ?? undefined, { shouldDirty: true })}
+            >
+              <SelectTrigger>
+                <SelectValue
+                  placeholder={locale === "ar" ? "اختر المندوب" : "Pick a rep"}
+                />
+              </SelectTrigger>
+              <SelectContent>
+                {reps.map((r) => (
+                  <SelectItem key={r.id} value={r.id}>
+                    {locale === "ar" && r.fullNameAr ? r.fullNameAr : r.fullName}
+                    <span className="text-muted-foreground text-xs ms-2">· {r.role}</span>
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+            <p className="text-xs text-muted-foreground">
+              {locale === "ar"
+                ? "أنت مدير — يمكنك إنشاء الفرصة باسم أي مندوب أو إعادة تعيينها له."
+                : "You're a manager — create / reassign this opportunity on behalf of any rep."}
+            </p>
+          </CardContent>
+        </Card>
+      )}
 
       {/* Submit */}
       <div className="flex gap-3">

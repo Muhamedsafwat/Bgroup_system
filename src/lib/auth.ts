@@ -38,6 +38,16 @@ declare module "next-auth" {
       // and hasn't replaced it yet. The proxy redirects every navigation to
       // /account/change-password while this is true.
       mustChangePassword?: boolean;
+      // Tier-1 #30 — impersonation marker. When set, this is the
+      // original admin's user id; the session's own `user.id` is the
+      // TARGET being impersonated. The banner reads this to render.
+      actingAs?: string;
+      // When impersonation is active, the admin's own crmProfileId
+      // for audit attribution. Audit-log writers must record this
+      // alongside the action so the banner's "audited under your
+      // admin account" promise is true. Undefined when not
+      // impersonating (the action is genuinely by user.id).
+      actingAsCrmProfileId?: string;
     };
   }
 
@@ -60,6 +70,16 @@ declare module "@auth/core/jwt" {
     partnerProfileId?: string;
     mustChangePassword?: boolean;
     modulesRefreshedAt?: number;
+    // Tier-1 #30 — impersonation. `actingAs` holds the admin's user
+    // id once the JWT has been swapped onto a target; `adminEmail`
+    // stashes the admin's own email so stop-impersonation can resolve
+    // back to it without an extra DB hit.
+    actingAs?: string;
+    adminEmail?: string;
+    // CRM profile id of the actual admin (set alongside actingAs
+    // so audit-log writes can attribute to the admin even though
+    // session.user.crmProfileId has been swapped to the target).
+    actingAsCrmProfileId?: string;
   }
 }
 
@@ -249,7 +269,109 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
       const stale = Date.now() - lastRefresh > 60_000;
       const shouldRefresh = !!user?.email || trigger === "update" || !token.modules || stale;
       if (shouldRefresh) {
-        const email = (user?.email || token.email) as string;
+        let email = (user?.email || token.email) as string;
+        // Tier-1 #30 — impersonation swap. Before resolving the user
+        // from DB, check whether the actual signed-in admin has an
+        // active CrmImpersonationSession. If yes, swap `email` to
+        // the target's email so the rest of the callback resolves
+        // their identity instead — and stamp `actingAs` on the token
+        // so downstream UI knows to render a banner. The original
+        // admin email is stashed in `adminEmail` so stop-impersonation
+        // can snap back. Failures here keep the admin's own session
+        // intact (we never lock the admin out due to an impersonation
+        // bookkeeping error).
+        // Resolve the *actual* admin id. Once impersonation is in
+        // flight `token.userId` is the TARGET (rewritten near line
+        // 347), so we MUST prefer `token.actingAs` whenever it's
+        // set — otherwise the second refresh keys the lookup off
+        // the target's id, finds nothing, and silently snaps the
+        // admin back out of impersonation after ~60s.
+        const candidateAdminId =
+          (token.actingAs as string | undefined) ??
+          (token.userId as string | undefined) ??
+          user?.id;
+        const candidateAdminEmail =
+          (token.adminEmail as string | undefined) ?? email;
+        if (candidateAdminId) {
+          // Distinguish DB error (preserve current swap state)
+          // from row-missing (the legitimate "admin stopped
+          // impersonating" signal). A swallowed-as-null catch
+          // here was previously cancelling impersonation on
+          // transient Neon blips.
+          let impersonation:
+            | { targetUserId: string }
+            | null
+            | undefined;
+          try {
+            impersonation = await db.crmImpersonationSession.findUnique({
+              where: { adminUserId: candidateAdminId },
+              select: { targetUserId: true },
+            });
+          } catch (e) {
+            console.warn(
+              "[auth.jwt] impersonation lookup failed, preserving prior state:",
+              e,
+            );
+            impersonation = undefined; // unknown — leave token alone
+          }
+          if (impersonation) {
+            let targetUser: { email: string; name: string | null } | null = null;
+            try {
+              targetUser = await db.user.findUnique({
+                where: { id: impersonation.targetUserId },
+                select: { email: true, name: true },
+              });
+            } catch (e) {
+              console.warn(
+                "[auth.jwt] impersonation target lookup failed, preserving prior state:",
+                e,
+              );
+            }
+            if (targetUser?.email) {
+              token.actingAs = candidateAdminId;
+              token.adminEmail = candidateAdminEmail;
+              email = targetUser.email;
+              // Propagate the target's name + email to the token
+              // so the banner and downstream consumers see the
+              // TARGET's identity, not the admin's stale sign-in
+              // value. The banner explicitly promises "acting
+              // as <target>" — leaving the original name on
+              // token.name made it lie.
+              token.email = targetUser.email;
+              if (targetUser.name) token.name = targetUser.name;
+              // Capture the admin's OWN CrmUserProfile id while we
+              // know who they are — the dbUser lookup downstream
+              // will rewrite token.crmProfileId to the target's,
+              // and audit-log writers need the admin's id to
+              // honour the "audited under your admin account"
+              // promise.
+              try {
+                const adminCrm = await db.crmUserProfile.findFirst({
+                  where: { userId: candidateAdminId },
+                  select: { id: true },
+                });
+                token.actingAsCrmProfileId = adminCrm?.id;
+              } catch {
+                // Non-fatal: lose this round of attribution rather
+                // than blocking auth. Banner still renders; audit
+                // falls back to the target.
+                token.actingAsCrmProfileId = undefined;
+              }
+            }
+          } else if (impersonation === null && token.actingAs) {
+            // Row was definitively missing (not a DB error) AND we
+            // were previously impersonating — admin must have hit
+            // the stop endpoint. Restore the admin's identity.
+            const adminEmail = token.adminEmail as string | undefined;
+            if (adminEmail) {
+              email = adminEmail;
+              token.email = adminEmail;
+            }
+            delete token.actingAs;
+            delete token.adminEmail;
+            delete token.actingAsCrmProfileId;
+          }
+        }
         // Wrap the refresh in try/catch — a transient DB blip during JWT
         // refresh would otherwise propagate up to NextAuth and return a null
         // session, which the proxy interprets as "unauthenticated" and
@@ -291,6 +413,14 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
         if (dbUser) {
           token.userId = dbUser.id;
           token.mustChangePassword = !!dbUser.mustChangePassword;
+          // Keep token.name in sync with whichever identity the
+          // dbUser lookup resolved (admin OR impersonation target).
+          // Without this the banner and any UI consumer reading
+          // session.user.name would show the original sign-in name
+          // forever — wrong during impersonation, and stale after
+          // a name change.
+          if (dbUser.name) token.name = dbUser.name;
+          token.email = dbUser.email;
 
           // Determine accessible modules
           const modules: ("hr" | "crm" | "partners")[] = [];
@@ -362,6 +492,11 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
         session.user.partnerId = token.partnerId as string | undefined;
         session.user.partnerProfileId = token.partnerProfileId as string | undefined;
         session.user.mustChangePassword = !!token.mustChangePassword;
+        // Tier-1 #30 — surface impersonation marker for the banner.
+        // `actingAs` = the original admin's user id; the session's
+        // own user.id is the TARGET we're impersonating.
+        session.user.actingAs = token.actingAs;
+        session.user.actingAsCrmProfileId = token.actingAsCrmProfileId;
       }
       return session;
     },

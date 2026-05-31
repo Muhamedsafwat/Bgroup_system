@@ -5,6 +5,8 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useLocale } from "@/lib/i18n";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { OpportunityIntelligence } from "./OpportunityIntelligence";
+import { OpportunityComments } from "./OpportunityComments";
 import { TaskList } from "@/components/tasks/TaskList";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -337,12 +339,31 @@ export function OpportunityDetailClient({
       <Tabs defaultValue="overview">
         <TabsList>
           <TabsTrigger value="overview">{t.tabs.overview}</TabsTrigger>
+          <TabsTrigger value="sales-play">Sales play</TabsTrigger>
+          <TabsTrigger value="discussion">Discussion</TabsTrigger>
           <TabsTrigger value="activity">{t.tabs.activity}</TabsTrigger>
           <TabsTrigger value="calls">{t.tabs.calls}</TabsTrigger>
           <TabsTrigger value="documents">{t.tabs.documents}</TabsTrigger>
           <TabsTrigger value="notes">{t.tabs.notes}</TabsTrigger>
           <TabsTrigger value="tasks">Tasks</TabsTrigger>
         </TabsList>
+
+        {/* Tier-1 #11 + #23 + #24 — sales-intelligence sections.
+            MEDDPICC qualification + stage playbook + mutual action plan
+            all live under one tab so reps don't have to context-switch
+            during a deal review. */}
+        <TabsContent value="sales-play" className="space-y-4">
+          <OpportunityIntelligence oppId={opp.id as string} stage={opp.stage as string} />
+        </TabsContent>
+
+        {/* In-opp discussion thread with @-mention notifications. */}
+        <TabsContent value="discussion">
+          <Card>
+            <CardContent className="pt-4">
+              <OpportunityComments oppId={opp.id as string} />
+            </CardContent>
+          </Card>
+        </TabsContent>
 
         {/* Overview Tab */}
         <TabsContent value="overview" className="space-y-4">

@@ -5,6 +5,7 @@ import { scopeOpportunityByRole, scopeCompanyByRole } from "@/lib/crm/rbac";
 import { getRequiredSession } from "@/lib/crm/session";
 import { generateOpportunityCode } from "@/lib/crm/business/auto-code";
 import { recomputeOpportunityFinancials } from "@/lib/crm/business/pipeline";
+import { fireWorkflow } from "@/lib/crm/workflows/engine";
 import {
   canTransition,
   getTransitionRequirements,
@@ -161,6 +162,9 @@ export async function getOpportunity(id: string) {
       attachments: {
         orderBy: { createdAt: "desc" },
       },
+      contacts: {
+        orderBy: [{ isPrimary: "desc" }, { createdAt: "asc" }],
+      },
     },
   });
   return result ? JSON.parse(JSON.stringify(result)) : null;
@@ -169,6 +173,23 @@ export async function getOpportunity(id: string) {
 export async function createOpportunity(input: CreateOpportunityInput) {
   const session = await getRequiredSession();
   const parsed = createOpportunitySchema.parse(input);
+
+  // Owner resolution: MANAGER/ADMIN can pass `ownerId` to create "on behalf
+  // of" another rep — this is the "act as the sales rep" workflow. For any
+  // other role (REP, ASSISTANT, ACCOUNT_MGR) we silently drop the override
+  // and use the caller. If the picked owner doesn't exist or is inactive,
+  // 400 so the manager isn't surprised by a silent fallback.
+  let resolvedOwnerId = session.id;
+  if (parsed.ownerId && (session.role === "MANAGER" || session.role === "ADMIN")) {
+    const target = await db.crmUserProfile.findUnique({
+      where: { id: parsed.ownerId },
+      select: { id: true, active: true },
+    });
+    if (!target || !target.active) {
+      throw new Error("Selected owner is not an active CRM rep");
+    }
+    resolvedOwnerId = target.id;
+  }
 
   // Customer company is plain text on the opp. We DO NOT look up or create
   // a CrmCompany row — that table is for the admin-curated principal
@@ -200,7 +221,34 @@ export async function createOpportunity(input: CreateOpportunityInput) {
   );
 
   const code = await generateOpportunityCode();
-  const title = parsed.title || customerCompanyName || code;
+  // Trim BEFORE the fallback chain so a whitespace-only title
+  // doesn't beat the customerCompanyName fallback. Without this,
+  // `parsed.title = "   "` is truthy in `||` and we'd end up with
+  // an empty title — but the column is non-null, so we'd insert
+  // an empty string and break list rendering + collide with any
+  // other accidental-empty-title row.
+  const titleCandidate = (parsed.title ?? "").trim();
+  const title = titleCandidate || customerCompanyName || code;
+
+  // Opportunity titles are globally unique (case-insensitive,
+  // soft-deleted rows excluded). Enforced by a partial unique
+  // index on LOWER(title) WHERE deletedAt IS NULL — see
+  // prisma/sql/add-opportunity-title-unique.sql. We pre-check
+  // here so reps get a clean message instead of a Prisma P2002
+  // surfacing as a 500. The DB index is the authoritative gate
+  // for the race window.
+  const dupeTitle = await db.crmOpportunity.findFirst({
+    where: {
+      title: { equals: title, mode: "insensitive" },
+      deletedAt: null,
+    },
+    select: { id: true, code: true },
+  });
+  if (dupeTitle) {
+    throw new Error(
+      `An opportunity named "${title}" already exists (${dupeTitle.code}). Pick a different name.`,
+    );
+  }
 
   const opp = await db.$transaction(async (tx) => {
     const created = await tx.crmOpportunity.create({
@@ -212,7 +260,7 @@ export async function createOpportunity(input: CreateOpportunityInput) {
         customerContactEmail: parsed.customerContactEmail?.trim() || null,
         companyId: companyId ?? null,
         primaryContactId: parsed.primaryContactId || null,
-        ownerId: session.id,
+        ownerId: resolvedOwnerId,
         entityId: parsed.entityId,
         title,
         stage: "NEW",
@@ -278,11 +326,39 @@ export async function createOpportunity(input: CreateOpportunityInput) {
       }
     }
 
+    // Multi-contact roster. Reps can attach 0..N contacts to an opp; if
+    // none is marked primary explicitly, the first row gets the flag so
+    // the legacy single-contact UI surfaces still have something to show.
+    if (parsed.contacts && parsed.contacts.length) {
+      const rows = parsed.contacts.map((c, i) => ({
+        opportunityId: created.id,
+        name: c.name.trim(),
+        role: c.role?.trim() || null,
+        phone: c.phone?.trim() || null,
+        email: c.email?.trim() || null,
+        whatsapp: c.whatsapp?.trim() || null,
+        isPrimary: c.isPrimary ?? i === 0,
+        notes: c.notes?.trim() || null,
+      }));
+      await tx.crmOpportunityContact.createMany({ data: rows });
+    }
+
     return created;
   });
 
   revalidatePath("/crm/opportunities");
   revalidatePath("/my");
+
+  // Tier-2 #36 — fire opp.created workflow.
+  await fireWorkflow("opp.created", {
+    entityType: "opportunity",
+    entityId: opp.id,
+    actorId: session.id,
+    priority: opp.priority,
+    estimatedValueEGP: Number(opp.estimatedValueEGP),
+    entityCode: opp.code,
+  });
+
   return JSON.parse(JSON.stringify(opp));
 }
 
@@ -299,14 +375,88 @@ export async function updateOpportunity(id: string, input: UpdateOpportunityInpu
 
   // productIds is handled separately (joins through CrmOpportunityProduct) —
   // don't push it onto the CrmOpportunity update payload or Prisma will reject.
+  // ownerId is gated below: MANAGER/ADMIN only, with target-active validation.
   for (const [key, value] of Object.entries(parsed)) {
     if (value === undefined) continue;
     if (key === "productIds") continue;
+    if (key === "ownerId") continue;
+    if (key === "contacts") continue;
     if (key === "expectedCloseDate" || key === "nextActionDate") {
       updateData[key] = value ? new Date(value as string) : null;
+    } else if (key === "title" && typeof value === "string") {
+      // Trim aggressively so " Acme " and "Acme" collide with the
+      // case-insensitive index (whitespace would otherwise let
+      // dupes slip past LOWER()).
+      updateData[key] = value.trim();
     } else {
       updateData[key] = value;
     }
+  }
+
+  // Title uniqueness pre-check. Only fires when the user is
+  // actually changing the title — same-value PATCH is a no-op.
+  // Enforced authoritatively by the partial unique index; this
+  // call exists to surface a friendly error before the Prisma
+  // P2002 path.
+  if (
+    typeof updateData.title === "string" &&
+    updateData.title.toLowerCase() !== existing.title.toLowerCase()
+  ) {
+    const newTitle = updateData.title as string;
+    const dupeTitle = await db.crmOpportunity.findFirst({
+      where: {
+        title: { equals: newTitle, mode: "insensitive" },
+        deletedAt: null,
+        NOT: { id },
+      },
+      select: { id: true, code: true },
+    });
+    if (dupeTitle) {
+      throw new Error(
+        `An opportunity named "${newTitle}" already exists (${dupeTitle.code}). Pick a different name.`,
+      );
+    }
+  }
+
+  // Tier-2 #40 — slippage tracking. Log every expectedCloseDate
+  // change to CrmCloseDateHistory so admin reports can compute
+  // cumulative slip per opp. We capture this BEFORE applying the
+  // update so `oldDate` is the pre-change value.
+  if (parsed.expectedCloseDate !== undefined) {
+    const newDate = parsed.expectedCloseDate
+      ? new Date(parsed.expectedCloseDate)
+      : null;
+    const oldDate = existing.expectedCloseDate;
+    const changed =
+      (oldDate?.getTime() ?? null) !== (newDate?.getTime() ?? null);
+    if (changed) {
+      await db.crmCloseDateHistory.create({
+        data: {
+          opportunityId: id,
+          oldDate,
+          newDate,
+          changedById: session.id,
+        },
+      });
+    }
+  }
+
+  // Owner reassignment — MANAGER/ADMIN can hand an opp to a different rep
+  // directly from the edit form (no need to round-trip through the bulk
+  // transfer endpoint for a single move). Silently dropped for any other
+  // role; mismatched/inactive targets are surfaced as a 400.
+  if (parsed.ownerId !== undefined && parsed.ownerId !== existing.ownerId) {
+    if (session.role !== "MANAGER" && session.role !== "ADMIN") {
+      throw new Error("Only a manager or admin can reassign opportunity owner");
+    }
+    const target = await db.crmUserProfile.findUnique({
+      where: { id: parsed.ownerId },
+      select: { id: true, active: true },
+    });
+    if (!target || !target.active) {
+      throw new Error("Selected owner is not an active CRM rep");
+    }
+    updateData.ownerId = target.id;
   }
 
   // Recompute financials if value or currency changed
@@ -363,6 +513,50 @@ export async function updateOpportunity(id: string, input: UpdateOpportunityInpu
               unitPriceEGP: Number(p.basePrice) * fx,
               discountPct: 0,
             },
+          });
+        }
+      }
+    }
+
+    // Sync the multi-contact roster: rows with an id are updated in
+    // place, rows without an id are inserted, and any pre-existing rows
+    // whose id isn't in the incoming list are deleted. Pass an empty
+    // array to clear everything. Skipping the key entirely leaves the
+    // existing contacts untouched.
+    if (parsed.contacts) {
+      const incoming = parsed.contacts;
+      const existingRows = await tx.crmOpportunityContact.findMany({
+        where: { opportunityId: id },
+        select: { id: true },
+      });
+      const keepIds = new Set(
+        incoming.map((c) => c.id).filter((cid): cid is string => !!cid)
+      );
+      const toDelete = existingRows.filter((r) => !keepIds.has(r.id));
+      if (toDelete.length) {
+        await tx.crmOpportunityContact.deleteMany({
+          where: { id: { in: toDelete.map((r) => r.id) } },
+        });
+      }
+      for (let i = 0; i < incoming.length; i++) {
+        const c = incoming[i];
+        const data = {
+          name: c.name.trim(),
+          role: c.role?.trim() || null,
+          phone: c.phone?.trim() || null,
+          email: c.email?.trim() || null,
+          whatsapp: c.whatsapp?.trim() || null,
+          isPrimary: c.isPrimary ?? i === 0,
+          notes: c.notes?.trim() || null,
+        };
+        if (c.id) {
+          await tx.crmOpportunityContact.update({
+            where: { id: c.id },
+            data,
+          });
+        } else {
+          await tx.crmOpportunityContact.create({
+            data: { ...data, opportunityId: id },
           });
         }
       }
@@ -446,8 +640,42 @@ export async function changeStage(opportunityId: string, input: StageChangeInput
   // a seed stage from Stage Config — the rep dropdown still listed it.
   const targetConfig = await db.crmStageConfig.findFirst({
     where: { stage: parsed.toStage, isActive: true },
-    select: { id: true },
+    select: { id: true, requiredFieldsJson: true },
   });
+
+  // Tier-0 #1: required-fields gating. The SOURCE stage carries a list of
+  // opp fields that must be populated before an opp can leave it. Empty /
+  // null array = no gate (current behaviour). Configured by admin in
+  // Stage Config; enforced here so reps can't drag a deal forward with
+  // an empty amount or no next action.
+  const sourceConfig = await db.crmStageConfig.findFirst({
+    where: { stage: opp.stage, isActive: true },
+    select: { requiredFieldsJson: true },
+  });
+  const requiredFields = Array.isArray(sourceConfig?.requiredFieldsJson)
+    ? (sourceConfig.requiredFieldsJson as string[])
+    : [];
+  if (requiredFields.length) {
+    const missing: string[] = [];
+    for (const field of requiredFields) {
+      // Read directly off the opp object. `opp` is the row already
+      // loaded above with the role-scoped where; every field on the
+      // CrmOpportunity model is on it. We treat null + empty string
+      // + zero-length array as "missing"; everything else passes.
+      const val = (opp as unknown as Record<string, unknown>)[field];
+      const isMissing =
+        val === null ||
+        val === undefined ||
+        (typeof val === "string" && val.trim().length === 0) ||
+        (Array.isArray(val) && val.length === 0);
+      if (isMissing) missing.push(field);
+    }
+    if (missing.length) {
+      throw new Error(
+        `Can't leave "${opp.stage}" yet — fill in: ${missing.join(", ")}`
+      );
+    }
+  }
   if (!targetConfig) {
     throw new Error(
       `Stage "${parsed.toStage}" isn't configured in Stage Config. Ask an admin to enable it.`
@@ -547,6 +775,18 @@ export async function changeStage(opportunityId: string, input: StageChangeInput
   revalidatePath(`/crm/opportunities/${opportunityId}`);
   revalidatePath("/crm/opportunities");
   revalidatePath("/my");
+
+  // Tier-2 #36 — fire workflow runtime on stage change. Decoupled
+  // from the primary write (the engine swallows its own errors so a
+  // workflow problem can't break the stage change for the rep).
+  await fireWorkflow("opp.stage.changed", {
+    entityType: "opportunity",
+    entityId: opportunityId,
+    actorId: session.id,
+    fromStage: opp.stage,
+    toStage: parsed.toStage,
+    durationDays,
+  });
 
   return { warning: transition.warning };
 }

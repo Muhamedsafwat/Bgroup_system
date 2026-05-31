@@ -59,23 +59,13 @@ export async function GET(req: Request) {
   // visibility) and the repId filter was silently ignored for admins.
   const and: Prisma.CrmOpportunityWhereInput[] = [];
 
-  if (role === "ADMIN" || platformAdmin) {
-    // No base filter — admin sees everything (still narrowable by repId below).
-  } else if (role === "MANAGER") {
+  if (role === "ADMIN" || role === "MANAGER" || platformAdmin) {
+    // ADMIN + MANAGER see the entire pipeline. `scope=mine` still narrows
+    // to "ops I personally own" so a manager can quickly check their own
+    // book; otherwise no base filter — `repId=…` below lets them drill
+    // into any specific rep across the floor.
     if (scope === "mine") {
       and.push({ ownerId: callerId });
-    } else {
-      // Manager's team-scope: own opps OR team-member opps. "Team member"
-      // covers both the primary `managerId` link AND the many-to-many
-      // `managedBy` join — a rep on multiple managers' teams shows up for
-      // every one of them.
-      and.push({
-        OR: [
-          { ownerId: callerId },
-          { owner: { managerId: callerId } },
-          { owner: { managedBy: { some: { managerId: callerId } } } },
-        ],
-      });
     }
   } else {
     // REP / ASSISTANT / ACCOUNT_MGR / fallback — always own opps only.
@@ -101,7 +91,14 @@ export async function GET(req: Request) {
     });
   }
 
-  const where: Prisma.CrmOpportunityWhereInput = and.length ? { AND: and } : {};
+  // Soft-deleted opps must never appear in the pipeline view. Without
+  // this filter, deleted rows leak back in (their CrmStageHistory +
+  // CrmActivityLog audit trail is preserved on soft-delete, so the rows
+  // still exist with deletedAt set).
+  const where: Prisma.CrmOpportunityWhereInput = {
+    deletedAt: null,
+    ...(and.length ? { AND: and } : {}),
+  };
 
   const opportunities = await db.crmOpportunity.findMany({
     where,

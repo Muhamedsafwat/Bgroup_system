@@ -67,6 +67,18 @@ export const updateFxRateSchema = z.object({
 
 // ========== STAGE CONFIGS ==========
 
+// Tier-0 #2: stage semantics. `stageType` tells reports the role this
+// stage plays in the lifecycle; `forecastCategory` powers the
+// commit/best-case roll-up on top of weighted pipeline.
+const stageTypeEnum = z.enum(["open", "won", "lost", "abandoned"]);
+const forecastCategoryEnum = z.enum([
+  "pipeline",
+  "bestCase",
+  "commit",
+  "closed",
+  "omitted",
+]);
+
 export const createStageConfigSchema = z.object({
   stage: z.enum([
     "NEW",
@@ -87,6 +99,16 @@ export const createStageConfigSchema = z.object({
   displayOrder: z.number().int().min(0).max(99),
   customLabelEn: z.string().trim().max(80).nullable().optional(),
   customLabelAr: z.string().trim().max(80).nullable().optional(),
+  stageType: stageTypeEnum.optional(),
+  forecastCategory: forecastCategoryEnum.optional(),
+  // Tier-0 #3: stalled-deal thresholds. Per-stage targets in days.
+  // `maxDays` drives the "stalled" badge; `targetDays` is a softer
+  // benchmark surfaced in reports.
+  targetDays: z.number().int().min(0).max(365).nullable().optional(),
+  maxDays: z.number().int().min(0).max(365).nullable().optional(),
+  // Tier-0 #1: list of opp field names that must be non-null before an
+  // opp can EXIT this stage. UI surfaces this as a multi-checkbox.
+  requiredFields: z.array(z.string().min(1).max(60)).max(20).optional(),
 });
 
 export const updateStageConfigSchema = z.object({
@@ -96,6 +118,11 @@ export const updateStageConfigSchema = z.object({
   customLabelEn: z.string().trim().max(80).nullable().optional(),
   customLabelAr: z.string().trim().max(80).nullable().optional(),
   isActive: z.boolean().optional(),
+  stageType: stageTypeEnum.optional(),
+  forecastCategory: forecastCategoryEnum.optional(),
+  targetDays: z.number().int().min(0).max(365).nullable().optional(),
+  maxDays: z.number().int().min(0).max(365).nullable().optional(),
+  requiredFields: z.array(z.string().min(1).max(60)).max(20).optional(),
 });
 
 // ========== LOSS REASONS ==========

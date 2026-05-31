@@ -4,7 +4,7 @@ import { db } from "@/lib/db";
 
 export type UnifiedNotification = {
   id: string;
-  module: "hr" | "partners";
+  module: "hr" | "partners" | "crm";
   title: string;
   message: string;
   isRead: boolean;
@@ -62,6 +62,28 @@ export async function GET() {
             isRead: n.isRead,
             createdAt: n.createdAt.toISOString(),
             href: partnersHref(n.type, n.metadata),
+          }))
+        )
+    );
+  }
+
+  if (modules.includes("crm")) {
+    tasks.push(
+      db.crmNotification
+        .findMany({
+          where: { userId },
+          orderBy: { createdAt: "desc" },
+          take: 50,
+        })
+        .then((rows) =>
+          rows.map((n) => ({
+            id: n.id,
+            module: "crm" as const,
+            title: n.title,
+            message: n.message,
+            isRead: n.isRead,
+            createdAt: n.createdAt.toISOString(),
+            href: n.href ?? undefined,
           }))
         )
     );

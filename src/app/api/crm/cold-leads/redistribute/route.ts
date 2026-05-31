@@ -4,6 +4,7 @@ import { z } from "zod";
 import { auth } from "@/lib/auth";
 import { db } from "@/lib/db";
 import { describeZodError } from "@/lib/zod-errors";
+import { isManagerOrAdmin } from "@/lib/crm/admin-gates";
 
 /**
  * POST /api/crm/cold-leads/redistribute
@@ -29,21 +30,12 @@ const schema = z.object({
   resetStatus: z.boolean().optional(),
 });
 
-function callerCanRedistribute(session: Session | null) {
-  if (!session?.user) return false;
-  const role = session.user.crmRole;
-  const platformAdmin =
-    !!session.user.hrRoles?.includes("super_admin") ||
-    (!!session.user.modules?.includes("partners") && !session.user.partnerId);
-  return platformAdmin || role === "ADMIN" || role === "MANAGER";
-}
-
 export async function POST(request: Request) {
   const session = (await auth()) as Session | null;
   if (!session?.user?.id) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
-  if (!callerCanRedistribute(session)) {
+  if (!isManagerOrAdmin(session)) {
     return NextResponse.json({ error: "Forbidden" }, { status: 403 });
   }
 
@@ -108,7 +100,7 @@ export async function DELETE(request: Request) {
   if (!session?.user?.id) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
-  if (!callerCanRedistribute(session)) {
+  if (!isManagerOrAdmin(session)) {
     return NextResponse.json({ error: "Forbidden" }, { status: 403 });
   }
   const body = await request.json().catch(() => null);

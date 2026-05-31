@@ -64,11 +64,31 @@ const ROLE_RULES: RoleRule[] = [
   { prefix: "/partners/admin", platformAdminOnly: true, reason: "partners-admin-only" },
   { prefix: "/api/partners/admin", platformAdminOnly: true, reason: "partners-admin-only" },
 
-  // /crm/admin/* manages catalogue, stage config, loss reasons, entities,
-  // and CRM user assignments. Only CRM ADMIN (or platform admin / MANAGER
-  // for user-team picker) should reach these. Previously every CRM member
-  // could open them, which let REPs disable stages and change other reps'
-  // managers.
+  // /crm/admin/* splits into two tiers:
+  //
+  //   Settings (ADMIN only)  — stage config, FX rates, lookup tables,
+  //   entities, products. These shape how the system behaves; MANAGERs
+  //   don't even see them in the sidebar.
+  //
+  //   People + data (ADMIN + MANAGER) — user CRUD, team membership.
+  //   Managers run the floor: they create / disable / re-team reps and
+  //   re-assign work. The catch-all rule at the bottom covers any
+  //   future /crm/admin/* surface that isn't an explicit settings table.
+  //
+  // First-match wins, so the settings rules must come BEFORE the
+  // catch-all. The settings list is duplicated for the API namespace.
+  ...(["settings", "stage-config", "fx-rates", "entities", "loss-reasons", "lead-sources", "customer-needs", "meeting-types", "products"].flatMap((seg) => [
+    {
+      prefix: `/crm/admin/${seg}`,
+      allowedCrmRoles: ["ADMIN" as const],
+      reason: "crm-settings-admin-only",
+    },
+    {
+      prefix: `/api/crm/admin/${seg}`,
+      allowedCrmRoles: ["ADMIN" as const],
+      reason: "crm-settings-admin-only",
+    },
+  ])),
   {
     prefix: "/crm/admin",
     allowedCrmRoles: ["ADMIN", "MANAGER"],

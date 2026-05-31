@@ -14,6 +14,15 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { Checkbox } from "@/components/ui/checkbox";
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogFooter,
+} from "@/components/ui/dialog";
 import {
   Select,
   SelectContent,
@@ -53,6 +62,12 @@ type StageConfigItem = {
   isActive: boolean;
   customLabelEn: string | null;
   customLabelAr: string | null;
+  // Tier-0 #2 + #3 + #1 extensions. All nullable until admin sets them.
+  stageType?: string | null;
+  forecastCategory?: string | null;
+  targetDays?: number | null;
+  maxDays?: number | null;
+  requiredFieldsJson?: unknown;
   entity: {
     id: string;
     code: string;
@@ -61,6 +76,23 @@ type StageConfigItem = {
   } | null;
 };
 
+/// Opportunity fields the admin can require before EXITING this stage.
+/// Keep this list aligned with the actual CrmOpportunity columns reps
+/// fill on the create / edit form.
+const REQUIRABLE_FIELDS: { key: string; label: string }[] = [
+  { key: "estimatedValue", label: "Estimated value" },
+  { key: "expectedCloseDate", label: "Expected close date" },
+  { key: "nextAction", label: "Next action" },
+  { key: "nextActionDate", label: "Next action date" },
+  { key: "primaryContactId", label: "Primary contact" },
+  { key: "customerContactName", label: "Customer contact name" },
+  { key: "customerContactPhone", label: "Customer contact phone" },
+  { key: "customerContactEmail", label: "Customer contact email" },
+  { key: "description", label: "Description" },
+  { key: "techRequirements", label: "Tech requirements" },
+  { key: "leadSource", label: "Lead source" },
+];
+
 export function StageConfigClient({ configs: initial }: { configs: StageConfigItem[] }) {
   const { t, locale } = useLocale();
   const [configs, setConfigs] = useState(initial);
@@ -68,6 +100,47 @@ export function StageConfigClient({ configs: initial }: { configs: StageConfigIt
   const [editProb, setEditProb] = useState("");
   const [editSla, setEditSla] = useState("");
   const [saving, setSaving] = useState(false);
+  // Tier-0 advanced-settings dialog. One dialog covers items 1+2+3 so
+  // we don't double the inline-edit row width with five more inputs.
+  const [advancedFor, setAdvancedFor] = useState<StageConfigItem | null>(null);
+  const [advStageType, setAdvStageType] = useState("open");
+  const [advForecastCat, setAdvForecastCat] = useState("pipeline");
+  const [advTargetDays, setAdvTargetDays] = useState("");
+  const [advMaxDays, setAdvMaxDays] = useState("");
+  const [advRequiredFields, setAdvRequiredFields] = useState<Set<string>>(new Set());
+
+  function openAdvanced(c: StageConfigItem) {
+    setAdvancedFor(c);
+    setAdvStageType(c.stageType ?? "open");
+    setAdvForecastCat(c.forecastCategory ?? "pipeline");
+    setAdvTargetDays(c.targetDays != null ? String(c.targetDays) : "");
+    setAdvMaxDays(c.maxDays != null ? String(c.maxDays) : "");
+    setAdvRequiredFields(
+      new Set(Array.isArray(c.requiredFieldsJson) ? (c.requiredFieldsJson as string[]) : [])
+    );
+  }
+  function closeAdvanced() {
+    setAdvancedFor(null);
+  }
+  async function saveAdvanced() {
+    if (!advancedFor) return;
+    setSaving(true);
+    try {
+      const updated = await updateStageConfig(advancedFor.id, {
+        stageType: advStageType as "open" | "won" | "lost" | "abandoned",
+        forecastCategory: advForecastCat as "pipeline" | "bestCase" | "commit" | "closed" | "omitted",
+        targetDays: advTargetDays ? Number(advTargetDays) : null,
+        maxDays: advMaxDays ? Number(advMaxDays) : null,
+        requiredFields: Array.from(advRequiredFields),
+      });
+      setConfigs(configs.map((c) => (c.id === advancedFor.id ? (updated as StageConfigItem) : c)));
+      closeAdvanced();
+    } catch (e) {
+      alert(e instanceof Error ? e.message : "Failed to save advanced settings");
+    } finally {
+      setSaving(false);
+    }
+  }
   const [adding, setAdding] = useState(false);
   const [newStage, setNewStage] = useState<string>("");
   const [newProb, setNewProb] = useState("50");
@@ -318,6 +391,15 @@ export function StageConfigClient({ configs: initial }: { configs: StageConfigIt
                           >
                             {t.common.edit}
                           </Button>
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            onClick={() => openAdvanced(config)}
+                            disabled={!config.isActive}
+                            title="Stage type, forecast category, stalled-deal thresholds, required fields"
+                          >
+                            {locale === "ar" ? "متقدم" : "Advanced"}
+                          </Button>
                           {config.isActive ? (
                             <Button
                               variant="ghost"
@@ -350,6 +432,126 @@ export function StageConfigClient({ configs: initial }: { configs: StageConfigIt
           </div>
         </CardContent>
       </Card>
+
+      {/* Tier-0 #1+#2+#3 advanced-settings dialog */}
+      <Dialog open={!!advancedFor} onOpenChange={(o) => !o && closeAdvanced()}>
+        <DialogContent className="sm:max-w-lg">
+          <DialogHeader>
+            <DialogTitle>
+              {locale === "ar" ? "إعدادات متقدمة" : "Advanced settings"}
+              {advancedFor && (
+                <span className="text-sm text-muted-foreground ms-2 font-normal">
+                  {advancedFor.customLabelEn ?? advancedFor.stage}
+                </span>
+              )}
+            </DialogTitle>
+          </DialogHeader>
+          <div className="space-y-4">
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <Label className="text-xs">
+                  {locale === "ar" ? "نوع المرحلة" : "Stage type"}
+                </Label>
+                <select
+                  className="h-9 w-full rounded-md border bg-background px-2 text-sm"
+                  value={advStageType}
+                  onChange={(e) => setAdvStageType(e.target.value)}
+                >
+                  <option value="open">open</option>
+                  <option value="won">won</option>
+                  <option value="lost">lost</option>
+                  <option value="abandoned">abandoned</option>
+                </select>
+              </div>
+              <div>
+                <Label className="text-xs">
+                  {locale === "ar" ? "فئة التوقعات" : "Forecast category"}
+                </Label>
+                <select
+                  className="h-9 w-full rounded-md border bg-background px-2 text-sm"
+                  value={advForecastCat}
+                  onChange={(e) => setAdvForecastCat(e.target.value)}
+                >
+                  <option value="pipeline">pipeline</option>
+                  <option value="bestCase">bestCase</option>
+                  <option value="commit">commit</option>
+                  <option value="closed">closed</option>
+                  <option value="omitted">omitted</option>
+                </select>
+              </div>
+              <div>
+                <Label className="text-xs">
+                  {locale === "ar" ? "الأيام المستهدفة" : "Target days"}
+                </Label>
+                <Input
+                  type="number"
+                  min={0}
+                  max={365}
+                  value={advTargetDays}
+                  onChange={(e) => setAdvTargetDays(e.target.value)}
+                />
+              </div>
+              <div>
+                <Label className="text-xs">
+                  {locale === "ar" ? "الحد الأقصى للأيام" : "Max days"}
+                </Label>
+                <Input
+                  type="number"
+                  min={0}
+                  max={365}
+                  value={advMaxDays}
+                  onChange={(e) => setAdvMaxDays(e.target.value)}
+                />
+              </div>
+            </div>
+            <div>
+              <Label className="text-xs">
+                {locale === "ar"
+                  ? "حقول مطلوبة قبل ترك هذه المرحلة"
+                  : "Fields required to leave this stage"}
+              </Label>
+              <p className="text-[11px] text-muted-foreground mb-1.5">
+                {locale === "ar"
+                  ? "لا يمكن للمندوب نقل الفرصة إلى مرحلة لاحقة حتى تُملأ هذه الحقول."
+                  : "Reps can't advance the opp until every checked field is populated."}
+              </p>
+              <div className="max-h-48 overflow-y-auto rounded-md border divide-y">
+                {REQUIRABLE_FIELDS.map((f) => {
+                  const checked = advRequiredFields.has(f.key);
+                  return (
+                    <label
+                      key={f.key}
+                      className="flex items-center gap-2 px-3 py-1.5 text-sm cursor-pointer hover:bg-accent"
+                    >
+                      <Checkbox
+                        checked={checked}
+                        onCheckedChange={(v) => {
+                          setAdvRequiredFields((prev) => {
+                            const next = new Set(prev);
+                            if (v) next.add(f.key);
+                            else next.delete(f.key);
+                            return next;
+                          });
+                        }}
+                      />
+                      <span>{f.label}</span>
+                      <span className="text-[10px] text-muted-foreground ms-auto">{f.key}</span>
+                    </label>
+                  );
+                })}
+              </div>
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={closeAdvanced} disabled={saving}>
+              {locale === "ar" ? "إلغاء" : "Cancel"}
+            </Button>
+            <Button onClick={saveAdvanced} disabled={saving}>
+              {locale === "ar" ? "حفظ" : "Save"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

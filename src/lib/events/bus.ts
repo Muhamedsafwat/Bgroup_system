@@ -7,8 +7,19 @@
 import { EventEmitter } from "node:events";
 
 export type AppEvent =
-  // Notifications
-  | { type: "notification.created"; userId: string; payload: { id: string; module: "hr" | "partners"; title: string; message: string } }
+  // Notifications. `module` reflects the source bucket so the client
+  // can route the toast / badge update; `id` is the row id for
+  // optimistic local updates if needed.
+  | {
+      type: "notification.created";
+      userId: string;
+      payload: {
+        id?: string;
+        module?: "hr" | "partners" | "crm";
+        title: string;
+        message: string;
+      };
+    }
   | { type: "notification.read"; userId: string; payload: { id: string } }
   // Partners deal lifecycle (so other admins watching the queue see live updates)
   | { type: "partners.deal.updated"; userId: string; payload: { id: string; status: string } }

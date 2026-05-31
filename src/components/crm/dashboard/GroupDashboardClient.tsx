@@ -36,6 +36,14 @@ type GroupData = {
     weightedPipeline: number;
     wonCountMTD: number;
     wonValueMTD: number;
+    teamTarget?: number;
+    /// Tier-0 #9 — `open weighted pipeline / remaining quota gap`.
+    /// `null` when the team is already at/over quota (gap is 0).
+    remainingQuota?: number;
+    coverageRatio?: number | null;
+    /// Tier-1 #13 — count of open opps where days-in-stage > the
+    /// admin-configured maxDays on CrmStageConfig.
+    stalledCount?: number;
   };
   leaderboard: Array<{
     userId: string;
@@ -50,6 +58,11 @@ type GroupData = {
     /// `null` means "no monthly target set on this rep" — leaderboard
     /// shows "—" instead of a misleading 0% or absurd 500%.
     attainment: number | null;
+    /// Tier-0 #9 — per-rep coverage ratio. `null` if no target.
+    coverage?: number | null;
+    /// Tier-0 #10 — anti-gaming signals: `late-month-spike`,
+    /// `low-acv-high-volume`, `stage-bouncebacks`. Empty = clean.
+    flags?: string[];
   }>;
   topHotOpportunities: Array<{
     id: string;
@@ -161,6 +174,37 @@ export function GroupDashboardClient({
         />
       </div>
 
+      {/* Tier-0 #9 — coverage-ratio tile. Single number that tells you
+          if the quarter is at risk: weighted pipeline / remaining
+          quota gap. 3x SMB / 4x mid-market is the industry rule of
+          thumb. We surface the raw ratio + a colour band so a glance
+          tells the manager whether to coach prospecting. */}
+      {data.kpis.coverageRatio !== undefined && data.kpis.coverageRatio !== null && (
+        <Card className="border-l-4" style={{ borderLeftColor: data.kpis.coverageRatio >= 3 ? "#16a34a" : data.kpis.coverageRatio >= 2 ? "#d97706" : "#dc2626" }}>
+          <CardContent className="py-3 flex items-center justify-between">
+            <div>
+              <p className="text-sm text-muted-foreground">
+                {locale === "ar" ? "نسبة التغطية" : "Pipeline coverage"}
+              </p>
+              <p className="text-2xl font-bold ltr-nums">
+                {data.kpis.coverageRatio.toFixed(2)}×
+              </p>
+            </div>
+            <p className="text-xs text-muted-foreground max-w-xs text-end">
+              {locale === "ar"
+                ? `${fmt(data.kpis.weightedPipeline)} مرجح ÷ ${fmt(data.kpis.remainingQuota ?? 0)} متبقي من الهدف`
+                : `${fmt(data.kpis.weightedPipeline)} weighted ÷ ${fmt(data.kpis.remainingQuota ?? 0)} remaining quota`}
+              <br />
+              <span className="opacity-70">
+                {locale === "ar"
+                  ? "الموصى به ≥ 3×. تحت 2× مؤشر خطر."
+                  : "Target ≥ 3×. Below 2× is a risk signal."}
+              </span>
+            </p>
+          </CardContent>
+        </Card>
+      )}
+
       <div className="grid md:grid-cols-3 gap-6">
         {/* Leaderboard */}
         <Card className="md:col-span-2">
@@ -185,7 +229,44 @@ export function GroupDashboardClient({
                 {filteredLeaderboard.map((rep, i) => (
                   <TableRow key={rep.userId}>
                     <TableCell className="ltr-nums font-medium">{i + 1}</TableCell>
-                    <TableCell className="font-medium">{rep.userName}</TableCell>
+                    <TableCell className="font-medium">
+                      <div className="flex items-center gap-1.5 flex-wrap">
+                        <span>{rep.userName}</span>
+                        {/* Tier-0 #10 — anti-gaming flag pills.
+                            Not accusatory: amber pills are "look here
+                            next" cues for a 1:1, not red alerts. */}
+                        {rep.flags?.map((f) => {
+                          const labels: Record<string, { en: string; ar: string; title: string }> = {
+                            "late-month-spike": {
+                              en: "late spike",
+                              ar: "تسارع آخر الشهر",
+                              title: "Over 60% of WON value closed in the last 5 days",
+                            },
+                            "low-acv-high-volume": {
+                              en: "low ACV",
+                              ar: "قيمة منخفضة",
+                              title: "Many wins but average value < 10% of org average",
+                            },
+                            "stage-bouncebacks": {
+                              en: "stage zig-zag",
+                              ar: "تذبذب المراحل",
+                              title: "Same opp moved backwards then forwards ≥ 3 times in 30d",
+                            },
+                          };
+                          const meta = labels[f];
+                          if (!meta) return null;
+                          return (
+                            <span
+                              key={f}
+                              title={meta.title}
+                              className="inline-flex items-center text-[10px] uppercase px-1.5 py-0.5 rounded bg-amber-500/15 text-amber-700 dark:text-amber-300"
+                            >
+                              {locale === "ar" ? meta.ar : meta.en}
+                            </span>
+                          );
+                        })}
+                      </div>
+                    </TableCell>
                     <TableCell>
                       <EntityBadge code={rep.entityCode} color={rep.entityColor} />
                     </TableCell>
