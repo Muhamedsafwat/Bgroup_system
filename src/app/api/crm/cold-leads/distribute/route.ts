@@ -4,6 +4,7 @@ import { z } from "zod";
 import { auth } from "@/lib/auth";
 import { db } from "@/lib/db";
 import { describeZodError } from "@/lib/zod-errors";
+import { isManagerOrAdmin } from "@/lib/crm/admin-gates";
 
 /**
  * POST /api/crm/cold-leads/distribute
@@ -24,21 +25,12 @@ const schema = z.object({
   repIds: z.array(z.string()).min(1, "Pick at least one rep"),
 });
 
-function callerCanDistribute(session: Session | null) {
-  if (!session?.user) return false;
-  const role = session.user.crmRole;
-  const platformAdmin =
-    !!session.user.hrRoles?.includes("super_admin") ||
-    (!!session.user.modules?.includes("partners") && !session.user.partnerId);
-  return platformAdmin || role === "ADMIN" || role === "MANAGER";
-}
-
 export async function POST(request: Request) {
   const session = (await auth()) as Session | null;
   if (!session?.user?.id) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
-  if (!callerCanDistribute(session)) {
+  if (!isManagerOrAdmin(session)) {
     return NextResponse.json({ error: "Forbidden" }, { status: 403 });
   }
 
@@ -60,21 +52,11 @@ export async function POST(request: Request) {
     );
   }
 
-  // If the caller is a sales MANAGER (not platform admin / CRM ADMIN), they
-  // can only distribute to their own direct reports. Cross-team handoffs
-  // should go through the admin.
-  if (session.user.crmRole === "MANAGER") {
-    const mine = await db.crmUserProfile.findMany({
-      where: { id: { in: parsed.data.repIds }, managerId: session.user.crmProfileId },
-      select: { id: true },
-    });
-    if (mine.length !== parsed.data.repIds.length) {
-      return NextResponse.json(
-        { error: "Managers can only distribute to their own direct reports" },
-        { status: 403 }
-      );
-    }
-  }
+  // No team restriction on MANAGER any more. Managers run the whole sales
+  // floor — "supply any rep with data" was the explicit ask. The earlier
+  // "direct reports only" gate forced cross-team distribution through an
+  // admin, which managers don't want to wait on. Active-rep validation
+  // above still prevents assigning to disabled accounts.
 
   // Round-robin assignment.
   const now = new Date();

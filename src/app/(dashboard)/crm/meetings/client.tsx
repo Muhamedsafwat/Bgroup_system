@@ -73,6 +73,12 @@ export function MeetingsClient() {
   const [loading, setLoading] = useState(true);
   const [bookOpen, setBookOpen] = useState(false);
   const [me, setMe] = useState<{ crmRole?: string; crmProfileId?: string; isSuperAdmin?: boolean } | null>(null);
+  // Controlled Tabs state. Starts at "calendar" — the safe default
+  // for any role on a fresh load. The one-shot effect below flips it
+  // to "queue" once we know the user is an approver with pending
+  // items, without re-firing on every render.
+  const [tab, setTab] = useState<string>("calendar");
+  const [tabInitialized, setTabInitialized] = useState(false);
 
   // Role of the signed-in user — drives whether we render the Approval queue
   // tab and the per-row approve / deny buttons. Assistants + managers approve;
@@ -120,6 +126,16 @@ export function MeetingsClient() {
   useEffect(() => {
     refresh();
   }, []);
+
+  // One-shot initial-tab pick. Runs only after `me` + `pending` are
+  // populated, then never again — so user clicks are honoured without
+  // being snapped back to "queue" on every refresh.
+  useEffect(() => {
+    if (tabInitialized) return;
+    if (me === null) return; // still loading session
+    if (isApprover && pending.length > 0) setTab("queue");
+    setTabInitialized(true);
+  }, [me, pending.length, isApprover, tabInitialized]);
 
   async function approveMeeting(id: string) {
     const res = await fetch(`/api/crm/meetings/${id}/approve`, { method: "POST" });
@@ -183,7 +199,14 @@ export function MeetingsClient() {
 
   return (
     <div className="space-y-4">
-      <Tabs defaultValue={isApprover && pending.length > 0 ? "queue" : "calendar"} className="space-y-3">
+      {/* Controlled Tabs — `defaultValue` is uncontrolled and Base UI
+          rightly complains when it changes after first mount. Our
+          original defaultValue depended on async session + pending
+          data that didn't exist on first render, so the prop flipped
+          from "calendar" to "queue" as data loaded. Controlled value
+          + a one-shot useEffect below sets the initial tab once data
+          is ready. */}
+      <Tabs value={tab} onValueChange={(v) => v && setTab(v)} className="space-y-3">
         <div className="flex items-center justify-between">
           <TabsList>
             <TabsTrigger value="calendar">{isAr ? "تقويم أسبوعي" : "Weekly calendar"}</TabsTrigger>

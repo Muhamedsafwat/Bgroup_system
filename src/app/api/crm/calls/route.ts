@@ -4,6 +4,7 @@ import { db } from "@/lib/db";
 import { createCall, getCalls } from "@/app/(dashboard)/crm/calls/actions";
 import { createCallSchema } from "@/lib/crm/validations/call";
 import { scopeCompanyByRole } from "@/lib/crm/rbac";
+import { describeZodError } from "@/lib/zod-errors";
 import type { SessionUser } from "@/types";
 import type { CrmRole } from "@/generated/prisma";
 
@@ -11,8 +12,16 @@ async function getSessionUser(): Promise<SessionUser | null> {
   const session = await auth();
   if (!session?.user?.id) return null;
   if (!session.user.modules?.includes("crm")) return null;
+  // CRM data tables (calls, opportunities, contacts, …) FK to
+  // `CrmUserProfile.id`, NOT to `User.id`. Passing the auth-layer
+  // `session.user.id` here meant `scopeCallByRole` was comparing
+  // `CrmCall.callerId` against the wrong column — for any user whose
+  // CrmUserProfile id differs from their User id (i.e. every user),
+  // a REP got back zero rows OR (worse, in edge cases where IDs
+  // happened to collide between tables) other reps' calls. Use the
+  // CRM profile id, same as getRequiredSession() in lib/crm/session.ts.
   return {
-    id: session.user.id,
+    id: session.user.crmProfileId ?? session.user.id,
     email: session.user.email!,
     fullName: session.user.name!,
     role: session.user.crmRole as CrmRole,
@@ -105,13 +114,16 @@ export async function POST(request: NextRequest) {
       }
     }
 
-    // Validate
+    // Validate. Standardised on `{ error: message, fieldErrors: {...} }`
+    // (same shape as every other CRM write route) so the client toast +
+    // field-binding code can read one consistent contract. Previously
+    // this route returned `{ error: "Validation failed", details: <flatten> }`
+    // and the call drawer dropped the field-level info, so reps saw a
+    // generic "Validation failed" instead of "Duration must be at least…".
     const parsed = createCallSchema.safeParse(body);
     if (!parsed.success) {
-      return NextResponse.json(
-        { error: "Validation failed", details: parsed.error.flatten() },
-        { status: 400 }
-      );
+      const { message, fieldErrors } = describeZodError(parsed.error);
+      return NextResponse.json({ error: message, fieldErrors }, { status: 400 });
     }
 
     const call = await createCall(session, parsed.data);

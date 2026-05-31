@@ -4,13 +4,15 @@ import type { SessionUser } from "@/types";
  * Returns a Prisma `where` clause fragment that scopes Opportunity queries by role.
  *
  * - REP: own opportunities only.
- * - MANAGER: opportunities OWNED by the manager OR by any rep on this
- *   manager's team. "On the team" is checked two ways and OR'd together:
- *     - legacy single-FK `CrmUserProfile.managerId` (primary manager)
- *     - many-to-many `CrmTeamMembership` (additional managers — the same
- *       rep can be on multiple managers' teams)
- *   Both are checked so legacy data keeps working while the team-members
- *   picker now syncs the join table for new assignments.
+ * - MANAGER: everything. MANAGER is "ADMIN minus settings" — they oversee
+ *   the entire sales operation, can supply any rep with data, reassign
+ *   ownership across teams, and act on opps owned by anyone. The M2M
+ *   CrmTeamMembership rows still exist for focused "my team" views and
+ *   leaderboard / group-dashboard scoping, but the read-scope itself is
+ *   unbounded. (Before: team-only via `managerId` + `managedBy`. Reverted
+ *   because it left managers unable to see opps owned by reps outside
+ *   their direct team even though they're accountable for the whole
+ *   pipeline.)
  * - ASSISTANT: limited to opps tied to meetings they touched.
  * - ACCOUNT_MGR: own delivery-owned WON deals only.
  * - ADMIN: everything.
@@ -20,13 +22,7 @@ export function scopeOpportunityByRole(session: SessionUser) {
     case "REP":
       return { ownerId: session.id };
     case "MANAGER":
-      return {
-        OR: [
-          { ownerId: session.id },
-          { owner: { managerId: session.id } },
-          { owner: { managedBy: { some: { managerId: session.id } } } },
-        ],
-      };
+      return {};
     case "ASSISTANT":
       // Assistants no longer see the whole entity's pipeline. They only see
       // opportunities tied to a meeting they scheduled OR approved/denied —
@@ -54,21 +50,15 @@ export function scopeOpportunityByRole(session: SessionUser) {
 
 /**
  * Returns a Prisma `where` clause fragment for Company queries.
- * Managers see companies assigned to themselves or any team member
- * (primary or many-to-many).
+ * MANAGER is treated as ADMIN here — they curate the company directory
+ * across the whole CRM, not just their team's accounts.
  */
 export function scopeCompanyByRole(session: SessionUser) {
   switch (session.role) {
     case "REP":
       return { assignedToId: session.id };
     case "MANAGER":
-      return {
-        OR: [
-          { assignedToId: session.id },
-          { assignedTo: { managerId: session.id } },
-          { assignedTo: { managedBy: { some: { managerId: session.id } } } },
-        ],
-      };
+      return {};
     case "ASSISTANT":
       // Assistants don't browse companies. Return a clause that matches
       // nothing — they get to companies via the meeting-linked opportunity
@@ -83,21 +73,15 @@ export function scopeCompanyByRole(session: SessionUser) {
 
 /**
  * Returns a Prisma `where` clause fragment for Call queries.
- * Managers see calls made by themselves or any team member (primary or
- * many-to-many).
+ * MANAGER sees every call across the org (same as ADMIN) — they coach
+ * across teams and need full visibility, not just their direct reports.
  */
 export function scopeCallByRole(session: SessionUser) {
   switch (session.role) {
     case "REP":
       return { callerId: session.id };
     case "MANAGER":
-      return {
-        OR: [
-          { callerId: session.id },
-          { caller: { managerId: session.id } },
-          { caller: { managedBy: { some: { managerId: session.id } } } },
-        ],
-      };
+      return {};
     case "ASSISTANT":
       // Assistants don't see other reps' call logs.
       return { id: "__none__" };

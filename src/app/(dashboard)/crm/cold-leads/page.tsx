@@ -22,17 +22,12 @@ export default async function ColdLeadsPage() {
   const isManagerOrAdmin = role === "ADMIN" || role === "MANAGER";
 
   // Manager / admin needs the rep list for the distribute dropdown. Reps
-  // never see this widget so we skip the fetch for them.
+  // never see this widget so we skip the fetch for them. MANAGER now sees
+  // every active rep, not just direct reports — matches the "MANAGER can
+  // supply any rep with data" model the rest of the CRM enforces.
   const reps = isManagerOrAdmin
     ? await db.crmUserProfile.findMany({
-        where:
-          role === "ADMIN"
-            ? { active: true, role: { in: ["REP", "ACCOUNT_MGR"] } }
-            : {
-                active: true,
-                role: { in: ["REP", "ACCOUNT_MGR"] },
-                managerId: session.user.crmProfileId,
-              },
+        where: { active: true, role: { in: ["REP", "ACCOUNT_MGR"] } },
         select: { id: true, fullName: true, fullNameAr: true },
         orderBy: { fullName: "asc" },
       })

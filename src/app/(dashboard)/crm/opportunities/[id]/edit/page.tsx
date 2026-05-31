@@ -19,13 +19,19 @@ export default async function EditOpportunityPage({
   const opp: OppRaw | null = await getOpportunity(id);
   if (!opp) notFound();
 
-  // Only the owner or an ADMIN can edit. The detail page already hides the
-  // Edit button for everyone else, but block direct URL access too.
-  if (opp.ownerId !== session.id && session.role !== "ADMIN") {
+  // Edit is allowed for: the owner, ADMIN, and MANAGER. Managers run the
+  // whole sales floor and need to edit any opp (used to be ADMIN-only,
+  // which forced managers to bounce through the bulk transfer endpoint
+  // to do simple stuff like fix a typo on another rep's deal).
+  const canEdit =
+    opp.ownerId === session.id || session.role === "ADMIN" || session.role === "MANAGER";
+  if (!canEdit) {
     redirect(`/crm/opportunities/${id}`);
   }
 
-  const [entities, leadSources, companies, products] = await Promise.all([
+  const canActAsRep = session.role === "MANAGER" || session.role === "ADMIN";
+
+  const [entities, leadSources, companies, products, reps] = await Promise.all([
     getEntities(),
     getLeadSources(),
     db.crmCompany.findMany({
@@ -46,6 +52,13 @@ export default async function EditOpportunityPage({
       },
       orderBy: { code: "asc" },
     }),
+    canActAsRep
+      ? db.crmUserProfile.findMany({
+          where: { active: true, role: { in: ["REP", "ACCOUNT_MGR", "MANAGER", "ADMIN"] } },
+          select: { id: true, fullName: true, fullNameAr: true, role: true },
+          orderBy: { fullName: "asc" },
+        })
+      : Promise.resolve([]),
   ]);
 
   const initial = {
@@ -77,6 +90,15 @@ export default async function EditOpportunityPage({
     description: opp.description,
     techRequirements: opp.techRequirements,
     productIds: (opp.products ?? []).map((p: { productId: string }) => p.productId),
+    contacts: (opp.contacts ?? []).map(
+      (c: { id: string; name: string; role: string | null; phone: string | null; email: string | null }) => ({
+        id: c.id,
+        name: c.name,
+        role: c.role,
+        phone: c.phone,
+        email: c.email,
+      })
+    ),
   };
 
   return (
@@ -92,6 +114,9 @@ export default async function EditOpportunityPage({
         userEntityId={session.entityId}
         locale={locale}
         initial={JSON.parse(JSON.stringify(initial))}
+        reps={canActAsRep ? JSON.parse(JSON.stringify(reps)) : undefined}
+        currentUserId={session.id}
+        currentOwnerId={opp.ownerId}
       />
     </div>
   );

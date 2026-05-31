@@ -53,6 +53,11 @@ export async function GET(req: NextRequest) {
   const q = url.searchParams.get("q")?.trim();
   const assignedToId = url.searchParams.get("assignedToId");
   const page = Math.max(1, Number(url.searchParams.get("page") ?? 1));
+  // Folder-drilldown: `?batchId=<id>` narrows the list to one upload's
+  // worth of leads (one CrmColdLeadImport row). `?batchId=unfiled` shows
+  // leads that have no import batch attached — typically rows created
+  // manually or whose folder was deleted in detach mode.
+  const batchId = url.searchParams.get("batchId");
 
   const where: Prisma.CrmColdLeadWhereInput = {
     ...scopeColdLeadsByRole(sessionUser),
@@ -73,6 +78,9 @@ export async function GET(req: NextRequest) {
   }
   if (assignedToId && (sessionUser.role === "ADMIN" || sessionUser.role === "MANAGER")) {
     where.assignedToId = assignedToId === "unassigned" ? null : assignedToId;
+  }
+  if (batchId) {
+    where.importBatchId = batchId === "unfiled" ? null : batchId;
   }
 
   const [rows, total, bucketCounts] = await Promise.all([

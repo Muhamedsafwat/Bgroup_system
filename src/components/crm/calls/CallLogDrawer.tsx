@@ -205,8 +205,22 @@ export function CallLogDrawer({
       });
 
       if (!res.ok) {
-        const err = await res.json().catch(() => ({}));
-        throw new Error(err.error || "Failed to create call");
+        // Server returns `{ error, fieldErrors: { field: string[] } }`
+        // (the project-standard shape via describeZodError). Concatenate
+        // the per-field messages onto the headline so the rep sees the
+        // specific problem ("Duration must be at least 1") instead of
+        // a generic "Failed to create call" toast.
+        const err = (await res.json().catch(() => ({}))) as {
+          error?: string;
+          fieldErrors?: Record<string, string[]>;
+        };
+        const fieldLines = err.fieldErrors
+          ? Object.entries(err.fieldErrors)
+              .flatMap(([field, msgs]) => msgs.map((m) => `${field}: ${m}`))
+              .join("\n")
+          : "";
+        const headline = err.error || "Failed to create call";
+        throw new Error(fieldLines ? `${headline}\n${fieldLines}` : headline);
       }
 
       toast.success(

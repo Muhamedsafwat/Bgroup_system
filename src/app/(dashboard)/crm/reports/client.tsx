@@ -13,7 +13,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
-import { Phone, Calendar, Users, Sparkles, Save, FileText } from "lucide-react";
+import { Phone, Calendar, Users, Sparkles, Save, FileText, Download } from "lucide-react";
 import { toast } from "sonner";
 import { useLocale } from "@/lib/i18n";
 
@@ -35,7 +35,7 @@ type Totals = {
   newLeads: number;
 };
 
-type WindowMode = "this-week" | "this-month" | "last-30" | "ytd";
+type WindowMode = "this-week" | "this-month" | "last-30" | "ytd" | "custom";
 
 function ymd(d: Date): string {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
@@ -57,9 +57,14 @@ function windowDates(mode: WindowMode): { from: string; to: string; label: strin
     from.setDate(from.getDate() - 30);
     return { from: ymd(from), to, label: "Last 30 days" };
   }
-  // ytd
-  from.setMonth(0, 1);
-  return { from: ymd(from), to, label: "Year to date" };
+  if (mode === "ytd") {
+    from.setMonth(0, 1);
+    return { from: ymd(from), to, label: "Year to date" };
+  }
+  // mode === "custom" — the caller is expected to use the
+  // customFrom/customTo state instead. Returning today/today keeps
+  // this function total so any stray call doesn't crash render.
+  return { from: to, to, label: "Custom range" };
 }
 
 export function DailyReportsClient({ isManager }: { isManager: boolean }) {
@@ -70,6 +75,23 @@ export function DailyReportsClient({ isManager }: { isManager: boolean }) {
   const [totals, setTotals] = useState<Totals>({ callsCount: 0, meetingsBooked: 0, meetingsHeld: 0, newLeads: 0 });
   const [loading, setLoading] = useState(true);
   const [openReport, setOpenReport] = useState<Report | null>(null);
+  // Custom date range — used when windowMode === "custom". Typing in
+  // either field flips the mode so the preset tabs visually deselect.
+  // Both empty + windowMode === "custom" means "everything" (the API
+  // will return up to the take limit), which is fine for the
+  // download path but the table caps at 200 server-side either way.
+  const [customFrom, setCustomFrom] = useState("");
+  const [customTo, setCustomTo] = useState("");
+  // Resolves the active filter into the `from`/`to` query strings
+  // passed to both the list endpoint and the export endpoint, so the
+  // table view and the Excel download are always in sync.
+  function activeRange(): { from?: string; to?: string } {
+    if (windowMode === "custom") {
+      return { from: customFrom || undefined, to: customTo || undefined };
+    }
+    const w = windowDates(windowMode);
+    return { from: w.from, to: w.to };
+  }
 
   // Today's submission form
   const today = ymd(new Date());
@@ -82,8 +104,10 @@ export function DailyReportsClient({ isManager }: { isManager: boolean }) {
 
   async function refresh() {
     setLoading(true);
-    const w = windowDates(windowMode);
-    const params = new URLSearchParams({ from: w.from, to: w.to, scope });
+    const range = activeRange();
+    const params = new URLSearchParams({ scope });
+    if (range.from) params.set("from", range.from);
+    if (range.to) params.set("to", range.to);
     try {
       const res = await fetch(`/api/crm/daily-reports?${params.toString()}`);
       if (res.ok) {
@@ -107,7 +131,35 @@ export function DailyReportsClient({ isManager }: { isManager: boolean }) {
   useEffect(() => {
     refresh();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [windowMode, scope]);
+  }, [windowMode, scope, customFrom, customTo]);
+
+  /**
+   * Build the export URL from the currently visible filter. The export
+   * endpoint accepts the same `from` / `to` shape AND a `day=YYYY-MM-DD`
+   * shortcut. If the user typed the same value into both customFrom and
+   * customTo, we collapse it to `?day=` so the downloaded file name
+   * reads cleanly as `daily-reports-2026-05-19.xlsx`.
+   */
+  function exportHref(): string {
+    const params = new URLSearchParams();
+    if (windowMode === "custom") {
+      if (customFrom && customTo && customFrom === customTo) {
+        params.set("day", customFrom);
+      } else {
+        if (customFrom) params.set("from", customFrom);
+        if (customTo) params.set("to", customTo);
+      }
+    } else {
+      const w = windowDates(windowMode);
+      params.set("from", w.from);
+      params.set("to", w.to);
+    }
+    // Mirror the scope toggle so managers exporting "mine" don't get
+    // every rep's rows in their file. REPs are forced server-side
+    // either way; this is purely cosmetic for them.
+    if (scope === "mine") params.set("scope", "mine");
+    return `/api/crm/daily-reports/export?${params.toString()}`;
+  }
 
   async function submit() {
     setSaving(true);
@@ -180,7 +232,7 @@ export function DailyReportsClient({ isManager }: { isManager: boolean }) {
         </CardContent>
       </Card>
 
-      {/* Filter bar */}
+      {/* Filter bar — top row: preset windows + scope toggle for managers. */}
       <div className="flex flex-wrap items-center justify-between gap-2">
         <Tabs value={windowMode} onValueChange={(v) => setWindowMode(v as WindowMode)}>
           <TabsList>
@@ -188,16 +240,85 @@ export function DailyReportsClient({ isManager }: { isManager: boolean }) {
             <TabsTrigger value="this-month">{t.pages.thisMonth}</TabsTrigger>
             <TabsTrigger value="last-30">{locale === "ar" ? "آخر 30 يومًا" : "Last 30 days"}</TabsTrigger>
             <TabsTrigger value="ytd">{locale === "ar" ? "منذ بداية السنة" : "Year to date"}</TabsTrigger>
+            <TabsTrigger value="custom">{locale === "ar" ? "نطاق مخصص" : "Custom"}</TabsTrigger>
           </TabsList>
         </Tabs>
         {isManager && (
           <Tabs value={scope} onValueChange={(v) => setScope(v as "mine" | "all")}>
             <TabsList>
-              <TabsTrigger value="mine">Mine</TabsTrigger>
-              <TabsTrigger value="all">All reps</TabsTrigger>
+              <TabsTrigger value="mine">{locale === "ar" ? "خاصتي" : "Mine"}</TabsTrigger>
+              <TabsTrigger value="all">{locale === "ar" ? "كل المندوبين" : "All reps"}</TabsTrigger>
             </TabsList>
           </Tabs>
         )}
+      </div>
+
+      {/* Filter bar — second row: custom date inputs (only when the
+          Custom preset is active) + Excel download button. From/To
+          drive both the on-screen table and the .xlsx export so the
+          downloaded file always matches what's on screen.
+          Same value in From and To = single-day filter; the export
+          endpoint detects that and labels the file accordingly. */}
+      <div className="flex flex-wrap items-end justify-between gap-2">
+        {windowMode === "custom" && (
+          <div className="flex flex-wrap items-end gap-2">
+            <div>
+              <Label className="text-xs">{locale === "ar" ? "من" : "From"}</Label>
+              <Input
+                type="date"
+                value={customFrom}
+                onChange={(e) => setCustomFrom(e.target.value)}
+                className="h-8 w-40 ltr-nums"
+                dir="ltr"
+              />
+            </div>
+            <div>
+              <Label className="text-xs">{locale === "ar" ? "إلى" : "To"}</Label>
+              <Input
+                type="date"
+                value={customTo}
+                onChange={(e) => setCustomTo(e.target.value)}
+                className="h-8 w-40 ltr-nums"
+                dir="ltr"
+              />
+            </div>
+            <Button
+              variant="ghost"
+              size="sm"
+              className="h-8 text-xs"
+              onClick={() => {
+                // "Just today" shortcut — sets both ends to today's
+                // date which the export collapses to ?day=YYYY-MM-DD.
+                const t = ymd(new Date());
+                setCustomFrom(t);
+                setCustomTo(t);
+              }}
+            >
+              {locale === "ar" ? "اليوم فقط" : "Just today"}
+            </Button>
+            {(customFrom || customTo) && (
+              <Button
+                variant="ghost"
+                size="sm"
+                className="h-8 text-xs"
+                onClick={() => {
+                  setCustomFrom("");
+                  setCustomTo("");
+                }}
+              >
+                {locale === "ar" ? "مسح" : "Clear"}
+              </Button>
+            )}
+          </div>
+        )}
+        <a
+          href={exportHref()}
+          className="inline-flex items-center justify-center gap-1.5 h-8 px-3 rounded-md border bg-card text-sm font-medium hover:bg-accent transition-colors ms-auto"
+          download
+        >
+          <Download className="h-4 w-4" />
+          {locale === "ar" ? "تنزيل Excel" : "Download Excel"}
+        </a>
       </div>
 
       {/* Totals tiles */}
@@ -220,13 +341,32 @@ export function DailyReportsClient({ isManager }: { isManager: boolean }) {
             {/* Resolve the window label per locale at render time so flipping
                 the toggle updates it without remounting the page. */}
             {(() => {
-              const arLabel: Record<typeof windowMode, string> = {
+              const arLabel: Record<WindowMode, string> = {
                 "this-week": "هذا الأسبوع",
                 "this-month": "هذا الشهر",
                 "last-30": "آخر 30 يومًا",
                 "ytd": "منذ بداية السنة",
+                "custom": "نطاق مخصص",
               };
-              return locale === "ar" ? arLabel[windowMode] : win.label;
+              const enCustomLabel =
+                customFrom && customTo
+                  ? customFrom === customTo
+                    ? customFrom
+                    : `${customFrom} → ${customTo}`
+                  : customFrom
+                    ? `From ${customFrom}`
+                    : customTo
+                      ? `Up to ${customTo}`
+                      : "Custom range";
+              const label =
+                windowMode === "custom"
+                  ? locale === "ar"
+                    ? arLabel.custom
+                    : enCustomLabel
+                  : locale === "ar"
+                    ? arLabel[windowMode]
+                    : win.label;
+              return label;
             })()} — {reports.length} {locale === "ar" ? (reports.length === 1 ? "تقرير" : "تقرير") : (reports.length === 1 ? "report" : "reports")}
           </CardTitle>
         </CardHeader>

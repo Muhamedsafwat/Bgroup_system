@@ -136,8 +136,8 @@ export function DataTable<T extends { id?: number | string }>({
 
   if (loading) {
     return (
-      <div className={cn('rounded-lg border border-border bg-card overflow-hidden', className)}>
-        <div className="overflow-x-auto">
+      <div className={cn('rounded-lg border border-border bg-card overflow-hidden min-w-0', className)}>
+        <div className="overflow-x-auto min-w-0">
           <table className="w-full text-sm">
             <thead className="bg-muted/50 border-b border-border">
               <tr>
@@ -176,8 +176,8 @@ export function DataTable<T extends { id?: number | string }>({
   }
 
   return (
-    <div className={cn('rounded-lg border border-border bg-card overflow-hidden', className)}>
-      <div className="overflow-x-auto">
+    <div className={cn('rounded-lg border border-border bg-card overflow-hidden min-w-0', className)}>
+      <div className="overflow-x-auto min-w-0">
         <table className="w-full caption-bottom text-sm">
           <thead className={cn('bg-muted/50 border-b border-border', stickyHeader && 'sticky top-0 z-10')}>
             <tr>
