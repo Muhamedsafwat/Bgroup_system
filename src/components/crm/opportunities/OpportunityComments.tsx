@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
+import { useSession } from "next-auth/react";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
 import { Loader2, Trash2, AtSign, Send } from "lucide-react";
@@ -73,7 +74,11 @@ function fmtTime(iso: string): string {
 function renderBody(body: string, mentions: Mention[]) {
   const byId = new Map(mentions.map((m) => [m.id, m]));
   const parts: (string | { mention: Mention })[] = [];
-  const regex = /@([a-z0-9]{20,})/g;
+  // Broad enough to cover Prisma's `@default(cuid())` (lowercase
+  // base36, 25 chars), `cuid(2)` (mixed case, 24 chars), and uuid
+  // (hex with dashes). Anchoring at `@` and requiring an 8+ char
+  // identifier keeps it from matching arbitrary email addresses.
+  const regex = /@([A-Za-z0-9_-]{8,})/g;
   let lastIndex = 0;
   let match: RegExpExecArray | null;
   while ((match = regex.exec(body)) !== null) {
@@ -100,6 +105,7 @@ function renderBody(body: string, mentions: Mention[]) {
 }
 
 export function OpportunityComments({ oppId }: { oppId: string }) {
+  const { data: session } = useSession();
   const [comments, setComments] = useState<Comment[]>([]);
   const [loading, setLoading] = useState(true);
   const [draft, setDraft] = useState("");
@@ -114,6 +120,11 @@ export function OpportunityComments({ oppId }: { oppId: string }) {
   const [pickerResults, setPickerResults] = useState<MentionablePick[]>([]);
   const [pickerLoading, setPickerLoading] = useState(false);
   const [pickerCursorIdx, setPickerCursorIdx] = useState(0);
+  // True only after the user has explicitly used arrow keys to
+  // navigate the dropdown — guards against an unintended Enter
+  // press on the first cursor inserting whoever the fuzzy-match
+  // happened to put first. Reset every time the picker re-opens.
+  const [pickerHasMoved, setPickerHasMoved] = useState(false);
   // Range in the textarea where the current `@query` lives — used
   // to splice the @<id> token back in once a pick is made.
   const pickerRange = useRef<{ start: number; end: number } | null>(null);
@@ -122,22 +133,34 @@ export function OpportunityComments({ oppId }: { oppId: string }) {
   // mention lands, but this thread doesn't subscribe to the bus
   // directly — a polling backstop keeps reading reps in sync with
   // each other without a per-thread channel.
+  const [loadError, setLoadError] = useState<string | null>(null);
   useEffect(() => {
     let mounted = true;
-    async function load() {
+    async function load(firstLoad: boolean) {
       try {
         const res = await fetch(`/api/crm/opportunities/${oppId}/comments`);
         if (!res.ok) throw new Error("Failed to load comments");
         const data = await res.json();
-        if (mounted) setComments(data.comments ?? []);
+        if (mounted) {
+          setComments(data.comments ?? []);
+          setLoadError(null);
+        }
       } catch (e) {
+        // Distinguish from the "no comments yet" empty state — show
+        // an actual error tile so the user knows the thread didn't
+        // load. Background poll failures don't clobber an already-
+        // loaded list, but the next first-load surface re-shows the
+        // error so the user can manually retry.
+        if (mounted && firstLoad) {
+          setLoadError(e instanceof Error ? e.message : "Couldn't load comments");
+        }
         console.warn("[OpportunityComments] load failed:", e);
       } finally {
         if (mounted) setLoading(false);
       }
     }
-    load();
-    const interval = setInterval(load, 30_000);
+    load(true);
+    const interval = setInterval(() => load(false), 30_000);
     return () => {
       mounted = false;
       clearInterval(interval);
@@ -189,9 +212,14 @@ export function OpportunityComments({ oppId }: { oppId: string }) {
       const queryStart = caret - m[1].length;
       pickerRange.current = { start: queryStart - 1, end: caret }; // include the `@`
       setPickerQuery(m[1]);
+      // Re-opening the picker clears the "explicit move" flag, so
+      // Enter on a fresh dropdown doesn't auto-pick the first
+      // fuzzy match. Pressing ArrowDown / ArrowUp sets it.
+      if (!pickerOpen) setPickerHasMoved(false);
       setPickerOpen(true);
     } else {
       setPickerOpen(false);
+      setPickerHasMoved(false);
       pickerRange.current = null;
     }
   }
@@ -223,6 +251,7 @@ export function OpportunityComments({ oppId }: { oppId: string }) {
       if (e.key === "ArrowDown") {
         e.preventDefault();
         setPickerCursorIdx((i) => (i + 1) % pickerResults.length);
+        setPickerHasMoved(true);
         return;
       }
       if (e.key === "ArrowUp") {
@@ -230,11 +259,31 @@ export function OpportunityComments({ oppId }: { oppId: string }) {
         setPickerCursorIdx(
           (i) => (i - 1 + pickerResults.length) % pickerResults.length,
         );
+        setPickerHasMoved(true);
         return;
       }
-      if (e.key === "Enter" || e.key === "Tab") {
+      if (e.key === "Tab") {
+        // Tab always picks the current cursor — standard
+        // autocomplete contract; users press Tab when they mean to
+        // commit.
         e.preventDefault();
         pickMention(pickerResults[pickerCursorIdx]);
+        return;
+      }
+      if (e.key === "Enter") {
+        // Enter only picks when the user has explicitly moved the
+        // cursor with arrows. Otherwise, Enter falls through to its
+        // default behaviour (newline in the textarea) — protects
+        // against a stray Enter accidentally tagging the first
+        // fuzzy match.
+        if (pickerHasMoved) {
+          e.preventDefault();
+          pickMention(pickerResults[pickerCursorIdx]);
+        } else {
+          // Treat as a regular newline — also close the picker so
+          // the dropdown doesn't shadow the rest of the line.
+          setPickerOpen(false);
+        }
         return;
       }
       if (e.key === "Escape") {
@@ -253,23 +302,64 @@ export function OpportunityComments({ oppId }: { oppId: string }) {
   async function submit() {
     if (!draft.trim() || submitting) return;
     setSubmitting(true);
+    // Only forward mention ids that still appear in the body —
+    // a user who typed @x and then deleted it shouldn't fan out.
+    const trimmedBody = draft.trim();
+    const stillReferenced = mentionIds.filter((id) => draft.includes(`@${id}`));
+    // Optimistic insert: show the comment in the thread immediately
+    // using a placeholder id and the live session's author info.
+    // Reconciled by replacing the placeholder when the server
+    // returns; rolled back on failure. The user no longer waits on
+    // network roundtrip to see their post appear.
+    const tempId = `optimistic-${Date.now()}`;
+    const optimistic: Comment = {
+      id: tempId,
+      body: trimmedBody,
+      author: {
+        id: session?.user?.crmProfileId ?? "self",
+        fullName: session?.user?.name ?? "You",
+        avatarUrl: null,
+        role: (session?.user?.crmRole as string | undefined) ?? "REP",
+      },
+      // Mentions are resolved server-side; we render the raw @<id>
+      // tokens in the placeholder, then the real chips appear when
+      // the server confirms.
+      mentions: [],
+      createdAt: new Date().toISOString(),
+      editedAt: null,
+      isOwn: true,
+    };
+    setComments((prev) => [...prev, optimistic]);
+    setDraft("");
+    setMentionIds([]);
     try {
-      // Only forward mention ids that still appear in the body —
-      // a user who typed @x and then deleted it shouldn't fan out.
-      const stillReferenced = mentionIds.filter((id) => draft.includes(`@${id}`));
-      const res = await fetch(`/api/crm/opportunities/${oppId}/comments`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ body: draft.trim(), mentionIds: stillReferenced }),
-      });
+      let res: Response;
+      try {
+        res = await fetch(`/api/crm/opportunities/${oppId}/comments`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ body: trimmedBody, mentionIds: stillReferenced }),
+        });
+      } catch {
+        // Network failure (offline, DNS, aborted) — fetch throws here,
+        // not at res.ok. Roll back the optimistic insert and restore
+        // the draft so the user doesn't lose what they typed.
+        toast.error("Couldn't reach the server. Your draft is preserved.");
+        setComments((prev) => prev.filter((c) => c.id !== tempId));
+        setDraft(trimmedBody);
+        setMentionIds(stillReferenced);
+        return;
+      }
       const data = await res.json().catch(() => ({}));
       if (!res.ok) {
         toast.error(data.error ?? "Couldn't post comment");
+        setComments((prev) => prev.filter((c) => c.id !== tempId));
+        setDraft(trimmedBody);
+        setMentionIds(stillReferenced);
         return;
       }
-      setComments((prev) => [...prev, data.comment]);
-      setDraft("");
-      setMentionIds([]);
+      // Replace the placeholder with the canonical server row.
+      setComments((prev) => prev.map((c) => (c.id === tempId ? data.comment : c)));
     } finally {
       setSubmitting(false);
     }
@@ -290,6 +380,9 @@ export function OpportunityComments({ oppId }: { oppId: string }) {
         setComments(prev);
       }
     } catch {
+      // Network failure — silent rollback would leave the user wondering
+      // why the comment reappeared. Toast + restore the prior list.
+      toast.error("Couldn't reach the server. The comment is still here.");
       setComments(prev);
     }
   }
@@ -302,6 +395,10 @@ export function OpportunityComments({ oppId }: { oppId: string }) {
         {loading ? (
           <div className="text-sm text-muted-foreground text-center py-8">
             Loading…
+          </div>
+        ) : loadError && comments.length === 0 ? (
+          <div className="text-sm text-destructive text-center py-8">
+            Couldn&apos;t load comments. Refresh the page to retry.
           </div>
         ) : comments.length === 0 ? (
           <div className="text-sm text-muted-foreground text-center py-8">

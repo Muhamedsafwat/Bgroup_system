@@ -18,6 +18,12 @@ export async function GET(req: NextRequest) {
     return new Response("Unauthorized", { status: 401 });
   }
   const userId = session.user.id;
+  // Snapshot the caller's module set at connect time. Used below to
+  // filter notification events so a user who lost access to a
+  // module (e.g. deactivated CRM profile) doesn't keep receiving
+  // that module's `notification.created` / `data.invalidate`
+  // events while the SSE stays open.
+  const modules = new Set(session.user.modules ?? []);
 
   const encoder = new TextEncoder();
 
@@ -43,6 +49,15 @@ export async function GET(req: NextRequest) {
       const unsubscribe = subscribe((event: AppEvent) => {
         // Per-user filtering — bus events carry a userId field.
         if ("userId" in event && event.userId !== userId) return;
+        // Per-module filtering — a notification.created event for
+        // module X should only stream to users whose `modules`
+        // includes X. Without this, a deactivated CRM profile
+        // would keep receiving CRM notifications + invalidation
+        // events on every SSE keepalive.
+        if (event.type === "notification.created") {
+          const m = event.payload?.module;
+          if (m && !modules.has(m)) return;
+        }
         const payload = JSON.stringify(event.payload);
         send(`event: ${event.type}\n`);
         send(`data: ${payload}\n\n`);

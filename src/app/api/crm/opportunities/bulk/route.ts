@@ -7,6 +7,13 @@ import { describeZodError } from "@/lib/zod-errors";
 import { scopeOpportunityByRole } from "@/lib/crm/rbac";
 import type { SessionUser } from "@/types";
 import { isManagerOrAdmin } from "@/lib/crm/admin-gates";
+import {
+  recomputeOpportunityFinancials,
+  loadFxRates,
+  getStageProbability,
+} from "@/lib/crm/business/pipeline";
+import { fireWorkflow } from "@/lib/crm/workflows/engine";
+import type { CrmCurrency } from "@/generated/prisma";
 
 /**
  * POST /api/crm/opportunities/bulk
@@ -29,7 +36,11 @@ import { isManagerOrAdmin } from "@/lib/crm/admin-gates";
  * actually changed (silent skips happen when an id wasn't visible).
  */
 const baseSchema = z.object({
-  ids: z.array(z.string().min(1)).min(1, "Pick at least one opportunity").max(500),
+  // Cap at 200 so the per-row tx loop (set-stage does ~3 round-trips
+  // per id: update + history + workflow) stays well under Neon's
+  // transaction-timeout window. Larger batches should be split by
+  // the client.
+  ids: z.array(z.string().min(1)).min(1, "Pick at least one opportunity").max(200),
 });
 const reassignSchema = baseSchema.extend({
   action: z.literal("reassign-owner"),
@@ -116,7 +127,7 @@ export async function POST(req: Request) {
     // opp transfer endpoint runs.
     const target = await db.crmUserProfile.findUnique({
       where: { id: parsed.data.ownerId },
-      select: { id: true, active: true },
+      select: { id: true, active: true, fullName: true },
     });
     if (!target || !target.active) {
       return NextResponse.json(
@@ -124,17 +135,69 @@ export async function POST(req: Request) {
         { status: 400 }
       );
     }
-    const res = await db.crmOpportunity.updateMany({
+    // Fetch current owners so we can audit the from→to pairing
+    // per row instead of a single opaque updateMany. Matches the
+    // single-opp transfer's per-row CrmActivityLog fan-out.
+    const rows = await db.crmOpportunity.findMany({
       where: { id: { in: visibleIds } },
-      data: { ownerId: target.id },
+      select: { id: true, ownerId: true, code: true },
     });
-    affected = res.count;
+    const toMove = rows.filter((r) => r.ownerId !== target.id);
+    await db.$transaction(async (tx) => {
+      for (const r of toMove) {
+        await tx.crmOpportunity.update({
+          where: { id: r.id },
+          data: { ownerId: target.id },
+        });
+        await tx.crmActivityLog.create({
+          data: {
+            opportunityId: r.id,
+            actorId: crmProfileId,
+            actingAdminId: session.user.actingAsCrmProfileId ?? null,
+            action: "OWNER_REASSIGNED",
+            metadata: {
+              fromOwnerId: r.ownerId,
+              toOwnerId: target.id,
+              toOwnerName: target.fullName,
+              source: "bulk",
+            },
+          },
+        });
+      }
+    });
+    affected = toMove.length;
   } else if (action === "set-priority") {
-    const res = await db.crmOpportunity.updateMany({
+    // Per-row update + audit so the activity log records who tiered
+    // the opp and to what. Previously the updateMany made priority
+    // changes invisible in the audit trail.
+    const newPriority = parsed.data.priority;
+    const rows = await db.crmOpportunity.findMany({
       where: { id: { in: visibleIds } },
-      data: { priority: parsed.data.priority },
+      select: { id: true, priority: true },
     });
-    affected = res.count;
+    const toChange = rows.filter((r) => r.priority !== newPriority);
+    await db.$transaction(async (tx) => {
+      for (const r of toChange) {
+        await tx.crmOpportunity.update({
+          where: { id: r.id },
+          data: { priority: newPriority },
+        });
+        await tx.crmActivityLog.create({
+          data: {
+            opportunityId: r.id,
+            actorId: crmProfileId,
+            actingAdminId: session.user.actingAsCrmProfileId ?? null,
+            action: "PRIORITY_CHANGED",
+            metadata: {
+              fromPriority: r.priority,
+              toPriority: newPriority,
+              source: "bulk",
+            },
+          },
+        });
+      }
+    });
+    affected = toChange.length;
   } else if (action === "set-stage") {
     // Validate the target stage is configured + active.
     const stageCfg = await db.crmStageConfig.findFirst({
@@ -147,44 +210,149 @@ export async function POST(req: Request) {
         { status: 400 }
       );
     }
-    // Fetch fromStage per row so we can write history (the single-
-    // opp path at /api/crm/pipeline does the same). Mirror dateClosed
-    // semantics for WON/LOST. We skip rows that are already in the
-    // target stage so the audit log doesn't gain no-op rows.
     const newStage = parsed.data.newStage;
+    // Fetch the rows we're about to move, with every column the
+    // source-stage `requiredFieldsJson` could reference. The
+    // single-opp changeStage() gate (Tier-0 #1) reads the source
+    // stage's required-fields and refuses to move out of it if any
+    // are missing — without this same gate, a manager can bulk-jump
+    // 500 NEW opps to CONTACTED with no nextAction populated and
+    // defeat the policy the admin configured.
     const rows = await db.crmOpportunity.findMany({
       where: { id: { in: visibleIds } },
-      select: { id: true, stage: true },
     });
-    const toChange = rows.filter((r) => r.stage !== newStage);
+    // Load every source stage's required-fields in one shot.
+    const sourceStages = Array.from(new Set(rows.map((r) => r.stage)));
+    const sourceCfgs = sourceStages.length
+      ? await db.crmStageConfig.findMany({
+          where: { stage: { in: sourceStages }, isActive: true },
+          select: { stage: true, requiredFieldsJson: true },
+        })
+      : [];
+    const requiredByStage = new Map<string, string[]>();
+    for (const c of sourceCfgs) {
+      if (Array.isArray(c.requiredFieldsJson)) {
+        requiredByStage.set(c.stage, c.requiredFieldsJson as string[]);
+      }
+    }
+    // Filter to rows we'd actually move AND whose source-stage gates
+    // are satisfied. Rows that fail the gate are reported in the
+    // response as `blocked` so the manager knows which opps need a
+    // touch first.
+    const blocked: { id: string; missing: string[]; fromStage: string }[] = [];
+    const toChange: typeof rows = [];
+    for (const r of rows) {
+      if (r.stage === newStage) continue; // skip no-op
+      const required = requiredByStage.get(r.stage) ?? [];
+      const missing: string[] = [];
+      for (const field of required) {
+        const val = (r as unknown as Record<string, unknown>)[field];
+        const isMissing =
+          val === null ||
+          val === undefined ||
+          (typeof val === "string" && val.trim().length === 0) ||
+          (Array.isArray(val) && val.length === 0);
+        if (isMissing) missing.push(field);
+      }
+      if (missing.length) {
+        blocked.push({ id: r.id, missing, fromStage: r.stage });
+      } else {
+        toChange.push(r);
+      }
+    }
     const closesDeal = newStage === "WON" || newStage === "LOST";
-    // Transaction so partial failure doesn't leave history rows
-    // pointing at unchanged opps (or vice versa). Bounded by max 500
-    // ids per request (zod) so the tx stays inside Neon's window.
-    await db.$transaction([
-      db.crmOpportunity.updateMany({
-        where: { id: { in: toChange.map((r) => r.id) } },
-        data: {
-          stage: newStage,
-          ...(closesDeal ? { dateClosed: new Date() } : {}),
-        },
-      }),
-      db.crmStageHistory.createMany({
-        data: toChange.map((r) => ({
-          opportunityId: r.id,
+    // Bulk parity with the single-opp changeStage path:
+    //   1. Resolve the target stage's probabilityPct ONCE (same target
+    //      stage for every row in this call).
+    //   2. Load FX rates ONCE.
+    //   3. Per row: recompute weightedValueEGP with the new
+    //      probability + the row's existing currency, write the
+    //      update + history together.
+    //   4. After commit: fan out `opp.stage.changed` workflows.
+    // Without (1)+(3), forecast aggregates over `weightedValueEGP`
+    // drift after every bulk move; without (4), workflows admins
+    // configured for stage transitions silently skip.
+    const probabilityPct = await getStageProbability(newStage);
+    const fxRates = toChange.length ? await loadFxRates() : null;
+    if (toChange.length > 0 && fxRates) {
+      await db.$transaction(async (tx) => {
+        for (const r of toChange) {
+          const { estimatedValueEGP, weightedValueEGP } =
+            recomputeOpportunityFinancials(
+              Number(r.estimatedValue),
+              r.currency as CrmCurrency,
+              probabilityPct,
+              fxRates,
+            );
+          await tx.crmOpportunity.update({
+            where: { id: r.id },
+            data: {
+              stage: newStage,
+              probabilityPct,
+              estimatedValueEGP,
+              weightedValueEGP,
+              ...(closesDeal ? { dateClosed: new Date() } : {}),
+            },
+          });
+          await tx.crmStageHistory.create({
+            data: {
+              opportunityId: r.id,
+              fromStage: r.stage,
+              toStage: newStage,
+              changedById: crmProfileId,
+              actingAdminId: session.user.actingAsCrmProfileId ?? null,
+            },
+          });
+        }
+      });
+      // Fire the stage-changed workflow per row AFTER commit. Engine
+      // swallows its own errors so a workflow failure on row N
+      // doesn't block rows N+1...M from getting their notifications.
+      for (const r of toChange) {
+        await fireWorkflow("opp.stage.changed", {
+          entityType: "opportunity",
+          entityId: r.id,
+          actorId: crmProfileId,
+          actorAdminId: session.user.actingAsCrmProfileId ?? null,
           fromStage: r.stage,
           toStage: newStage,
-          changedById: crmProfileId,
-        })),
-      }),
-    ]);
+        });
+      }
+    }
     affected = toChange.length;
-  } else if (action === "soft-delete") {
-    const res = await db.crmOpportunity.updateMany({
-      where: { id: { in: visibleIds } },
-      data: { deletedAt: new Date(), deletedById: crmProfileId },
+    return NextResponse.json({
+      ok: true,
+      affected,
+      skipped: ids.length - visibleIds.length,
+      blocked: blocked.length ? blocked : undefined,
     });
-    affected = res.count;
+  } else if (action === "soft-delete") {
+    // Per-row soft-delete + audit so the activity log records the
+    // deletion event for each opp rather than just the row's
+    // `deletedAt` field (which is invisible in the audit-log feed).
+    const rows = await db.crmOpportunity.findMany({
+      where: { id: { in: visibleIds }, deletedAt: null },
+      select: { id: true, code: true },
+    });
+    const now = new Date();
+    await db.$transaction(async (tx) => {
+      for (const r of rows) {
+        await tx.crmOpportunity.update({
+          where: { id: r.id },
+          data: { deletedAt: now, deletedById: crmProfileId },
+        });
+        await tx.crmActivityLog.create({
+          data: {
+            opportunityId: r.id,
+            actorId: crmProfileId,
+            actingAdminId: session.user.actingAsCrmProfileId ?? null,
+            action: "deleted",
+            metadata: { code: r.code, source: "bulk" },
+          },
+        });
+      }
+    });
+    affected = rows.length;
   }
 
   return NextResponse.json({

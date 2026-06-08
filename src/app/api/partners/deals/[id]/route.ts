@@ -48,17 +48,23 @@ export async function PATCH(
 
   const { status, value, notes } = parsed.data;
 
-  // If transitioning to WON, auto-create commission in a transaction
+  // If transitioning to WON, auto-create commission in a transaction.
+  // TOCTOU: the `existing.status !== "WON"` check at the route level
+  // runs BEFORE the tx; two concurrent PATCH requests both see
+  // status=APPROVED, both enter the tx, both create a commission row.
+  // Gate the transition itself with `updateMany({ where: { id,
+  // status: not WON } })` — only the race winner sees count=1 and
+  // proceeds to write the commission; loser bails out cleanly.
   if (status === "WON" && existing.status !== "WON") {
     const result = await db.$transaction(async (tx) => {
-      const updated = await tx.partnerDeal.update({
-        where: { id },
+      const winner = await tx.partnerDeal.updateMany({
+        where: { id, status: { not: "WON" }, deletedAt: null },
         data: { status: "WON", wonAt: new Date(), value, notes },
-        include: {
-          client: { select: { id: true, name: true } },
-          service: { select: { id: true, name: true } },
-        },
       });
+      if (winner.count === 0) {
+        // Another request already flipped this deal to WON; bail.
+        return null;
+      }
 
       // Get partner's commission rate
       const partner = await tx.partnerProfile.findUnique({
@@ -79,9 +85,18 @@ export async function PATCH(
         },
       });
 
-      return updated;
+      return tx.partnerDeal.findUnique({
+        where: { id },
+        include: {
+          client: { select: { id: true, name: true } },
+          service: { select: { id: true, name: true } },
+        },
+      });
     });
 
+    if (!result) {
+      return jsonError("Deal already marked as WON", 409);
+    }
     return jsonSuccess(result);
   }
 

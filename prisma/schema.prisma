@@ -2185,6 +2185,11 @@ model HrAuditLog {
   timestamp       DateTime @default(now())
   ipAddress       String?
   userId          String?
+  /// auth User.id of the admin when the action was performed under
+  /// impersonation. userId is the target's HR profile linkage; this
+  /// column reveals the admin behind the action. Null on regular
+  /// self-acted rows.
+  actingAdminId   String?
 
   user HrUserProfile? @relation(fields: [userId], references: [userId])
 
@@ -2357,6 +2362,9 @@ model CrmColdLeadDisposition {
   coldLead     CrmColdLead       @relation(fields: [coldLeadId], references: [id], onDelete: Cascade)
   repId        String
   rep          CrmUserProfile    @relation("CrmColdLeadDispositioner", fields: [repId], references: [id])
+  /// CrmUserProfile.id of the admin behind the action when the
+  /// disposition was written under impersonation.
+  actingAdminId String?
   disposition  CrmColdLeadStatus
   notes        String?
   dispositionedAt DateTime @default(now())
@@ -2520,6 +2528,7 @@ model CrmUserProfile {
   dashboards            CrmDashboard[]   @relation("CrmDashboardOwner")
   authoredComments      CrmOpportunityComment[]          @relation("CrmCommentAuthor")
   commentMentions       CrmOpportunityCommentMention[]   @relation("CrmCommentMentions")
+  actingAdminComments   CrmOpportunityComment[]          @relation("CrmCommentActingAdmin")
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -3001,6 +3010,13 @@ model CrmOpportunityComment {
   opportunity   CrmOpportunity                  @relation(fields: [opportunityId], references: [id], onDelete: Cascade)
   authorId      String
   author        CrmUserProfile                  @relation("CrmCommentAuthor", fields: [authorId], references: [id])
+  /// Tier-1 #30 — when the row was written under impersonation, this
+  /// carries the admin's CrmUserProfile.id. authorId still records
+  /// the target (so REP-scope queries / mention authorship still see
+  /// the user the impersonator acted as), and audit-log surfaces can
+  /// reveal the admin behind the action via this field.
+  actingAdminId String?
+  actingAdmin   CrmUserProfile?                 @relation("CrmCommentActingAdmin", fields: [actingAdminId], references: [id])
   body          String
   mentions      CrmOpportunityCommentMention[]
   /// Edited comments stamp `editedAt`; deletes are soft (deletedAt)
@@ -3089,6 +3105,12 @@ model CrmStageHistory {
   toStage       String
   changedAt     DateTime             @default(now())
   changedById   String
+  /// CrmUserProfile.id of the admin behind the action when the
+  /// stage change happened under impersonation. changedById still
+  /// records the target (so visibility / authorship is consistent
+  /// with the rest of the audit trail), and this column reveals
+  /// who actually initiated.
+  actingAdminId String?
   durationDays  Int?
 
   @@index([opportunityId])
@@ -3110,6 +3132,10 @@ model CrmCall {
   contactName   String?
   callerId      String
   caller        CrmUserProfile  @relation(fields: [callerId], references: [id])
+  /// CrmUserProfile.id of the admin behind the action when the call
+  /// was logged under impersonation. callerId is the target; this
+  /// column reveals the admin behind the action.
+  actingAdminId String?
 
   callType       CrmCallType
   outcome        CrmCallOutcome
@@ -3191,6 +3217,10 @@ model CrmMeeting {
   /// Sales rep who booked the meeting (and whose slot is "occupied" by it).
   scheduledById   String
   scheduledBy     CrmUserProfile   @relation("CrmMeetingScheduler", fields: [scheduledById], references: [id])
+  /// CrmUserProfile.id of the admin when the meeting was booked
+  /// under impersonation. scheduledById is the target; this column
+  /// reveals the admin behind the action.
+  actingAdminId   String?
 
   startAt         DateTime
   endAt           DateTime
@@ -3258,6 +3288,9 @@ model CrmNote {
   companyId     String?
   authorId      String
   author        CrmUserProfile  @relation(fields: [authorId], references: [id])
+  /// Admin's CrmUserProfile.id when the note was written under
+  /// impersonation (authorId is the impersonation target).
+  actingAdminId String?
   content       String          @db.Text
   createdAt     DateTime        @default(now())
 
@@ -3272,6 +3305,10 @@ model CrmActivityLog {
   opportunity   CrmOpportunity? @relation(fields: [opportunityId], references: [id], onDelete: Cascade)
   actorId       String
   actor         CrmUserProfile  @relation(fields: [actorId], references: [id])
+  /// Admin's CrmUserProfile.id when the action was performed under
+  /// impersonation. actorId is the impersonation target; this is the
+  /// admin behind the action. Null on regular self-acted rows.
+  actingAdminId String?
   action        String
   metadata      Json?
   createdAt     DateTime        @default(now())
@@ -3981,15 +4018,19 @@ model PartnerNotification {
 }
 
 model PartnerAuditLog {
-  id        String   @id @default(cuid())
-  userId    String
-  action    String
-  entity    String
-  entityId  String
-  oldData   Json?
-  newData   Json?
-  ipAddress String?
-  createdAt DateTime @default(now())
+  id            String   @id @default(cuid())
+  userId        String
+  action        String
+  entity        String
+  entityId      String
+  oldData       Json?
+  newData       Json?
+  ipAddress     String?
+  /// auth User.id of the admin when the action was performed under
+  /// impersonation. userId is the target; this column reveals the
+  /// admin behind the action. Null on regular self-acted rows.
+  actingAdminId String?
+  createdAt     DateTime @default(now())
 
   @@index([userId])
   @@index([entity, entityId])

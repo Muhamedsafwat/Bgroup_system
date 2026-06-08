@@ -140,6 +140,7 @@ export async function POST(
         data: {
           opportunityId: meeting.opportunityId,
           authorId: callerId,
+          actingAdminId: session.user.actingAsCrmProfileId ?? null,
           content: `[Meeting ${meeting.code}] ${oppNoteContent}`,
         },
       });
@@ -149,6 +150,7 @@ export async function POST(
         data: {
           opportunityId: meeting.opportunityId,
           actorId: callerId,
+          actingAdminId: session.user.actingAsCrmProfileId ?? null,
           action: "meeting_completed",
           metadata: {
             meetingId: id,

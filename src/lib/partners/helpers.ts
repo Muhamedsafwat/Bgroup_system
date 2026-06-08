@@ -121,6 +121,10 @@ export interface PartnerAuditEntry {
   oldData?: unknown;
   newData?: unknown;
   request?: Request;
+  /// auth User.id of the admin when the action ran under
+  /// impersonation. userId is the target; this column captures the
+  /// admin behind the action. Read from session.user.actingAsUserId.
+  actingAdminId?: string;
 }
 
 export async function writePartnerAudit(entry: PartnerAuditEntry): Promise<void> {
@@ -135,6 +139,7 @@ export async function writePartnerAudit(entry: PartnerAuditEntry): Promise<void>
         oldData: entry.oldData == null ? undefined : JSON.parse(JSON.stringify(entry.oldData)),
         newData: entry.newData == null ? undefined : JSON.parse(JSON.stringify(entry.newData)),
         ipAddress,
+        actingAdminId: entry.actingAdminId ?? null,
       },
     });
   } catch (err) {

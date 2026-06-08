@@ -278,7 +278,16 @@ export async function getContact(session: SessionUser, id: string) {
 }
 
 export async function createContact(session: SessionUser, data: CreateContactInput) {
-  const parsed = createContactSchema.parse(data);
+  // safeParse + friendly error so the form toast shows "Phone is
+  // required" instead of the raw ZodError JSON dump that .parse()
+  // bubbles up.
+  const parseResult = createContactSchema.safeParse(data);
+  if (!parseResult.success) {
+    const first = parseResult.error.issues[0];
+    const field = first.path.join(".") || "input";
+    throw new Error(`${field}: ${first.message}`);
+  }
+  const parsed = parseResult.data;
 
   // Verify user has access to the target company
   const companyScope = scopeCompanyByRole(session);
@@ -314,7 +323,13 @@ export async function createContact(session: SessionUser, data: CreateContactInp
 }
 
 export async function updateContact(session: SessionUser, id: string, data: UpdateContactInput) {
-  const parsed = updateContactSchema.parse(data);
+  const parseResult = updateContactSchema.safeParse(data);
+  if (!parseResult.success) {
+    const first = parseResult.error.issues[0];
+    const field = first.path.join(".") || "input";
+    throw new Error(`${field}: ${first.message}`);
+  }
+  const parsed = parseResult.data;
 
   // Verify user has access to this contact's company
   const companyScope = scopeCompanyByRole(session);

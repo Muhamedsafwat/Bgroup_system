@@ -151,6 +151,7 @@ export async function POST(req: Request) {
           data: {
             opportunityId: o.id,
             actorId,
+            actingAdminId: session.user.actingAsCrmProfileId ?? null,
             action: "OWNER_REASSIGNED",
             metadata: {
               fromOwnerId: o.ownerId,

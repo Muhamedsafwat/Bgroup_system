@@ -35,13 +35,25 @@ export const STAGE_LABEL_EN: Record<string, string> = {
   LOST: "Lost",
 };
 
-/** The 8 stages the sales-board dashboard renders by default. */
+/**
+ * Canonical seed stage list, in the order the admin Stage Config seed
+ * installs them. This is the SAME 11-stage list every CrmStageConfig
+ * row references — keep them aligned so the pipeline fallback (when
+ * /api/crm/stages hasn't loaded yet) and the sales-board tiles match
+ * what the admin sees in /crm/admin/stage-config. The previous 8-stage
+ * subset hid PROPOSAL_SENT / NEGOTIATION / VERBAL_YES from the pipeline
+ * during the loading window AND from the sales-board permanently — the
+ * "stages in settings vs pipeline" divergence the user reported.
+ */
 export const SPEC_STAGES: CrmOpportunityStage[] = [
   "NEW",
   "CONTACTED",
   "DISCOVERY",
-  "TECH_MEETING",
   "QUALIFIED",
+  "TECH_MEETING",
+  "PROPOSAL_SENT",
+  "NEGOTIATION",
+  "VERBAL_YES",
   "WON",
   "LOST",
   "POSTPONED",

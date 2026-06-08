@@ -29,15 +29,17 @@ async function loadOrError(id: string, session: Session) {
   const meeting = await db.crmMeeting.findUnique({ where: { id } });
   if (!meeting) return { error: NextResponse.json({ error: "Not found" }, { status: 404 }) };
   const ownProfile = session.user.crmProfileId;
-  // The assistant who approved the meeting also needs read access — that's
-  // their whole post-meeting workflow (write outcome to the linked opp).
-  // Assistants in general can see any meeting they could approve.
-  const isAssistant = session.user.crmRole === "ASSISTANT";
+  // The assistant who APPROVED the meeting needs read access — that's their
+  // post-meeting workflow (write outcome to the linked opp). But "ASSISTANT
+  // role can see any meeting" was a security bypass: it let any assistant
+  // GET/PATCH/DELETE every meeting org-wide regardless of whether they
+  // ever touched it. Now ASSISTANTS only see meetings they scheduled OR
+  // approved — same scope semantics as ASSISTANT visibility on
+  // opportunities (scopeOpportunityByRole).
   const isAuthorized =
     meeting.scheduledById === ownProfile ||
     meeting.approvedById === ownProfile ||
-    isManager(session) ||
-    isAssistant;
+    isManager(session);
   if (!isAuthorized) {
     return { error: NextResponse.json({ error: "Not found" }, { status: 404 }) };
   }
@@ -109,7 +111,7 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
   const body = await req.json();
   const parsed = patchSchema.safeParse(body);
   if (!parsed.success) {
-    { const __z = describeZodError(parsed.error); return NextResponse.json({ error: __z.message, fieldErrors: __z.fieldErrors }, { status: 400 }); }
+    { const __z = describeZodError(parsed.error); return NextResponse.json({ error: __z.message, fieldErrors: __z.fieldErrors }, { status: 422 }); }
   }
   const data = parsed.data;
 

@@ -22,7 +22,8 @@ import type { Session } from "next-auth";
  * either gate by copy-pasting the wrong inline helper.
  */
 
-function isPlatformAdmin(session: Session): boolean {
+export function isPlatformAdmin(session: Session | null): boolean {
+  if (!session?.user) return false;
   return (
     !!session.user.hrRoles?.includes("super_admin") ||
     (!!session.user.modules?.includes("partners") && !session.user.partnerId)

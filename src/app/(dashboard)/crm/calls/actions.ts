@@ -49,6 +49,7 @@ export async function createCall(session: SessionUser, data: CreateCallInput) {
       data: {
         code,
         callerId: session.id,
+        actingAdminId: session.actingAdminId ?? null,
         opportunityId: parsed.opportunityId || null,
         companyId: parsed.companyId || null,
         contactId: parsed.contactId || null,
@@ -70,6 +71,7 @@ export async function createCall(session: SessionUser, data: CreateCallInput) {
         data: {
           opportunityId: parsed.opportunityId,
           actorId: session.id,
+          actingAdminId: session.actingAdminId ?? null,
           action: "call_logged",
           metadata: {
             callCode: code,

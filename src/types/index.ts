@@ -27,6 +27,12 @@ export type SessionUser = {
   fullName: string;
   role: CrmRole;
   entityId: string | null;
+  /// When the request is running under impersonation, the admin's
+  /// own CrmUserProfile id. Audit writers record this on
+  /// `actingAdminId` alongside the normal actor/changedBy/authorId
+  /// fields so the audit trail can reveal who actually triggered
+  /// the action. Undefined when the user is acting as themselves.
+  actingAdminId?: string;
 };
 
 export type OpportunityWithRelations = {
