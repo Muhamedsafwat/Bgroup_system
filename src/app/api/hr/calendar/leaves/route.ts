@@ -42,7 +42,7 @@ export async function GET(req: Request) {
     departmentId: url.searchParams.get("departmentId") ?? undefined,
   });
   if (!parsed.success) {
-    { const __z = describeZodError(parsed.error); return NextResponse.json({ error: __z.message, fieldErrors: __z.fieldErrors }, { status: 400 }); }
+    { const __z = describeZodError(parsed.error); return NextResponse.json({ error: __z.message, fieldErrors: __z.fieldErrors }, { status: 422 }); }
   }
   const { from, to, companyId, departmentId } = parsed.data;
 

@@ -89,13 +89,31 @@ export async function GET() {
     );
   }
 
-  const buckets = await Promise.all(tasks);
+  const [buckets, unreadCount] = await Promise.all([
+    Promise.all(tasks),
+    // Count unread per bucket directly so a notification past row 50
+    // still increments the badge. The previous formulation counted
+    // unread within the 50-newest window, which silently dropped
+    // older unread items.
+    (async () => {
+      const counters: Promise<number>[] = [];
+      if (modules.includes("hr")) {
+        counters.push(db.hrNotification.count({ where: { userId, isRead: false } }));
+      }
+      if (modules.includes("partners")) {
+        counters.push(db.partnerNotification.count({ where: { userId, isRead: false } }));
+      }
+      if (modules.includes("crm")) {
+        counters.push(db.crmNotification.count({ where: { userId, isRead: false } }));
+      }
+      const totals = await Promise.all(counters);
+      return totals.reduce((a, b) => a + b, 0);
+    })(),
+  ]);
   const all = buckets
     .flat()
     .sort((a, b) => b.createdAt.localeCompare(a.createdAt))
     .slice(0, 50);
-
-  const unreadCount = all.filter((n) => !n.isRead).length;
 
   return NextResponse.json({ notifications: all, unreadCount });
 }

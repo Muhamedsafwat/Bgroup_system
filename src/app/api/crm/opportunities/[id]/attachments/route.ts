@@ -8,6 +8,7 @@ import { auth } from "@/lib/auth";
 import { db } from "@/lib/db";
 import { CrmAttachmentKind } from "@/generated/prisma";
 import { describeZodError } from "@/lib/zod-errors";
+import { scopeOpportunityByRole } from "@/lib/crm/rbac";
 
 /**
  * GET  /api/crm/opportunities/[id]/attachments  → list
@@ -24,6 +25,32 @@ import { describeZodError } from "@/lib/zod-errors";
 const MAX_BYTES = 25 * 1024 * 1024; // 25 MB
 const KINDS: CrmAttachmentKind[] = ["PROPOSAL", "CONTRACT", "INVOICE", "OTHER"] as never;
 
+// MIME allowlist: documents + presentations + images that a sales rep
+// legitimately attaches to an opp. Outside this set is rejected to
+// prevent stored XSS (HTML/SVG with embedded script) and to keep the
+// served `Content-Type` reliable.
+const ALLOWED_MIME_TYPES = new Set<string>([
+  // Documents
+  "application/pdf",
+  "application/msword",
+  "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+  "application/vnd.ms-excel",
+  "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+  "application/vnd.ms-powerpoint",
+  "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+  "text/plain",
+  "text/csv",
+  // Images
+  "image/png",
+  "image/jpeg",
+  "image/jpg",
+  "image/gif",
+  "image/webp",
+  // Archives
+  "application/zip",
+  "application/x-zip-compressed",
+]);
+
 const uploadSchema = z.object({
   filename: z.string().trim().min(1).max(200),
   mimeType: z.string().trim().min(1).max(120),
@@ -32,16 +59,21 @@ const uploadSchema = z.object({
   contentBase64: z.string().min(1),
 });
 
+// Use the canonical scope helper so attachments visibility matches
+// the rest of the opp surface. The previous inline check excluded
+// ASSISTANT (who legitimately sees opps via a touched meeting) and
+// ACCOUNT_MGR (delivery owner of WON deals).
 async function canAccessOpp(opportunityId: string, session: Session): Promise<boolean> {
-  if (session.user.hrRoles?.includes("super_admin")) return true;
-  if (
-    session.user.crmRole === "MANAGER" ||
-    session.user.crmRole === "ADMIN"
-  )
-    return true;
   if (!session.user.crmProfileId) return false;
+  const sUser = {
+    id: session.user.crmProfileId,
+    role: session.user.crmRole!,
+    email: session.user.email!,
+    fullName: session.user.name ?? "",
+    entityId: session.user.crmEntityId ?? null,
+  };
   const opp = await db.crmOpportunity.findFirst({
-    where: { id: opportunityId, ownerId: session.user.crmProfileId },
+    where: { id: opportunityId, ...scopeOpportunityByRole(sUser), deletedAt: null },
     select: { id: true },
   });
   return !!opp;
@@ -71,9 +103,21 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
   const body = await req.json();
   const parsed = uploadSchema.safeParse(body);
   if (!parsed.success) {
-    { const __z = describeZodError(parsed.error); return NextResponse.json({ error: __z.message, fieldErrors: __z.fieldErrors }, { status: 400 }); }
+    { const __z = describeZodError(parsed.error); return NextResponse.json({ error: __z.message, fieldErrors: __z.fieldErrors }, { status: 422 }); }
   }
   const { filename, mimeType, sizeBytes, kind, contentBase64 } = parsed.data;
+
+  // MIME allowlist. Free-form mimeType lets a caller upload an HTML or
+  // SVG file and have it served back to other reps with the supplied
+  // Content-Type — stored XSS. Reject anything not on the allowlist.
+  if (!ALLOWED_MIME_TYPES.has(mimeType.toLowerCase())) {
+    return NextResponse.json(
+      {
+        error: `File type "${mimeType}" isn't accepted. Allowed: PDF, Office docs, plain text, images, and zip.`,
+      },
+      { status: 415 },
+    );
+  }
 
   let buf: Buffer;
   try {

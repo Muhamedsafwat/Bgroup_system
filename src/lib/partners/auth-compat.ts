@@ -12,7 +12,14 @@ export function useAuth() {
 
   let user: PartnerUser | null = null;
   if (session?.user) {
-    const isAdmin = !session.user.partnerId;
+    // A user is a partners ADMIN only when they have the partners
+    // module AND no partnerId (matches isPlatformAdmin / server-side
+    // gates). The previous check treated *any* user lacking partnerId
+    // as ADMIN — a CRM- or HR-only user was rendered as Partners
+    // Admin in client-side UI affordances, even though the proxy
+    // blocked them from /partners/* server-side.
+    const hasPartnersModule = session.user.modules?.includes("partners") ?? false;
+    const isAdmin = hasPartnersModule && !session.user.partnerId;
     user = {
       id: session.user.id,
       email: session.user.email!,

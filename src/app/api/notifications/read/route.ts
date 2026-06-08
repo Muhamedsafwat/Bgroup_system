@@ -60,7 +60,21 @@ export async function PATCH(req: Request) {
   // Single: mark one notification as read.
   const parsed = bodySchema.safeParse(body);
   if (!parsed.success) {
-    { const __z = describeZodError(parsed.error); return NextResponse.json({ error: __z.message, fieldErrors: __z.fieldErrors }, { status: 400 }); }
+    // 422 (Unprocessable Entity) matches the comments POST + every
+    // other Zod-gated write endpoint in the CRM surface, so client
+    // code that branches on status (422 -> render form errors) sees
+    // a consistent contract across the unified notification stack.
+    const __z = describeZodError(parsed.error);
+    return NextResponse.json({ error: __z.message, fieldErrors: __z.fieldErrors }, { status: 422 });
+  }
+
+  // Defense in depth: reject mark-read requests for modules the user
+  // doesn't have. updateMany already filters by userId so a successful
+  // request just becomes a no-op, but the 200/404 distinction would
+  // leak "this notification id exists for me in module X". 403 the
+  // request before the lookup.
+  if (!session.user.modules?.includes(parsed.data.module)) {
+    return NextResponse.json({ error: "Forbidden" }, { status: 403 });
   }
 
   if (parsed.data.module === "hr") {

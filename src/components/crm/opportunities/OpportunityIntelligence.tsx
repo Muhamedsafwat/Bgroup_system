@@ -99,6 +99,7 @@ export function OpportunityIntelligence({
   const [snapshot, setSnapshot] = useState<MeddpiccSnapshot | null>(null);
   const [health, setHealth] = useState<{ score: number; band: string }>({ score: 0, band: "unknown" });
   const [meddpiccLoading, setMeddpiccLoading] = useState(true);
+  const [meddpiccError, setMeddpiccError] = useState<string | null>(null);
 
   const loadMeddpicc = useCallback(async () => {
     setMeddpiccLoading(true);
@@ -108,7 +109,16 @@ export function OpportunityIntelligence({
         const data: MeddpiccResponse = await res.json();
         setSnapshot(data.snapshot);
         setHealth({ score: data.healthScore, band: data.healthBand });
+        setMeddpiccError(null);
+      } else {
+        // Distinguish a real load failure from "no snapshot yet"
+        // (which is a legitimate empty state). The UI consults
+        // meddpiccError to render a retry hint instead of pretending
+        // the panel is empty.
+        setMeddpiccError(`Couldn't load MEDDPICC (HTTP ${res.status})`);
       }
+    } catch (e) {
+      setMeddpiccError(e instanceof Error ? e.message : "Couldn't load MEDDPICC");
     } finally {
       setMeddpiccLoading(false);
     }

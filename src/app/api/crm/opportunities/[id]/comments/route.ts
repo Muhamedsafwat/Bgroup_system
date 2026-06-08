@@ -129,11 +129,31 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
   const authorName = sUser.fullName || session.user.email || "Someone";
   const title = `${authorName} mentioned you on ${opp.title}`;
 
+  // Resolve `@<crmProfileId>` tokens in the body into `@<fullName>`
+  // for the notification message. The bell renderer is a plain text
+  // surface (no chip resolver like OpportunityComments has), so
+  // storing raw cuid tokens would show "@clx1a2b3c4..." in the bell.
+  // The token stays in the comment.body itself so renames in the
+  // future still re-resolve cleanly inside the thread.
+  const nameByProfileId = new Map(validMentions.map((m) => [m.id, m.fullName]));
+  // Match cuid1 (lowercase base36 >=8 chars) + cuid2 (mixed-case)
+  // + uuid (with dashes). Symmetric with the renderer regex in
+  // OpportunityComments.tsx so server-resolved preview names and
+  // client-rendered chips agree on which `@<id>` substrings are
+  // mention tokens.
+  const previewBody = parsed.data.body
+    .replace(/@([A-Za-z0-9_-]{8,})/g, (full, id) => {
+      const n = nameByProfileId.get(id);
+      return n ? `@${n}` : full;
+    })
+    .slice(0, 200);
+
   const comment = await db.$transaction(async (tx) => {
     const created = await tx.crmOpportunityComment.create({
       data: {
         opportunityId: opp.id,
         authorId: sUser.id,
+        actingAdminId: session.user.actingAsCrmProfileId ?? null,
         body: parsed.data.body,
         mentions: {
           create: validMentions.map((m) => ({ mentionedUserId: m.id })),
@@ -161,7 +181,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
           userId: m.userId,
           type: "mention",
           title,
-          message: parsed.data.body.slice(0, 200),
+          message: previewBody,
           href: oppHref,
           metadata: {
             opportunityId: opp.id,
@@ -184,7 +204,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
       userId: m.userId,
       payload: {
         title,
-        message: parsed.data.body.slice(0, 200),
+        message: previewBody,
       },
     });
   }

@@ -1,9 +1,11 @@
 import { NextResponse } from "next/server";
+import type { Session } from "next-auth";
 import { z } from "zod";
 import { auth } from "@/lib/auth";
 import { db } from "@/lib/db";
 import { createOpportunity } from "@/app/(dashboard)/crm/opportunities/actions";
 import { describeZodError } from "@/lib/zod-errors";
+import { isManagerOrAdmin } from "@/lib/crm/admin-gates";
 
 /**
  * POST /api/crm/cold-leads/[id]/convert
@@ -66,9 +68,10 @@ export async function POST(
     );
   }
 
-  const role = session.user.crmRole;
-  const isManagerOrAdmin = role === "ADMIN" || role === "MANAGER";
-  if (lead.assignedToId !== session.user.crmProfileId && !isManagerOrAdmin) {
+  if (
+    lead.assignedToId !== session.user.crmProfileId &&
+    !isManagerOrAdmin(session as Session)
+  ) {
     return NextResponse.json({ error: "This lead isn't assigned to you" }, { status: 403 });
   }
 
@@ -124,14 +127,43 @@ export async function POST(
     productIds: parsed.data.productIds,
   });
 
-  await db.crmColdLead.update({
-    where: { id },
+  // Atomic link with TOCTOU guard. Two concurrent POSTs both see
+  // `convertedOpportunityId: null` upstream, both create a Company +
+  // Contact + Opportunity. The race winner here flips the lead in
+  // a single statement gated on `convertedOpportunityId: null`; the
+  // loser's updateMany returns count=0, and we soft-archive the
+  // duplicate opp via deletedAt so the audit trail records the
+  // collision without breaking visibility.
+  const linkResult = await db.crmColdLead.updateMany({
+    where: { id, convertedOpportunityId: null },
     data: {
       status: "CONVERTED",
       convertedOpportunityId: opp.id,
       lastDispositionAt: new Date(),
     },
   });
+  if (linkResult.count === 0) {
+    // Another request already linked this lead. Soft-delete the
+    // duplicate opportunity so it doesn't pollute pipeline reports.
+    await db.crmOpportunity.update({
+      where: { id: opp.id },
+      data: {
+        deletedAt: new Date(),
+        deletedById: session.user.crmProfileId,
+      },
+    });
+    const winner = await db.crmColdLead.findUnique({
+      where: { id },
+      select: { convertedOpportunityId: true },
+    });
+    return NextResponse.json(
+      {
+        error: "Already converted",
+        opportunityId: winner?.convertedOpportunityId,
+      },
+      { status: 409 },
+    );
+  }
 
   return NextResponse.json({ ok: true, opportunityId: opp.id });
 }

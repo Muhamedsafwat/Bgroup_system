@@ -18,7 +18,11 @@ export async function GET(req: Request) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
   const url = new URL(req.url);
-  const q = (url.searchParams.get("q") ?? "").trim();
+  // Bound the query length defensively — a multi-MB `q` would still
+  // be evaluated by Postgres ILIKE without crashing, but truncating
+  // here keeps the planner happy and rejects accidental clipboard
+  // dumps from typing handlers.
+  const q = (url.searchParams.get("q") ?? "").trim().slice(0, 100);
 
   const users = await db.crmUserProfile.findMany({
     where: {

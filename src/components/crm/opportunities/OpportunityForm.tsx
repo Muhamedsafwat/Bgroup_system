@@ -123,6 +123,7 @@ export function OpportunityForm({
     handleSubmit,
     setValue,
     watch,
+    setError,
     formState: { errors, isSubmitting },
   } = useForm<CreateOpportunityInput>({
     resolver: zodResolver(createOpportunitySchema),
@@ -251,6 +252,14 @@ export function OpportunityForm({
           : typeof err === "string"
             ? err
             : "Save failed — try again or contact support";
+      // Specifically bind the duplicate-title error to the
+      // customerCompanyName input — that's the field the user
+      // actually controls that drives the title fallback chain.
+      // Without this binding the user sees only a transient toast
+      // and no inline cue which field to change.
+      if (/already exists/i.test(msg)) {
+        setError("customerCompanyName", { type: "server", message: msg });
+      }
       toast.error(msg, { duration: 8000 });
       // Don't propagate. Without this, Next.js will catch the re-thrown
       // error and render the global error overlay on top of our toast.
@@ -259,8 +268,23 @@ export function OpportunityForm({
     }
   }
 
+  // When react-hook-form's resolver rejects (e.g. a freshly-tightened
+  // max-length on a field whose UI doesn't render an error tile), the
+  // submit handler is never called — silent failure. Surface it as a
+  // toast so the user knows why "Update" didn't take, instead of
+  // assuming the click did nothing.
+  function onValidationError(formErrors: typeof errors) {
+    const first = Object.entries(formErrors)[0];
+    if (!first) return;
+    const [field, err] = first;
+    const message =
+      (err as { message?: string } | undefined)?.message ??
+      `${field} is invalid`;
+    toast.error(`${field}: ${message}`, { duration: 8000 });
+  }
+
   return (
-    <form onSubmit={handleSubmit(onSubmit)} className="space-y-6">
+    <form onSubmit={handleSubmit(onSubmit, onValidationError)} className="space-y-6">
       {/* Company & Contact */}
       <Card>
         <CardHeader>
