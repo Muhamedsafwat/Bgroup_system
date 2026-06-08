@@ -55,13 +55,15 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
   const body = await req.json().catch(() => ({}));
   const parsed = triggerSchema.safeParse(body);
   if (!parsed.success) {
-    { const __z = describeZodError(parsed.error); return NextResponse.json({ error: __z.message, fieldErrors: __z.fieldErrors }, { status: 400 }); }
+    { const __z = describeZodError(parsed.error); return NextResponse.json({ error: __z.message, fieldErrors: __z.fieldErrors }, { status: 422 }); }
   }
 
   // Confirm the opportunity exists + collect its notes / attachments for the
-  // cascade before we touch the engine.
-  const opp = await db.crmOpportunity.findUnique({
-    where: { id },
+  // cascade before we touch the engine. Filter out soft-deleted rows so
+  // a tombstoned opp can't have its notes/attachments copied to a fresh
+  // task chain.
+  const opp = await db.crmOpportunity.findFirst({
+    where: { id, deletedAt: null },
     include: {
       notes: {
         orderBy: { createdAt: "asc" },

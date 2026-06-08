@@ -103,9 +103,12 @@ export async function POST(
     const action = data.action || 'apply' // 'apply' or 'dismiss'
     const now = new Date()
 
+    // Atomic gate on status='pending' so two concurrent resolves
+    // can't both flip the row.
+    let txResult: { count: number }
     if (action === 'dismiss') {
-      await prisma.hrIncident.update({
-        where: { id: pk },
+      txResult = await prisma.hrIncident.updateMany({
+        where: { id: pk, status: 'pending' },
         data: {
           status: 'dismissed',
           dismissedReason: data.dismissed_reason || '',
@@ -117,14 +120,20 @@ export async function POST(
       })
     } else {
       // Apply the incident
-      await prisma.hrIncident.update({
-        where: { id: pk },
+      txResult = await prisma.hrIncident.updateMany({
+        where: { id: pk, status: 'pending' },
         data: {
           status: 'applied',
           approvedById: authUser.id,
           updatedAt: now,
         },
       })
+    }
+    if (txResult.count === 0) {
+      return NextResponse.json(
+        { detail: 'Incident is no longer pending — it was just actioned by someone else.' },
+        { status: 409 },
+      )
     }
 
     const incident = await prisma.hrIncident.findUnique({

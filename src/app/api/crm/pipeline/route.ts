@@ -3,9 +3,15 @@ import type { Session } from "next-auth";
 import { z } from "zod";
 import { auth } from "@/lib/auth";
 import { db } from "@/lib/db";
-import { type Prisma } from "@/generated/prisma";
+import { type Prisma, type CrmCurrency } from "@/generated/prisma";
 import { describeZodError } from "@/lib/zod-errors";
 import type { CrmOpportunityStage } from "@/types";
+import {
+  recomputeOpportunityFinancials,
+  loadFxRates,
+  getStageProbability,
+} from "@/lib/crm/business/pipeline";
+import { fireWorkflow } from "@/lib/crm/workflows/engine";
 
 function isManager(session: Session) {
   return (
@@ -141,12 +147,21 @@ export async function PATCH(req: Request) {
   const body = await req.json();
   const parsed = stageSchema.safeParse(body);
   if (!parsed.success) {
-    { const __z = describeZodError(parsed.error); return NextResponse.json({ error: __z.message, fieldErrors: __z.fieldErrors }, { status: 400 }); }
+    { const __z = describeZodError(parsed.error); return NextResponse.json({ error: __z.message, fieldErrors: __z.fieldErrors }, { status: 422 }); }
   }
 
-  const opp = await db.crmOpportunity.findUnique({
-    where: { id: parsed.data.opportunityId },
-    select: { id: true, ownerId: true, stage: true },
+  // Soft-deleted opps must not be revivable via drag-drop. The previous
+  // version skipped the deletedAt filter and let a stale tab move a
+  // tombstoned opp into a different column.
+  const opp = await db.crmOpportunity.findFirst({
+    where: { id: parsed.data.opportunityId, deletedAt: null },
+    select: {
+      id: true,
+      ownerId: true,
+      stage: true,
+      estimatedValue: true,
+      currency: true,
+    },
   });
   if (!opp) return NextResponse.json({ error: "Not found" }, { status: 404 });
 
@@ -162,25 +177,74 @@ export async function PATCH(req: Request) {
     return NextResponse.json({ ok: true, unchanged: true });
   }
 
-  const updated = await db.crmOpportunity.update({
-    where: { id: opp.id },
-    data: {
-      stage: parsed.data.newStage,
-      ...(parsed.data.newStage === "WON" ? { dateClosed: new Date() } : {}),
-      ...(parsed.data.newStage === "LOST" ? { dateClosed: new Date() } : {}),
-    },
-    select: { id: true, stage: true },
+  // Validate target stage is configured + active, same gate the bulk
+  // route applies. Without this, a rep could drag into a stage the
+  // admin disabled.
+  const newStage = parsed.data.newStage;
+  const stageCfg = await db.crmStageConfig.findFirst({
+    where: { stage: newStage, isActive: true },
+    select: { id: true },
+  });
+  if (!stageCfg) {
+    return NextResponse.json(
+      { error: `Stage "${newStage}" isn't configured` },
+      { status: 400 },
+    );
+  }
+
+  // Recompute probabilityPct + weightedValueEGP for the new stage. The
+  // previous version skipped this — drag-drop transitions left every
+  // opp's probability stuck at its old value, drifting forecast
+  // aggregates over weightedValueEGP. Mirror the math the single-opp
+  // changeStage() does.
+  const probabilityPct = await getStageProbability(newStage);
+  const fxRates = await loadFxRates();
+  const { estimatedValueEGP, weightedValueEGP } = recomputeOpportunityFinancials(
+    Number(opp.estimatedValue),
+    opp.currency as CrmCurrency,
+    probabilityPct,
+    fxRates,
+  );
+
+  const closesDeal = newStage === "WON" || newStage === "LOST";
+  // Wrap the update + history write in a single transaction so a
+  // failure on the history write doesn't leave the opp stage-changed
+  // with no audit row (or vice versa).
+  await db.$transaction([
+    db.crmOpportunity.update({
+      where: { id: opp.id },
+      data: {
+        stage: newStage,
+        probabilityPct,
+        estimatedValueEGP,
+        weightedValueEGP,
+        ...(closesDeal ? { dateClosed: new Date() } : {}),
+      },
+    }),
+    db.crmStageHistory.create({
+      data: {
+        opportunityId: opp.id,
+        fromStage: opp.stage,
+        toStage: newStage,
+        changedById: session.user.crmProfileId ?? session.user.id,
+        actingAdminId: session.user.actingAsCrmProfileId ?? null,
+      },
+    }),
+  ]);
+
+  // Fire the stage-changed workflow AFTER commit — engine swallows
+  // its own errors so a workflow failure doesn't roll back the move.
+  await fireWorkflow("opp.stage.changed", {
+    entityType: "opportunity",
+    entityId: opp.id,
+    actorId: session.user.crmProfileId ?? session.user.id,
+    actorAdminId: session.user.actingAsCrmProfileId ?? null,
+    fromStage: opp.stage,
+    toStage: newStage,
   });
 
-  // Audit the stage change.
-  await db.crmStageHistory.create({
-    data: {
-      opportunityId: opp.id,
-      fromStage: opp.stage,
-      toStage: parsed.data.newStage,
-      changedById: session.user.crmProfileId ?? session.user.id,
-    },
+  return NextResponse.json({
+    ok: true,
+    opportunity: { id: opp.id, stage: newStage },
   });
-
-  return NextResponse.json({ ok: true, opportunity: updated });
 }

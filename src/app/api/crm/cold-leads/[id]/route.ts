@@ -1,8 +1,10 @@
 import { NextResponse } from "next/server";
+import type { Session } from "next-auth";
 import { z } from "zod";
 import { auth } from "@/lib/auth";
 import { db } from "@/lib/db";
 import { describeZodError } from "@/lib/zod-errors";
+import { isManagerOrAdmin } from "@/lib/crm/admin-gates";
 
 /**
  * GET /api/crm/cold-leads/[id]
@@ -76,10 +78,10 @@ export async function GET(
   }
 
   // Scope check — rep sees only their own. Managers see their team's +
-  // unassigned pool; admin sees everything.
-  const role = session.user.crmRole;
-  const isManagerOrAdmin = role === "ADMIN" || role === "MANAGER";
-  if (!isManagerOrAdmin && lead.assignedToId !== session.user.crmProfileId) {
+  // unassigned pool; admin sees everything. Use the canonical helper so
+  // platform super_admins (HR role) and platform partners-admins
+  // (modules+!partnerId) reach the lead just like CRM ADMIN/MANAGER.
+  if (!isManagerOrAdmin(session as Session) && lead.assignedToId !== session.user.crmProfileId) {
     return NextResponse.json({ error: "This lead isn't assigned to you" }, { status: 403 });
   }
 
@@ -111,9 +113,8 @@ export async function PATCH(
     return NextResponse.json({ error: "Cold lead not found" }, { status: 404 });
   }
 
-  const role = session.user.crmRole;
-  const isManagerOrAdmin = role === "ADMIN" || role === "MANAGER";
-  if (!isManagerOrAdmin && lead.assignedToId !== session.user.crmProfileId) {
+  const isMgrOrAdm = isManagerOrAdmin(session as Session);
+  if (!isMgrOrAdm && lead.assignedToId !== session.user.crmProfileId) {
     return NextResponse.json(
       { error: "This lead isn't assigned to you — only the assigned rep, a manager, or an admin can edit it" },
       { status: 403 }
@@ -123,7 +124,7 @@ export async function PATCH(
   // `status` and `assignedToId` are admin/manager-only — a rep trying to
   // bypass the disposition flow this way gets a clean 403 rather than a
   // silent no-op.
-  if (!isManagerOrAdmin && (parsed.data.status !== undefined || parsed.data.assignedToId !== undefined)) {
+  if (!isMgrOrAdm && (parsed.data.status !== undefined || parsed.data.assignedToId !== undefined)) {
     return NextResponse.json(
       {
         error: "Only an admin or sales manager can change a lead's status or assigned rep. Use the disposition action for the normal flow.",

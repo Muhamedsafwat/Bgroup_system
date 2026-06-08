@@ -192,11 +192,21 @@ export function PipelineClient({ isManager }: { isManager: boolean }) {
   async function moveStage(oppId: string, newStage: CrmOpportunityStage) {
     const prev = opps;
     setOpps((cur) => cur.map((o) => (o.id === oppId ? { ...o, stage: newStage } : o)));
-    const res = await fetch("/api/crm/pipeline", {
-      method: "PATCH",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ opportunityId: oppId, newStage }),
-    });
+    let res: Response;
+    try {
+      res = await fetch("/api/crm/pipeline", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ opportunityId: oppId, newStage }),
+      });
+    } catch {
+      // Network failure (offline, DNS, aborted) — fetch throws here,
+      // not at res.ok. Without this catch the optimistic drop stays
+      // on screen and the rep is convinced their move worked.
+      toast.error("Couldn't reach the server. The card is back where it was.");
+      setOpps(prev);
+      return;
+    }
     if (!res.ok) {
       const d = await res.json().catch(() => ({}));
       toast.error(d.error ?? "Stage change failed");
@@ -216,16 +226,28 @@ export function PipelineClient({ isManager }: { isManager: boolean }) {
     moveStage(oppId, newStage);
   }
 
-  // Use the admin-curated stage list once it loads; while loading we fall
-  // back to SPEC_STAGES so the page isn't blank on the first paint.
-  const orderedStages: string[] =
+  // Use the admin-curated stage list once it loads; while loading we
+  // fall back to SPEC_STAGES (the canonical 11-stage seed) so the
+  // page isn't blank on the first paint AND doesn't render a stale
+  // 8-column subset that disagrees with Stage Config.
+  const adminStages: string[] =
     stages.length > 0 ? stages.map((s) => s.stage) : (SPEC_STAGES as string[]);
   const oppsByStage: Record<string, Opp[]> = {};
-  for (const s of orderedStages) oppsByStage[s] = [];
+  for (const s of adminStages) oppsByStage[s] = [];
   for (const o of opps) {
     const arr = oppsByStage[o.stage] ?? (oppsByStage[o.stage] = []);
     arr.push(o);
   }
+  // Surface any orphan stages (opp's stage code isn't in the active
+  // Stage Config) at the END of the column list so reps can see + drag
+  // them back into a valid stage. Without this, an admin who hides a
+  // stage in Stage Config silently disappears every opp that was in
+  // that stage — they exist in the DB but render nowhere.
+  const adminStagesSet = new Set(adminStages);
+  const orphanStages = Object.keys(oppsByStage)
+    .filter((s) => !adminStagesSet.has(s))
+    .sort();
+  const orderedStages: string[] = [...adminStages, ...orphanStages];
 
   return (
     <div className="space-y-3">

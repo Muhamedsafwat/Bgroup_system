@@ -33,7 +33,7 @@ export async function PUT(req: Request) {
   const body = await req.json();
   const parsed = upsertSchema.safeParse(body);
   if (!parsed.success) {
-    { const __z = describeZodError(parsed.error); return NextResponse.json({ error: __z.message, fieldErrors: __z.fieldErrors }, { status: 400 }); }
+    { const __z = describeZodError(parsed.error); return NextResponse.json({ error: __z.message, fieldErrors: __z.fieldErrors }, { status: 422 }); }
   }
 
   const ops = parsed.data.preferences.map((p) =>

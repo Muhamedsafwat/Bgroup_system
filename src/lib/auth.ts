@@ -42,12 +42,21 @@ declare module "next-auth" {
       // original admin's user id; the session's own `user.id` is the
       // TARGET being impersonated. The banner reads this to render.
       actingAs?: string;
-      // When impersonation is active, the admin's own crmProfileId
-      // for audit attribution. Audit-log writers must record this
-      // alongside the action so the banner's "audited under your
-      // admin account" promise is true. Undefined when not
-      // impersonating (the action is genuinely by user.id).
+      // The admin's own crmProfileId when impersonation is active.
+      // Audit-log writers SHOULD record this alongside the action so
+      // the banner's "audited under your admin account" promise
+      // resolves. Today only the schema columns exist; wiring every
+      // CrmActivityLog / CrmStageHistory / CrmNote write to pass it
+      // is tracked separately. Undefined when not impersonating.
       actingAsCrmProfileId?: string;
+      /// The admin's own hrProfileId when impersonation is active —
+      /// HrAuditLog writers consume this to record the admin behind
+      /// the target's row.
+      actingAsHrProfileId?: string;
+      /// The admin's own auth User.id when impersonation is active —
+      /// PartnerAuditLog records this as `actingAdminId` alongside
+      /// the target's userId.
+      actingAsUserId?: string;
     };
   }
 
@@ -76,10 +85,16 @@ declare module "@auth/core/jwt" {
     // back to it without an extra DB hit.
     actingAs?: string;
     adminEmail?: string;
-    // CRM profile id of the actual admin (set alongside actingAs
-    // so audit-log writes can attribute to the admin even though
-    // session.user.crmProfileId has been swapped to the target).
+    // CRM / HR profile ids of the actual admin (set alongside
+    // actingAs so audit-log writes can attribute to the admin
+    // even though session.user.crmProfileId / hrProfileId have
+    // been swapped to the target).
     actingAsCrmProfileId?: string;
+    actingAsHrProfileId?: string;
+    /// Auth User.id of the admin behind the action — duplicated from
+    /// `actingAs` for symmetry with the per-module id fields and to
+    /// make PartnerAuditLog writers (which key by User.id) consistent.
+    actingAsUserId?: string;
   }
 }
 
@@ -292,6 +307,19 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
           user?.id;
         const candidateAdminEmail =
           (token.adminEmail as string | undefined) ?? email;
+        // Stage every impersonation mutation into local variables
+        // and only apply them to the token AFTER the dbUser lookup
+        // (line ~410) succeeds. Previously we mutated the token
+        // first; a transient Neon error during the dbUser fetch
+        // would then return a token where actingAs/email/name
+        // described the target but userId/crmProfileId/role were
+        // still the admin's. RBAC saw the admin while the banner
+        // said target — a real race window we close here.
+        let pendingActingAs: string | undefined;
+        let pendingAdminEmail: string | undefined;
+        let pendingActingAsCrmProfileId: string | undefined;
+        let pendingActingAsHrProfileId: string | undefined;
+        let pendingDropImpersonation = false;
         if (candidateAdminId) {
           // Distinguish DB error (preserve current swap state)
           // from row-missing (the legitimate "admin stopped
@@ -328,34 +356,37 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
               );
             }
             if (targetUser?.email) {
-              token.actingAs = candidateAdminId;
-              token.adminEmail = candidateAdminEmail;
+              // Stage the swap — applied later if dbUser succeeds.
+              // The dbUser lookup uses `email` (which we point at
+              // the target's email here), so dbUser will already
+              // carry the target's name. The pending commit at the
+              // top of the `if (dbUser)` branch is what actually
+              // applies the change to the token.
+              pendingActingAs = candidateAdminId;
+              pendingAdminEmail = candidateAdminEmail;
               email = targetUser.email;
-              // Propagate the target's name + email to the token
-              // so the banner and downstream consumers see the
-              // TARGET's identity, not the admin's stale sign-in
-              // value. The banner explicitly promises "acting
-              // as <target>" — leaving the original name on
-              // token.name made it lie.
-              token.email = targetUser.email;
-              if (targetUser.name) token.name = targetUser.name;
-              // Capture the admin's OWN CrmUserProfile id while we
-              // know who they are — the dbUser lookup downstream
-              // will rewrite token.crmProfileId to the target's,
-              // and audit-log writers need the admin's id to
-              // honour the "audited under your admin account"
-              // promise.
+              // Capture the admin's OWN module-profile ids while we
+              // know who they are. dbUser will rewrite the session's
+              // module-specific ids to the target's; audit writers in
+              // each module read these to honour "audited under your
+              // admin account". One query per module is cheap and
+              // these only run on the impersonation hot-path.
               try {
-                const adminCrm = await db.crmUserProfile.findFirst({
-                  where: { userId: candidateAdminId },
-                  select: { id: true },
-                });
-                token.actingAsCrmProfileId = adminCrm?.id;
+                const [adminCrm, adminHr] = await Promise.all([
+                  db.crmUserProfile.findFirst({
+                    where: { userId: candidateAdminId },
+                    select: { id: true },
+                  }),
+                  db.hrUserProfile.findFirst({
+                    where: { userId: candidateAdminId },
+                    select: { id: true },
+                  }),
+                ]);
+                pendingActingAsCrmProfileId = adminCrm?.id;
+                pendingActingAsHrProfileId = adminHr?.id;
               } catch {
-                // Non-fatal: lose this round of attribution rather
-                // than blocking auth. Banner still renders; audit
-                // falls back to the target.
-                token.actingAsCrmProfileId = undefined;
+                pendingActingAsCrmProfileId = undefined;
+                pendingActingAsHrProfileId = undefined;
               }
             }
           } else if (impersonation === null && token.actingAs) {
@@ -363,13 +394,8 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
             // were previously impersonating — admin must have hit
             // the stop endpoint. Restore the admin's identity.
             const adminEmail = token.adminEmail as string | undefined;
-            if (adminEmail) {
-              email = adminEmail;
-              token.email = adminEmail;
-            }
-            delete token.actingAs;
-            delete token.adminEmail;
-            delete token.actingAsCrmProfileId;
+            if (adminEmail) email = adminEmail;
+            pendingDropImpersonation = true;
           }
         }
         // Wrap the refresh in try/catch — a transient DB blip during JWT
@@ -411,6 +437,27 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
         }
 
         if (dbUser) {
+          // Commit any staged impersonation mutations now that we
+          // know the dbUser lookup succeeded — this closes the race
+          // window where a transient DB error during dbUser fetch
+          // would leave the token in a half-swapped state.
+          if (pendingActingAs) {
+            token.actingAs = pendingActingAs;
+            token.adminEmail = pendingAdminEmail;
+            token.actingAsCrmProfileId = pendingActingAsCrmProfileId;
+            token.actingAsHrProfileId = pendingActingAsHrProfileId;
+            // `actingAs` already is the auth User.id; duplicate it
+            // onto `actingAsUserId` for symmetry with the per-module
+            // id fields (PartnerAuditLog writers key by User.id).
+            token.actingAsUserId = pendingActingAs;
+          }
+          if (pendingDropImpersonation) {
+            delete token.actingAs;
+            delete token.adminEmail;
+            delete token.actingAsCrmProfileId;
+            delete token.actingAsHrProfileId;
+            delete token.actingAsUserId;
+          }
           token.userId = dbUser.id;
           token.mustChangePassword = !!dbUser.mustChangePassword;
           // Keep token.name in sync with whichever identity the
@@ -438,15 +485,30 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
           }
           token.modules = modules;
 
-          // HR data
-          if (dbUser.hrProfile) {
+          // CRM data — only surface when the profile is ACTIVE. Without
+          // this, deactivating a CRM profile excluded "crm" from
+          // `modules` but kept `crmRole` / `crmProfileId` on the token,
+          // so cross-module helpers that branched on crmRole (saved
+          // views isAdmin, email templates, etc.) treated the user as
+          // an active CRM admin. Reset to undefined so deactivation is
+          // observable everywhere.
+          token.crmProfileId = undefined;
+          token.crmRole = undefined;
+          token.crmEntityId = undefined;
+          if (dbUser.crmProfile && dbUser.crmProfile.active) {
+            token.crmProfileId = dbUser.crmProfile.id;
+            token.crmRole = dbUser.crmProfile.role;
+            token.crmEntityId = dbUser.crmProfile.entityId;
+          }
+
+          // HR data — same pattern: reset before re-applying so a
+          // deactivated HR profile doesn't leak roles forward.
+          token.hrProfileId = undefined;
+          token.hrRoles = undefined;
+          token.hrCompanies = undefined;
+          if (dbUser.hrProfile && dbUser.hrProfile.isActive) {
             token.hrProfileId = dbUser.hrProfile.id;
             const explicitRoles = dbUser.hrProfile.roles.map((r) => r.role.name);
-            // Org-chart-derived team-lead: anyone with subordinates picks up
-            // the team_lead role at session time so existing permission
-            // checks (`roles.includes("team_lead")`) keep working without
-            // every call site needing to be rewritten. The boolean comes
-            // free with the dbUser query above — no extra round-trip.
             const derivedLead =
               !!dbUser.hrEmployee?.subordinates?.length &&
               !explicitRoles.includes("team_lead");
@@ -454,21 +516,14 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
               ? [...explicitRoles, "team_lead"]
               : explicitRoles;
             token.hrCompanies = dbUser.hrProfile.companies.map(
-              (c) => c.companyId
+              (c) => c.companyId,
             );
-          }
-
-          // CRM data
-          if (dbUser.crmProfile) {
-            token.crmProfileId = dbUser.crmProfile.id;
-            token.crmRole = dbUser.crmProfile.role;
-            token.crmEntityId = dbUser.crmProfile.entityId;
           }
 
           // Partners data (reset first in case a profile was removed)
           token.partnerProfileId = undefined;
           token.partnerId = undefined;
-          if (dbUser.partnerProfile) {
+          if (dbUser.partnerProfile && dbUser.partnerProfile.isActive) {
             token.partnerProfileId = dbUser.partnerProfile.id;
             token.partnerId = dbUser.partnerProfile.id;
           }
@@ -497,6 +552,8 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
         // own user.id is the TARGET we're impersonating.
         session.user.actingAs = token.actingAs;
         session.user.actingAsCrmProfileId = token.actingAsCrmProfileId;
+        session.user.actingAsHrProfileId = token.actingAsHrProfileId;
+        session.user.actingAsUserId = token.actingAsUserId;
       }
       return session;
     },

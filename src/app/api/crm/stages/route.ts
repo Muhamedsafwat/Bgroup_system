@@ -25,7 +25,13 @@ import { stageLabel } from "@/lib/crm/stage-labels";
  */
 export async function GET() {
   const session = await auth();
-  if (!session?.user?.id || !session.user.crmProfileId) {
+  // Any authenticated user with CRM module access can read the stage
+  // list. Previously the route required `crmProfileId` which excluded
+  // platform super_admins (HR role) who have no CRM profile row — they
+  // got 401 here and the pipeline fell back to the hardcoded SPEC_STAGES,
+  // showing a stale 8-stage column set that diverged from the 11 they
+  // saw in /crm/admin/stage-config.
+  if (!session?.user?.id || !session.user.modules?.includes("crm")) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 

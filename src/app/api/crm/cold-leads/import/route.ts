@@ -202,6 +202,17 @@ export async function POST(request: Request) {
   if (!(file instanceof File)) {
     return NextResponse.json({ error: "No file in the request" }, { status: 400 });
   }
+  // Upper bound on upload size: 25 MB. ExcelJS materialises the
+  // whole workbook in memory, so an attacker uploading a 1 GB file
+  // would otherwise pin a connection + RSS before we ever see the
+  // row count. Reject early on the metadata before reading bytes.
+  const MAX_UPLOAD_BYTES = 25 * 1024 * 1024;
+  if (file.size > MAX_UPLOAD_BYTES) {
+    return NextResponse.json(
+      { error: `File is too large (max ${MAX_UPLOAD_BYTES / 1024 / 1024} MB).` },
+      { status: 413 },
+    );
+  }
   // Append vs. dedupe. By default every uploaded row is inserted as a fresh
   // lead — the cold-lead pool is a *directory* the admin re-uploads into
   // hundreds of times, and silently dropping rows that look like dupes was
@@ -272,10 +283,17 @@ export async function POST(request: Request) {
   // `get` returns the first matching column's value. `getJoined` concatenates
   // every matching column with a " | " separator — used for socialMedia and
   // location which can span 4-5 source columns.
+  // Per-cell length cap. A 50 MB cell value would persist verbatim
+  // into Postgres and bloat every subsequent list query that scans
+  // these columns. 2 KB is plenty for any field a sales rep
+  // legitimately types.
+  const MAX_CELL_CHARS = 2000;
+  const clamp = (s: string) =>
+    s.length > MAX_CELL_CHARS ? s.slice(0, MAX_CELL_CHARS) : s;
   const get = (row: ExcelJS.Row, key: string) => {
     const cols = columnIndex[key];
     if (!cols || cols.length === 0) return "";
-    return cellString(row.getCell(cols[0]));
+    return clamp(cellString(row.getCell(cols[0])));
   };
   const getJoined = (row: ExcelJS.Row, key: string) => {
     const cols = columnIndex[key];
@@ -285,7 +303,7 @@ export async function POST(request: Request) {
       const v = cellString(row.getCell(c));
       if (v) parts.push(v);
     }
-    return parts.join(" | ");
+    return clamp(parts.join(" | "));
   };
 
   let rowIdx = 0;

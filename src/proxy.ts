@@ -259,7 +259,13 @@ export async function proxy(request: NextRequest) {
   //   - sign-out, NextAuth callbacks, and static assets (covered above)
   //   - account API endpoints the dialog needs (session + upload-photo)
   // Everything else hops to /account/change-password.
-  if (session.user.mustChangePassword) {
+  // During impersonation the target's `mustChangePassword` is what the
+  // session carries — but an impersonating admin shouldn't be locked
+  // into the target's change-password loop (and any password they set
+  // there would be the TARGET's). Skip the gate when actingAs is set;
+  // the admin can stop impersonation and the gate fires for their
+  // own session as soon as the JWT swaps back.
+  if (session.user.mustChangePassword && !session.user.actingAs) {
     const allowDuringGate =
       pathname.startsWith("/account/change-password") ||
       pathname === "/api/account/change-password" ||
@@ -361,11 +367,25 @@ export async function proxy(request: NextRequest) {
     return NextResponse.json({ error: "Forbidden" }, { status: 403 });
   }
 
+  // During impersonation the JWT carries the TARGET's modules / hrRoles /
+  // partnerId, so the platform-admin gate on /api/admin/impersonate/stop
+  // would reject the admin's own "Return to admin" click. Special-case
+  // the stop endpoints — the route itself verifies that the caller is
+  // either the active admin (via session.user.actingAs match) or a
+  // platform admin (force-stop), so we can safely let this through the
+  // proxy. Without this carve-out the admin is stuck impersonating
+  // until the JWT staleness window expires.
+  const isImpersonationStop =
+    !!session.user.actingAs &&
+    (pathname === "/api/admin/impersonate/stop" || pathname === "/admin/impersonate");
+
   // Role-aware gate: lock the manager/accountant/admin surfaces so a base
   // "employee" can't reach them by typing the URL. The page would client-side
   // redirect on its own, but that flashes, and worse the data has already
   // been fetched by the page render. Block here.
-  const denied = findDeniedRule(pathname, modules, hrRoles, partnerId, session.user.crmRole ?? null);
+  const denied = isImpersonationStop
+    ? null
+    : findDeniedRule(pathname, modules, hrRoles, partnerId, session.user.crmRole ?? null);
   if (denied) {
     if (pathname.startsWith("/api/")) {
       return NextResponse.json({ error: `Forbidden (${denied.reason})` }, { status: 403 });

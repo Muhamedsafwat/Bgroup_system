@@ -26,6 +26,12 @@ async function getSessionUser(): Promise<SessionUser | null> {
     fullName: session.user.name!,
     role: session.user.crmRole as CrmRole,
     entityId: session.user.crmEntityId ?? null,
+    // Carry the impersonation marker through so call-create paths
+    // (and any downstream audit writer that consumes SessionUser)
+    // can record the admin behind the action. Without this the
+    // CrmActivityLog row written by createCall() would have
+    // actingAdminId=null even when impersonation is active.
+    actingAdminId: session.user.actingAsCrmProfileId,
   };
 }
 

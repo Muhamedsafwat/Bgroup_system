@@ -237,16 +237,22 @@ export async function createOpportunity(input: CreateOpportunityInput) {
   // here so reps get a clean message instead of a Prisma P2002
   // surfacing as a 500. The DB index is the authoritative gate
   // for the race window.
-  const dupeTitle = await db.crmOpportunity.findFirst({
-    where: {
-      title: { equals: title, mode: "insensitive" },
-      deletedAt: null,
-    },
-    select: { id: true, code: true },
-  });
-  if (dupeTitle) {
+  //
+  // Use $queryRaw with LOWER(title) = LOWER($1) so the lookup
+  // actually USES the functional partial unique index — Prisma's
+  // `{ equals, mode: 'insensitive' }` translates to ILIKE, which
+  // the planner can't match against `LOWER(title)` and falls back
+  // to a seq scan on large tenants.
+  const dupeTitle = await db.$queryRaw<{ id: string; code: string }[]>`
+    SELECT id, code
+    FROM crm_opportunities
+    WHERE LOWER(title) = LOWER(${title})
+      AND "deletedAt" IS NULL
+    LIMIT 1
+  `;
+  if (dupeTitle.length > 0) {
     throw new Error(
-      `An opportunity named "${title}" already exists (${dupeTitle.code}). Pick a different name.`,
+      `An opportunity named "${title}" already exists (${dupeTitle[0].code}). Pick a different name.`,
     );
   }
 
@@ -289,6 +295,7 @@ export async function createOpportunity(input: CreateOpportunityInput) {
         fromStage: null,
         toStage: "NEW",
         changedById: session.id,
+        actingAdminId: session.actingAdminId ?? null,
       },
     });
 
@@ -296,6 +303,7 @@ export async function createOpportunity(input: CreateOpportunityInput) {
       data: {
         opportunityId: created.id,
         actorId: session.id,
+        actingAdminId: session.actingAdminId ?? null,
         action: "created",
         metadata: { code: created.code },
       },
@@ -354,6 +362,7 @@ export async function createOpportunity(input: CreateOpportunityInput) {
     entityType: "opportunity",
     entityId: opp.id,
     actorId: session.id,
+    actorAdminId: session.actingAdminId ?? null,
     priority: opp.priority,
     estimatedValueEGP: Number(opp.estimatedValueEGP),
     entityCode: opp.code,
@@ -403,17 +412,20 @@ export async function updateOpportunity(id: string, input: UpdateOpportunityInpu
     updateData.title.toLowerCase() !== existing.title.toLowerCase()
   ) {
     const newTitle = updateData.title as string;
-    const dupeTitle = await db.crmOpportunity.findFirst({
-      where: {
-        title: { equals: newTitle, mode: "insensitive" },
-        deletedAt: null,
-        NOT: { id },
-      },
-      select: { id: true, code: true },
-    });
-    if (dupeTitle) {
+    // Same $queryRaw pattern as createOpportunity — hits the
+    // LOWER(title) partial unique index instead of falling back
+    // to ILIKE seq-scan.
+    const dupeTitle = await db.$queryRaw<{ id: string; code: string }[]>`
+      SELECT id, code
+      FROM crm_opportunities
+      WHERE LOWER(title) = LOWER(${newTitle})
+        AND "deletedAt" IS NULL
+        AND id <> ${id}
+      LIMIT 1
+    `;
+    if (dupeTitle.length > 0) {
       throw new Error(
-        `An opportunity named "${newTitle}" already exists (${dupeTitle.code}). Pick a different name.`,
+        `An opportunity named "${newTitle}" already exists (${dupeTitle[0].code}). Pick a different name.`,
       );
     }
   }
@@ -566,6 +578,7 @@ export async function updateOpportunity(id: string, input: UpdateOpportunityInpu
       data: {
         opportunityId: id,
         actorId: session.id,
+        actingAdminId: session.actingAdminId ?? null,
         action: "updated",
         metadata: { fields: Object.keys(parsed) },
       },
@@ -607,6 +620,7 @@ export async function deleteOpportunity(id: string) {
       data: {
         opportunityId: id,
         actorId: session.id,
+        actingAdminId: session.actingAdminId ?? null,
         action: "deleted",
         metadata: {},
       },
@@ -754,6 +768,7 @@ export async function changeStage(opportunityId: string, input: StageChangeInput
         fromStage: opp.stage,
         toStage: parsed.toStage as CrmOpportunityStage,
         changedById: session.id,
+        actingAdminId: session.actingAdminId ?? null,
         durationDays,
       },
     });
@@ -762,6 +777,7 @@ export async function changeStage(opportunityId: string, input: StageChangeInput
       data: {
         opportunityId,
         actorId: session.id,
+        actingAdminId: session.actingAdminId ?? null,
         action: "stage_changed",
         metadata: {
           from: opp.stage,
@@ -783,6 +799,7 @@ export async function changeStage(opportunityId: string, input: StageChangeInput
     entityType: "opportunity",
     entityId: opportunityId,
     actorId: session.id,
+    actorAdminId: session.actingAdminId ?? null,
     fromStage: opp.stage,
     toStage: parsed.toStage,
     durationDays,
@@ -804,6 +821,7 @@ export async function addNote(opportunityId: string, content: string) {
       data: {
         opportunityId,
         authorId: session.id,
+        actingAdminId: session.actingAdminId ?? null,
         content,
       },
     });
@@ -812,6 +830,7 @@ export async function addNote(opportunityId: string, content: string) {
       data: {
         opportunityId,
         actorId: session.id,
+        actingAdminId: session.actingAdminId ?? null,
         action: "note_added",
       },
     });

@@ -5,20 +5,29 @@ import { auth } from "@/lib/auth";
 import { randomBytes } from "node:crypto";
 import { describeZodError } from "@/lib/zod-errors";
 
+// Reasonable per-line bounds. qty + unitPrice were previously
+// unbounded — Number.MAX_VALUE multiplied through Decimal math
+// overflowed totals. 10^7 for qty (10 million units) + 10^10 for
+// unitPrice (10 billion / unit) covers any realistic deal.
 const lineSchema = z.object({
   productId: z.string().optional(),
   description: z.string().trim().min(1).max(500),
-  qty: z.number().positive(),
-  unitPrice: z.number().nonnegative(),
+  qty: z.number().positive().max(10_000_000),
+  unitPrice: z.number().nonnegative().max(10_000_000_000),
 });
 
 const createSchema = z.object({
   opportunityId: z.string().optional(),
-  currency: z.string().length(3).optional().default("EGP"),
+  // Align with the CrmCurrency enum used everywhere else instead of
+  // accepting any 3-char string ("xyz", emoji of length 3, etc.).
+  currency: z.enum(["EGP", "USD", "SAR", "AED", "QAR"]).optional().default("EGP"),
   taxRatePct: z.number().min(0).max(100).optional().default(0),
   discountPct: z.number().min(0).max(100).optional().default(0),
   validUntil: z.string().datetime().optional(),
-  lines: z.array(lineSchema).min(1),
+  // Cap at 500 lines per quote — a single quote with millions of
+  // lines would blow the nested-create through Prisma. Anything
+  // close to this limit is almost certainly a script bug.
+  lines: z.array(lineSchema).min(1).max(500),
 });
 
 function generateQuoteNumber(): string {
@@ -48,7 +57,7 @@ export async function POST(req: Request) {
   const body = await req.json();
   const parsed = createSchema.safeParse(body);
   if (!parsed.success) {
-    { const __z = describeZodError(parsed.error); return NextResponse.json({ error: __z.message, fieldErrors: __z.fieldErrors }, { status: 400 }); }
+    { const __z = describeZodError(parsed.error); return NextResponse.json({ error: __z.message, fieldErrors: __z.fieldErrors }, { status: 422 }); }
   }
 
   const quote = await db.quote.create({

@@ -17,6 +17,12 @@ import { isAdminOnly } from "@/lib/crm/admin-gates";
  * Gate: ADMIN.
  */
 
+/// Outer-size bound on the `definition` JSON blob — keeps an admin
+/// from storing megabytes of options that the entity-render path
+/// reads on every form load. 32 KB is plenty for the picklist /
+/// lookup configs we actually need.
+const MAX_DEFINITION_BYTES = 32_000;
+
 const createSchema = z.object({
   objectType: z.enum(["opportunity", "contact", "coldLead", "company"]),
   slug: z
@@ -27,7 +33,13 @@ const createSchema = z.object({
   label: z.string().trim().min(1).max(80),
   kind: z.enum(["text", "number", "picklist", "date", "boolean", "lookup"]),
   required: z.boolean().optional(),
-  definition: z.record(z.string(), z.unknown()).optional(),
+  definition: z
+    .record(z.string(), z.unknown())
+    .optional()
+    .refine(
+      (v) => v === undefined || JSON.stringify(v).length <= MAX_DEFINITION_BYTES,
+      `definition must serialise to <= ${MAX_DEFINITION_BYTES} bytes`,
+    ),
   displayOrder: z.number().int().min(0).max(99).optional(),
 });
 
