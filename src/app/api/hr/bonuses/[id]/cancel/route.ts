@@ -81,8 +81,10 @@ export async function POST(
     }
     const dismissedReason = parsed.data.dismissed_reason || ''
 
-    await prisma.hrBonus.update({
-      where: { id: pk },
+    // Atomic transition: gate on `status: 'pending'` so a concurrent
+    // approve/cancel can't both succeed.
+    const txResult = await prisma.hrBonus.updateMany({
+      where: { id: pk, status: 'pending' },
       data: {
         status: 'dismissed',
         approvedById: authUser.id,
@@ -90,6 +92,12 @@ export async function POST(
         updatedAt: new Date(),
       },
     })
+    if (txResult.count === 0) {
+      return NextResponse.json(
+        { detail: 'Bonus is no longer pending — it was just actioned by someone else.' },
+        { status: 409 },
+      )
+    }
 
     const updated = await prisma.hrBonus.findUnique({
       where: { id: pk },

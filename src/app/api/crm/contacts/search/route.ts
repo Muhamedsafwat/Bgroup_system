@@ -30,7 +30,10 @@ export async function GET(req: NextRequest) {
   };
 
   const url = new URL(req.url);
-  const q = url.searchParams.get("q")?.trim() ?? "";
+  // Bound the query so an unbounded ILIKE %X% across millions of
+  // contact rows can't lock a connection. Same pattern as the
+  // mentionable picker and global-search.
+  const q = (url.searchParams.get("q")?.trim() ?? "").slice(0, 100);
   const companyScope = scopeCompanyByRole(sessionUser);
 
   const where = q

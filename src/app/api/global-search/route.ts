@@ -33,7 +33,11 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
-  const q = req.nextUrl.searchParams.get("q")?.trim();
+  // Bound the query length so a multi-MB `q` can't tie up parallel
+  // ILIKE scans across ~12 tables. The trigram indexes can't help
+  // with arbitrarily long needles either.
+  const rawQ = req.nextUrl.searchParams.get("q")?.trim() ?? "";
+  const q = rawQ.slice(0, 100);
   if (!q || q.length < 2) {
     return NextResponse.json({ results: [] });
   }

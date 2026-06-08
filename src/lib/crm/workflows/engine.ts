@@ -42,6 +42,11 @@ type WorkflowPayload = Record<string, unknown> & {
   entityType?: "opportunity" | "coldLead" | "company";
   entityId?: string;
   actorId?: string | null;
+  /// When the original action was performed under impersonation, the
+  /// admin's CrmUserProfile id. Audit-log rows written by the engine
+  /// propagate this so the audit trail can reveal who triggered the
+  /// chain. Optional — undefined for self-acted events.
+  actorAdminId?: string | null;
 };
 
 type FireOptions = {
@@ -176,6 +181,7 @@ async function runAction(
       data: {
         opportunityId: payload.entityId,
         actorId: payload.actorId as string,
+        actingAdminId: (payload.actorAdminId as string | null | undefined) ?? null,
         action: "workflow-notify",
         metadata: {
           message: action.message ?? "Workflow notification",
@@ -241,6 +247,7 @@ async function runAction(
       data: {
         opportunityId: payload.entityId,
         actorId: payload.actorId as string,
+        actingAdminId: (payload.actorAdminId as string | null | undefined) ?? null,
         action: "workflow-create-task",
         metadata: {
           taskTitle: action.title ?? "Untitled task",

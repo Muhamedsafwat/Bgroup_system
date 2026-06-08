@@ -40,6 +40,23 @@ export async function GET(req: Request) {
   const repIdParam = url.searchParams.get("repId");
   const scope = url.searchParams.get("scope") ?? "mine";
 
+  // Validate from/to as YYYY-MM-DD strings before passing to `new
+  // Date(...)`. `new Date("garbage")` is `Invalid Date`, which
+  // Prisma rejects with a verbose 500 — friendly 400 instead.
+  const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
+  if (from && !DATE_RE.test(from)) {
+    return NextResponse.json(
+      { error: "`from` must be a YYYY-MM-DD date" },
+      { status: 400 },
+    );
+  }
+  if (to && !DATE_RE.test(to)) {
+    return NextResponse.json(
+      { error: "`to` must be a YYYY-MM-DD date" },
+      { status: 400 },
+    );
+  }
+
   const where: Prisma.CrmDailyReportWhereInput = {};
   const dateFilter: { gte?: Date; lte?: Date } = {};
   if (from) dateFilter.gte = new Date(`${from}T00:00:00.000Z`);
@@ -90,7 +107,7 @@ export async function POST(req: Request) {
   const body = await req.json();
   const parsed = upsertSchema.safeParse(body);
   if (!parsed.success) {
-    { const __z = describeZodError(parsed.error); return NextResponse.json({ error: __z.message, fieldErrors: __z.fieldErrors }, { status: 400 }); }
+    { const __z = describeZodError(parsed.error); return NextResponse.json({ error: __z.message, fieldErrors: __z.fieldErrors }, { status: 422 }); }
   }
   const data = parsed.data;
 

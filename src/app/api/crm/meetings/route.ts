@@ -5,6 +5,7 @@ import { auth } from "@/lib/auth";
 import { db } from "@/lib/db";
 import { CrmMeetingStatus, CrmMeetingType, type Prisma } from "@/generated/prisma";
 import { describeZodError } from "@/lib/zod-errors";
+import { isPlatformAdmin } from "@/lib/crm/admin-gates";
 
 const createSchema = z.object({
   startAt: z.string().datetime(),
@@ -39,9 +40,6 @@ async function generateCode(): Promise<string> {
   return `MTG-${String(n).padStart(5, "0")}`;
 }
 
-function isPlatformAdmin(session: Session) {
-  return !!session.user.hrRoles?.includes("super_admin");
-}
 
 export async function GET(req: Request) {
   const session = (await auth()) as Session | null;
@@ -61,6 +59,19 @@ export async function GET(req: Request) {
   // need to see colleagues' meetings to avoid double-booking the same product
   // in the same time-slot. Pass `?scope=mine` to filter to just the caller.
   const scope = url.searchParams.get("scope") ?? "all";
+
+  // Validate from/to as ISO date(time)s before `new Date()` —
+  // `Invalid Date` would otherwise propagate to Prisma as a 500.
+  function isValidDateString(s: string): boolean {
+    const d = new Date(s);
+    return !Number.isNaN(d.getTime());
+  }
+  if (from && !isValidDateString(from)) {
+    return NextResponse.json({ error: "`from` is not a valid date" }, { status: 400 });
+  }
+  if (to && !isValidDateString(to)) {
+    return NextResponse.json({ error: "`to` is not a valid date" }, { status: 400 });
+  }
 
   const where: Prisma.CrmMeetingWhereInput = {};
   const startFilter: { gte?: Date; lt?: Date } = {};
@@ -100,7 +111,7 @@ export async function POST(req: Request) {
   const body = await req.json();
   const parsed = createSchema.safeParse(body);
   if (!parsed.success) {
-    { const __z = describeZodError(parsed.error); return NextResponse.json({ error: __z.message, fieldErrors: __z.fieldErrors }, { status: 400 }); }
+    { const __z = describeZodError(parsed.error); return NextResponse.json({ error: __z.message, fieldErrors: __z.fieldErrors }, { status: 422 }); }
   }
   const data = parsed.data;
 
@@ -216,6 +227,7 @@ export async function POST(req: Request) {
     data: {
       code,
       scheduledById,
+      actingAdminId: session.user.actingAsCrmProfileId ?? null,
       startAt,
       endAt,
       durationMinutes: data.durationMinutes,

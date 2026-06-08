@@ -73,14 +73,24 @@ export async function POST(
       return NextResponse.json({ detail: 'Only pending bonuses can be applied.' }, { status: 400 })
     }
 
-    await prisma.hrBonus.update({
-      where: { id: pk },
+    // Atomic state-machine transition: only the race winner sees
+    // count=1. The previous read-then-update pattern let two
+    // concurrent approvals both pass the `status === 'pending'` gate
+    // and double-apply (second approver overwriting the first).
+    const txResult = await prisma.hrBonus.updateMany({
+      where: { id: pk, status: 'pending' },
       data: {
         status: 'applied',
         approvedById: authUser.id,
         updatedAt: new Date(),
       },
     })
+    if (txResult.count === 0) {
+      return NextResponse.json(
+        { detail: 'Bonus is no longer pending — it was just actioned by someone else.' },
+        { status: 409 },
+      )
+    }
 
     const updated = await prisma.hrBonus.findUnique({
       where: { id: pk },

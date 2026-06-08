@@ -135,6 +135,10 @@ export function NotificationCenter() {
       try {
         await markRead(n.id, n.module);
       } catch {
+        // Without a toast the badge silently flickers back to the
+        // unread count on the refetch. Surface the failure so the
+        // user knows their click didn't stick.
+        toast.error("Couldn't mark notification as read");
         queryClient.invalidateQueries({ queryKey: ["notifications"] });
       }
     }
@@ -154,6 +158,10 @@ export function NotificationCenter() {
     try {
       await markAllRead();
     } catch {
+      // Same silent-failure pattern as handleClick — the bell badge
+      // would jump back to the original count via the refetch with no
+      // toast explaining why.
+      toast.error("Couldn't mark all as read");
       queryClient.invalidateQueries({ queryKey: ["notifications"] });
     }
   }
@@ -188,14 +196,26 @@ export function NotificationCenter() {
         </div>
 
         <Tabs value={tab} onValueChange={(v) => setTab(v as Tab)}>
-          <TabsList className="grid grid-cols-5 mx-2 my-2">
-            <TabsTrigger value="all">All</TabsTrigger>
-            <TabsTrigger value="unread">
-              Unread{unreadCount > 0 ? ` (${unreadCount})` : ""}
+          {/* Five-tab grid inside a 384px popover gets cramped once the
+              unread count grows past two digits. Clamp the displayed
+              badge to "9+" (mirrors the bell-level "99+" but kept
+              tighter so the label never wraps), shrink the text on
+              narrow widths, and let each tab cell truncate cleanly. */}
+          <TabsList className="grid grid-cols-5 mx-2 my-2 gap-0.5">
+            <TabsTrigger value="all" className="text-xs px-1 truncate">All</TabsTrigger>
+            <TabsTrigger value="unread" className="text-xs px-1 truncate">
+              <span className="truncate">
+                Unread
+                {unreadCount > 0 && (
+                  <span className="ms-0.5 tabular-nums">
+                    ({unreadCount > 9 ? "9+" : unreadCount})
+                  </span>
+                )}
+              </span>
             </TabsTrigger>
-            <TabsTrigger value="hr">HR</TabsTrigger>
-            <TabsTrigger value="crm">CRM</TabsTrigger>
-            <TabsTrigger value="partners">Partners</TabsTrigger>
+            <TabsTrigger value="hr" className="text-xs px-1 truncate">HR</TabsTrigger>
+            <TabsTrigger value="crm" className="text-xs px-1 truncate">CRM</TabsTrigger>
+            <TabsTrigger value="partners" className="text-xs px-1 truncate">Partners</TabsTrigger>
           </TabsList>
           <TabsContent value={tab} className="m-0">
             <ScrollArea className="h-[24rem]">

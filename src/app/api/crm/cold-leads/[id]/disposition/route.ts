@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import type { Session } from "next-auth";
 import { z } from "zod";
 import { auth } from "@/lib/auth";
 import { db } from "@/lib/db";
@@ -6,6 +7,7 @@ import { computeRecycleEligibility } from "@/lib/crm/cold-leads";
 import type { CrmColdLeadStatus } from "@/generated/prisma";
 import { describeZodError } from "@/lib/zod-errors";
 import { fireWorkflow } from "@/lib/crm/workflows/engine";
+import { isManagerOrAdmin } from "@/lib/crm/admin-gates";
 
 /**
  * POST /api/crm/cold-leads/[id]/disposition
@@ -48,9 +50,11 @@ export async function POST(
     return NextResponse.json({ error: "Lead not found" }, { status: 404 });
   }
 
-  const role = session.user.crmRole;
-  const isManagerOrAdmin = role === "ADMIN" || role === "MANAGER";
-  const canTouch = lead.assignedToId === session.user.crmProfileId || isManagerOrAdmin;
+  // Canonical helper so platform super_admin + partners-admin
+  // see disposition the same way CRM ADMIN/MANAGER do.
+  const canTouch =
+    lead.assignedToId === session.user.crmProfileId ||
+    isManagerOrAdmin(session as Session);
   if (!canTouch) {
     return NextResponse.json(
       { error: "This lead isn't assigned to you" },
@@ -74,6 +78,7 @@ export async function POST(
       data: {
         coldLeadId: id,
         repId: session.user.crmProfileId,
+        actingAdminId: session.user.actingAsCrmProfileId ?? null,
         disposition: parsed.data.disposition as CrmColdLeadStatus,
         notes: parsed.data.notes ?? null,
       },
@@ -86,6 +91,7 @@ export async function POST(
     entityType: "coldLead",
     entityId: id,
     actorId: session.user.crmProfileId,
+    actorAdminId: session.user.actingAsCrmProfileId ?? null,
     disposition: parsed.data.disposition,
   });
 

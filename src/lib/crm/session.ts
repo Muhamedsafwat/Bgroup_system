@@ -13,6 +13,7 @@ export async function getRequiredSession(): Promise<SessionUser> {
     fullName: session.user.name!,
     role: session.user.crmRole!,
     entityId: session.user.crmEntityId ?? null,
+    actingAdminId: session.user.actingAsCrmProfileId,
   };
 }
 
@@ -25,5 +26,6 @@ export async function getOptionalSession(): Promise<SessionUser | null> {
     fullName: session.user.name!,
     role: session.user.crmRole!,
     entityId: session.user.crmEntityId ?? null,
+    actingAdminId: session.user.actingAsCrmProfileId,
   };
 }

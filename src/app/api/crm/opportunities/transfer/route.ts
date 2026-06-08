@@ -47,7 +47,7 @@ export async function POST(req: Request) {
   const body = await req.json();
   const parsed = transferSchema.safeParse(body);
   if (!parsed.success) {
-    { const __z = describeZodError(parsed.error); return NextResponse.json({ error: __z.message, fieldErrors: __z.fieldErrors }, { status: 400 }); }
+    { const __z = describeZodError(parsed.error); return NextResponse.json({ error: __z.message, fieldErrors: __z.fieldErrors }, { status: 422 }); }
   }
   const { opportunityIds, toRepId, reason } = parsed.data;
 
@@ -64,9 +64,10 @@ export async function POST(req: Request) {
   }
 
   // Look up the opportunities (deduped) so we can scope, audit, and skip ones
-  // already owned by the target rep.
+  // already owned by the target rep. `deletedAt: null` so a soft-deleted opp
+  // can't be silently transferred.
   const opps = await db.crmOpportunity.findMany({
-    where: { id: { in: opportunityIds } },
+    where: { id: { in: opportunityIds }, deletedAt: null },
     select: {
       id: true,
       code: true,
@@ -83,32 +84,39 @@ export async function POST(req: Request) {
   // rebalance across entities + teams without round-tripping through an
   // admin.
   const actorId = session.user.crmProfileId ?? null;
-  const allowedIds = new Set(opps.map((o) => o.id));
 
+  // Wrap update + audit-log in a single transaction so a mid-loop
+  // failure (deleted rep, network blip) rolls the whole batch back
+  // instead of leaving some opps transferred + some not, audit log
+  // half-complete. Bounded by the zod max on the input array.
+  const toTransfer = opps.filter((o) => o.ownerId !== toRepId);
   const transferred: Array<{ id: string; code: string; fromOwnerId: string }> = [];
-  for (const o of opps) {
-    if (!allowedIds.has(o.id)) continue;
-    if (o.ownerId === toRepId) continue; // already owned by target — no-op
-    await db.crmOpportunity.update({
-      where: { id: o.id },
-      data: { ownerId: toRepId },
+  if (toTransfer.length > 0) {
+    await db.$transaction(async (tx) => {
+      for (const o of toTransfer) {
+        await tx.crmOpportunity.update({
+          where: { id: o.id },
+          data: { ownerId: toRepId },
+        });
+        await tx.crmActivityLog.create({
+          data: {
+            opportunityId: o.id,
+            actorId: actorId ?? toRepId, // fallback so FK never null
+            actingAdminId: session.user.actingAsCrmProfileId ?? null,
+            action: "OWNER_REASSIGNED",
+            metadata: {
+              fromOwnerId: o.ownerId,
+              fromOwnerName: o.owner?.fullName ?? null,
+              toOwnerId: toRepId,
+              toOwnerName: target.fullName,
+              reason: reason ?? null,
+              by: session.user.name ?? session.user.email,
+            },
+          },
+        });
+        transferred.push({ id: o.id, code: o.code, fromOwnerId: o.ownerId });
+      }
     });
-    await db.crmActivityLog.create({
-      data: {
-        opportunityId: o.id,
-        actorId: actorId ?? toRepId, // fallback so FK never null
-        action: "OWNER_REASSIGNED",
-        metadata: {
-          fromOwnerId: o.ownerId,
-          fromOwnerName: o.owner?.fullName ?? null,
-          toOwnerId: toRepId,
-          toOwnerName: target.fullName,
-          reason: reason ?? null,
-          by: session.user.name ?? session.user.email,
-        },
-      },
-    });
-    transferred.push({ id: o.id, code: o.code, fromOwnerId: o.ownerId });
   }
 
   return NextResponse.json({

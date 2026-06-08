@@ -8,6 +8,12 @@ interface AuditLogEntry {
   changes?: Record<string, { from: unknown; to: unknown }>
   details?: string
   ipAddress?: string
+  /// auth User.id of the admin when the action was performed under
+  /// impersonation. `userId` records the target's HR identity; this
+  /// column captures the admin behind the action. Read from
+  /// `session.user.actingAsUserId` by callers (undefined when the
+  /// user is acting as themselves).
+  actingAdminId?: string
 }
 
 /**
@@ -24,6 +30,7 @@ export async function createAuditLog(entry: AuditLogEntry) {
       entityType: entry.entityType,
       entityId: entry.entityId != null ? String(entry.entityId) : '',
       ipAddress: entry.ipAddress ?? null,
+      actingAdminId: entry.actingAdminId ?? null,
       timestamp: new Date(),
     }
 

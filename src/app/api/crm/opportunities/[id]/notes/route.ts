@@ -67,6 +67,7 @@ export async function POST(
       data: {
         opportunityId: id,
         authorId: session.user.crmProfileId,
+        actingAdminId: session.user.actingAsCrmProfileId ?? null,
         content: parsed.data.content,
       },
       include: {
@@ -77,6 +78,7 @@ export async function POST(
       data: {
         opportunityId: id,
         actorId: session.user.crmProfileId,
+        actingAdminId: session.user.actingAsCrmProfileId ?? null,
         action: "note_added",
         metadata: {},
       },
