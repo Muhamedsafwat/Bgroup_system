@@ -4,7 +4,7 @@ import { z } from "zod";
 import { auth } from "@/lib/auth";
 import { db } from "@/lib/db";
 import { describeZodError } from "@/lib/zod-errors";
-import type { Prisma } from "@/generated/prisma";
+import { Prisma } from "@/generated/prisma";
 import { isAdminOnly } from "@/lib/crm/admin-gates";
 
 /**
@@ -86,13 +86,22 @@ export async function PATCH(req: Request) {
     return NextResponse.json({ error: message, fieldErrors }, { status: 422 });
   }
   const { id, triggerConfig, conditionJson, actionJson, ...rest } = parsed.data;
+
+  // audit v12 MEDIUM (MED-40): if triggerKind is being changed without a new
+  // triggerConfig, explicitly null out the stale config so the old toStage/
+  // fromStage (or equivalent) fields don't silently persist and fail to match.
+  const triggerConfigUpdate =
+    triggerConfig !== undefined
+      ? { triggerConfig: triggerConfig as Prisma.InputJsonValue }
+      : rest.triggerKind !== undefined
+      ? { triggerConfig: Prisma.JsonNull } // clear stale config on kind change
+      : {};
+
   const wf = await db.crmWorkflow.update({
     where: { id },
     data: {
       ...rest,
-      ...(triggerConfig !== undefined
-        ? { triggerConfig: triggerConfig as Prisma.InputJsonValue }
-        : {}),
+      ...triggerConfigUpdate,
       ...(conditionJson !== undefined
         ? { conditionJson: conditionJson as Prisma.InputJsonValue }
         : {}),

@@ -12,6 +12,7 @@ import {
   getStageProbability,
 } from "@/lib/crm/business/pipeline";
 import { fireWorkflow } from "@/lib/crm/workflows/engine";
+import { canTransition } from "@/lib/crm/business/stage-transitions";
 
 function isManager(session: Session) {
   return (
@@ -70,7 +71,16 @@ export async function GET(req: Request) {
     // to "ops I personally own" so a manager can quickly check their own
     // book; otherwise no base filter — `repId=…` below lets them drill
     // into any specific rep across the floor.
-    if (scope === "mine") {
+    // audit v12 LOW (LOW-3): a platform super_admin with no CrmUserProfile has
+    // callerId="__none__"; filtering by that sentinel silently returns zero rows.
+    // Return a 422 so the UI can show a meaningful message instead.
+    if (scope === "mine" && callerId === "__none__") {
+      return NextResponse.json(
+        { error: "No CRM profile linked to this account; cannot filter by 'mine'" },
+        { status: 422 },
+      );
+    }
+    if (scope === "mine" && callerId !== "__none__") {
       and.push({ ownerId: callerId });
     }
   } else {
@@ -177,13 +187,32 @@ export async function PATCH(req: Request) {
     return NextResponse.json({ ok: true, unchanged: true });
   }
 
+  // audit v12 MEDIUM (MED-12) recheck: enforce transition-matrix rules
+  // (terminal-stage lock, max-2-forward skip, POSTPONED->WON block, etc.)
+  // before the target-stage DB lookup. Cast through string because opp.stage
+  // may be an admin-added code not in the CrmOpportunityStage union;
+  // canTransition already fails-closed on unknown values (HIGH-24).
+  const transition = canTransition(
+    opp.stage as CrmOpportunityStage,
+    parsed.data.newStage as CrmOpportunityStage,
+  );
+  if (!transition.allowed) {
+    return NextResponse.json(
+      { error: transition.error ?? "Transition not allowed" },
+      { status: 422 },
+    );
+  }
+
   // Validate target stage is configured + active, same gate the bulk
   // route applies. Without this, a rep could drag into a stage the
   // admin disabled.
   const newStage = parsed.data.newStage;
+  // audit v12 HIGH (HIGH-25): also select stageType so closesDeal
+  // honours admin-curated terminal stages (e.g. stageType='won' on
+  // 'WON_DEAL'), not just the seed codes.
   const stageCfg = await db.crmStageConfig.findFirst({
     where: { stage: newStage, isActive: true },
-    select: { id: true },
+    select: { id: true, stageType: true },
   });
   if (!stageCfg) {
     return NextResponse.json(
@@ -206,7 +235,25 @@ export async function PATCH(req: Request) {
     fxRates,
   );
 
-  const closesDeal = newStage === "WON" || newStage === "LOST";
+  // audit v12 HIGH (HIGH-25): honour admin-curated terminal stages.
+  const closesDeal =
+    newStage === "WON" ||
+    newStage === "LOST" ||
+    stageCfg.stageType === "won" ||
+    stageCfg.stageType === "lost";
+  // audit v12 MEDIUM (MED-11): compute durationDays so drag-drop transitions
+  // populate time-in-stage the same way the changeStage server action does.
+  const lastStageChange = await db.crmStageHistory.findFirst({
+    where: { opportunityId: opp.id },
+    orderBy: { changedAt: "desc" },
+  });
+  const durationDays = lastStageChange
+    ? Math.floor(
+        (Date.now() - lastStageChange.changedAt.getTime()) /
+          (1000 * 60 * 60 * 24)
+      )
+    : null;
+
   // Wrap the update + history write in a single transaction so a
   // failure on the history write doesn't leave the opp stage-changed
   // with no audit row (or vice versa).
@@ -228,6 +275,7 @@ export async function PATCH(req: Request) {
         toStage: newStage,
         changedById: session.user.crmProfileId ?? session.user.id,
         actingAdminId: session.user.actingAsCrmProfileId ?? null,
+        durationDays, // audit v12 MEDIUM (MED-11)
       },
     }),
   ]);

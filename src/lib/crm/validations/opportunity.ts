@@ -143,7 +143,8 @@ export const updateOpportunitySchema = z.object({
   // the previous 10k / 500 maxes silently blocked the edit form
   // from submitting whenever existing payloads exceeded them.
   nextActionText: z.string().trim().max(2_000).optional(),
-  nextActionDate: z.string().trim().max(40).optional(),
+  // audit v12 LOW (LOW-1): add .min(1) to reject empty strings, mirroring createOpportunitySchema
+  nextActionDate: z.string().trim().min(1, "Next action date is required").max(40).optional(),
   description: z.string().trim().max(100_000).optional(),
   techRequirements: z.string().trim().max(100_000).optional(),
   techSupportId: z.string().optional(),

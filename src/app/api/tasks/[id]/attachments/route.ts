@@ -72,7 +72,8 @@ const metaSchema = z.object({
   mimeType: z.string().trim().min(1).max(120),
   sizeBytes: z.number().int().nonnegative().max(MAX_BYTES),
   /// Base64-encoded body. Caller is responsible for encoding the file client-side.
-  contentBase64: z.string().min(1),
+  // audit v12 MEDIUM (MED-60): cap base64 length before any decoding to prevent memory exhaustion
+  contentBase64: z.string().min(1).max(Math.ceil(MAX_BYTES * (4 / 3)) + 4),
 });
 
 export async function POST(req: Request, { params }: { params: Promise<{ id: string }> }) {

@@ -122,12 +122,22 @@ export async function POST(
   if (parsed.data.attendees) meetingNotesParts.push(`Attendees: ${parsed.data.attendees}`);
   if (parsed.data.note) meetingNotesParts.push(`Outcome:\n${parsed.data.note}`);
 
+  // audit v12 MEDIUM (MED-29): guard against silent truncation — return 422
+  // instead of slicing data so the caller can shorten their input.
+  const fullMeetingNotes = meetingNotesParts.join("\n\n");
+  if (fullMeetingNotes.length > 2000) {
+    return NextResponse.json(
+      { error: "Combined meeting notes exceed 2000 characters. Please shorten the note, attendees, or meeting link." },
+      { status: 422 }
+    );
+  }
+
   await db.$transaction(async (tx) => {
     await tx.crmMeeting.update({
       where: { id },
       data: {
         status: "DONE",
-        notes: meetingNotesParts.join("\n\n").slice(0, 2000),
+        notes: fullMeetingNotes,
       },
     });
 

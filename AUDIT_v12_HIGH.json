@@ -1,0 +1,432 @@
+[
+  {
+    "rank": 18,
+    "severity": "HIGH",
+    "domain": "opportunities",
+    "file": "src/components/crm/opportunities/OpportunityKanban.tsx:64-87",
+    "summary": "Kanban fetch on mount ignores parent filters/search/URL params — empty deps + no query passthrough overwrites the filtered prop.",
+    "scenario": "Manager filters ownerId=Sara then toggles kanban; mount fetch returns full role-scoped pipeline; drag-drop affects wrong cards.",
+    "recommended_fix": "Pass searchParams into the fetch (scope/repId/companyId/productId/q) and re-fetch when filters change; or accept the prop as authoritative when present.",
+    "regression_of_v11_fix": true
+  },
+  {
+    "rank": 19,
+    "severity": "HIGH",
+    "domain": "opportunities",
+    "file": "src/app/api/crm/opportunities/bulk/route.ts:203-364",
+    "summary": "Bulk set-stage skips activity-quota gate, date-stamping side effects, CrmActivityLog write, and race-gate on source stage.",
+    "scenario": "Manager bulk-moves 30 DISCOVERY→CONTACTED; quota policy bypassed; dateContacted/dateDiscovery never stamped; SLA reports drift; activity feed empty; concurrent rep moves clobbered.",
+    "recommended_fix": "Factor a shared 'apply stage change to one opp' helper used by single-opp, drag-drop and bulk paths; include quota check, date stamping, activity-log write, and the updateMany pinned to source stage with a per-row skipped/conflict result aggregated into the response.",
+    "regression_of_v11_fix": true
+  },
+  {
+    "rank": 20,
+    "severity": "HIGH",
+    "domain": "opportunities",
+    "file": "src/components/crm/opportunities/StageChangeModal.tsx:52-129 + stage-transitions.ts:124-127",
+    "summary": "WON declares depositRequired but modal never validates it; depositAmount initial 0 sends undefined → server skips persist.",
+    "scenario": "Rep moves to WON, leaves depositAmount=0, clicks Confirm — depositRequired check absent, server writes nothing, opp WON with no deposit visible to finance.",
+    "recommended_fix": "Add depositRequired validation in handleSubmit (require depositAmount>0 + depositDate when requirements.depositRequired); send `depositAmount: depositAmount` (not `|| undefined`) so 0 becomes a real validation error server-side.",
+    "regression_of_v11_fix": true
+  },
+  {
+    "rank": 21,
+    "severity": "HIGH",
+    "domain": "pipeline",
+    "file": "src/app/api/crm/pipeline/route.ts:274-280",
+    "summary": "Activity-quota gate fires on moves into terminal stages — reps cannot mark dead deals LOST without first logging fake calls.",
+    "scenario": "DISCOVERY quota requires 2 calls; rep drags ghosted opp to LOST; checkActivityQuota called unconditionally; returns 'X more calls required'; 400.",
+    "recommended_fix": "Skip checkActivityQuota when newStage in ('LOST','POSTPONED') or matches any CrmStageConfig where stageType in ('lost','abandoned'); apply same carve-out to actions.ts:642-645.",
+    "regression_of_v11_fix": true
+  },
+  {
+    "rank": 22,
+    "severity": "HIGH",
+    "domain": "pipeline",
+    "file": "src/lib/crm/business/activity-quota.ts:27-39",
+    "summary": "Quota counts scheduled-future and DENIED/CANCELLED meetings + NO_ANSWER calls — trivially bypassable with two stub meetings.",
+    "scenario": "Quota requires 2 meetings in 30d; rep books 2 future PENDING_APPROVAL meetings; count returns 2; gate clears.",
+    "recommended_fix": "For meetings: `where: { startAt: { gte: since, lte: new Date() }, status: { in: ['APPROVED','CONFIRMED','DONE'] } }`. For calls: `where: { outcome: { in: ['ANSWERED','LEFT_VOICEMAIL', ...] } }`.",
+    "regression_of_v11_fix": true
+  },
+  {
+    "rank": 23,
+    "severity": "HIGH",
+    "domain": "pipeline",
+    "file": "src/lib/crm/business/activity-quota.ts:35-39",
+    "summary": "Admin can save activityType='email' but evaluator fails-open on email — quota silently does nothing.",
+    "scenario": "Save email quota; cron/move ignores it; admin sees rule active but no enforcement.",
+    "recommended_fix": "Add an email branch (count CrmEmail rows or similar) OR drop 'email' from the admin upsert enum until wired.",
+    "regression_of_v11_fix": false
+  },
+  {
+    "rank": 24,
+    "severity": "HIGH",
+    "domain": "pipeline",
+    "file": "src/lib/crm/business/stage-transitions.ts:50-113",
+    "summary": "canTransition returns allowed:true for unknown source codes (NaN comparisons in STAGE_ORDER) — admin-added stages bypass the entire transition matrix.",
+    "scenario": "Admin creates PILOT stage; rep drags PILOT→WON; STAGE_ORDER['PILOT']=undefined; comparisons false; returns allowed:true.",
+    "recommended_fix": "Build STAGE_ORDER dynamically from CrmStageConfig (displayOrder) at evaluation time; reject any transition where fromOrder or toOrder is undefined unless explicitly allowed.",
+    "regression_of_v11_fix": true
+  },
+  {
+    "rank": 25,
+    "severity": "HIGH",
+    "domain": "pipeline",
+    "file": "src/app/api/crm/pipeline/route.ts:296-313",
+    "summary": "closesDeal hardcoded to 'WON'/'LOST' despite v11 promise to honor CrmStageConfig.stageType — custom terminal stages don't stamp dateClosed.",
+    "scenario": "Admin sets stageType='won' on custom stage 'WON_DEAL'; rep drags there; closesDeal=false; dateClosed null; won-rate KPIs miss the deal.",
+    "recommended_fix": "Select stageType in the stageCfg findFirst (line 198-201); compute closesDeal = stageType==='won'||'lost' OR newStage==='WON'||'LOST'; mirror in bulk/route.ts.",
+    "regression_of_v11_fix": true
+  },
+  {
+    "rank": 26,
+    "severity": "HIGH",
+    "domain": "stage-config",
+    "file": "src/app/api/crm/stages/route.ts:43-83",
+    "summary": "Postgres NULLS FIRST under DESC inverts the per-entity-wins dedupe — global rows beat per-entity overrides.",
+    "scenario": "Two rows: entityId=null + entityId='A'; orderBy entityId desc puts null first; dedupe keeps null; per-entity custom label lost.",
+    "recommended_fix": "Use `{ entityId: { sort: 'desc', nulls: 'last' } }` (Prisma supports this) or sort in JS after fetch using a stable per-entity-first comparator.",
+    "regression_of_v11_fix": true
+  },
+  {
+    "rank": 27,
+    "severity": "HIGH",
+    "domain": "cold-leads",
+    "file": "src/app/api/crm/cold-leads/folders/[id]/assign/route.ts:75-107",
+    "summary": "Folder bulk-assign has no CONVERTED/ARCHIVED filter and writes no CrmColdLeadDisposition audit rows.",
+    "scenario": "Manager bulk-assigns folder containing CONVERTED leads; status flipped to ASSIGNED while convertedOpportunityId still set; no audit trail.",
+    "recommended_fix": "Add `status: { notIn: ['CONVERTED','ARCHIVED'] }` to the findMany; pair every update with a `crmColdLeadDisposition.create` matching distribute/redistribute.",
+    "regression_of_v11_fix": true
+  },
+  {
+    "rank": 28,
+    "severity": "HIGH",
+    "domain": "cold-leads",
+    "file": "src/app/api/crm/cold-leads/folders/[id]/route.ts:99-112",
+    "summary": "Folder DELETE with deleteLeads=true cascades through CONVERTED leads — orphans linked CrmOpportunity.convertedFromColdLead FK.",
+    "scenario": "Manager deletes folder with deleteLeads=true; deleteMany has no convertedOpportunityId filter; CONVERTED leads hard-deleted; opp.convertedFromColdLead dangles.",
+    "recommended_fix": "Filter the deleteMany with `convertedOpportunityId: null` and surface a 409 / partial result for the skipped CONVERTED rows.",
+    "regression_of_v11_fix": false
+  },
+  {
+    "rank": 29,
+    "severity": "HIGH",
+    "domain": "cold-leads",
+    "file": "src/app/api/crm/cold-leads/[id]/route.ts:177-187",
+    "summary": "PATCH admin override lets a manager flip CONVERTED→NEW while leaving convertedOpportunityId set.",
+    "scenario": "Manager PATCH {status:'NEW'} on CONVERTED lead; line 177 branch wipes assignedToId; convertedOpportunityId preserved; bulk-delete refuses, but distribute/folder-assign happily re-assign.",
+    "recommended_fix": "Symmetrize the line-165 guard: any transition out of CONVERTED must null convertedOpportunityId (or be rejected unless lead has no linked opp / opp is deleted).",
+    "regression_of_v11_fix": false
+  },
+  {
+    "rank": 30,
+    "severity": "HIGH",
+    "domain": "cold-leads",
+    "file": "src/app/api/crm/cold-leads/distribute/route.ts:101-106 + redistribute:90-95",
+    "summary": "Disposition writers use `crmProfileId!` — platform super_admin without CRM profile triggers 500 inside the tx, rolling back distribute.",
+    "scenario": "super_admin (no CrmUserProfile) clicks Distribute on a folder; auth passes; tx aborts on null repId; whole round-robin rolls back.",
+    "recommended_fix": "Skip the disposition row when crmProfileId is null (or insert a system-actor sentinel id); add a try/catch + log around the audit insert so the primary update never rolls back.",
+    "regression_of_v11_fix": true
+  },
+  {
+    "rank": 31,
+    "severity": "HIGH",
+    "domain": "comments-mentions",
+    "file": "src/components/crm/opportunities/OpportunityComments.tsx:141-184",
+    "summary": "DELETE publishes data.invalidate but the thread uses raw fetch+setInterval, not react-query — v11 SSE fix is a no-op.",
+    "scenario": "Rep A deletes comment; DELETE publishes ['comments',id]; NotificationCenter invalidates a query no one subscribed to; Rep B waits 30s for poll.",
+    "recommended_fix": "Either subscribe the thread to react-query (and use the invalidation), or wire a direct SSE listener in OpportunityComments that re-fetches on `data.invalidate` for ['comments', oppId].",
+    "regression_of_v11_fix": true
+  },
+  {
+    "rank": 32,
+    "severity": "HIGH",
+    "domain": "comments-mentions",
+    "file": "src/components/crm/opportunities/OpportunityComments.tsx:74-95",
+    "summary": "Renderer falls through to raw cuid for any mention the server filtered out — in-thread cuid leak persists despite v11 bell-preview fix.",
+    "scenario": "Rep pastes @cross-entity-cuid; server stores body verbatim; validMentions filter drops; renderer's regex matches; byId.get undefined; literal @<25-char-cuid> shown to every viewer.",
+    "recommended_fix": "In renderBody, fall back to '@?' (or strip the token) when byId.get(id) is undefined; mirror the server's previewBody approach.",
+    "regression_of_v11_fix": true
+  },
+  {
+    "rank": 33,
+    "severity": "HIGH",
+    "domain": "comments-mentions",
+    "file": "src/components/crm/opportunities/OpportunityComments.tsx:155-161,349,379",
+    "summary": "Optimistic preserve race with in-flight POST produces two rows with the same React key.",
+    "scenario": "Optimistic row pushed; poll fires before POST resolves; load() merges canonical+optimistic; POST resolves and maps optimistic→canonical; list now has two rows with id=xyz.",
+    "recommended_fix": "Dedupe in the POST resolution: filter out any prev row whose id matches the canonical id before applying the swap (or never preserve an optimistic row whose pending POST has already resolved).",
+    "regression_of_v11_fix": true
+  },
+  {
+    "rank": 34,
+    "severity": "HIGH",
+    "domain": "dashboards-sharing",
+    "file": "src/app/api/crm/dashboards/route.ts:176-223",
+    "summary": "Any CRM user can POST visibility=EVERYONE with arbitrary sharedWithIds — no crmRole check, no entity scope on share targets.",
+    "scenario": "REP posts {visibility:'EVERYONE'}; ownerOrNull only checks module; dashboard appears on every CRM user's /crm/my; same for SPECIFIC with arbitrary ids.",
+    "recommended_fix": "Gate POST visibility===EVERYONE on `session.user.crmRole === 'ADMIN'`; intersect sharedWithIds with `resolveShareTargets` that filters by entity/role (mirror PATCH).",
+    "regression_of_v11_fix": false
+  },
+  {
+    "rank": 35,
+    "severity": "HIGH",
+    "domain": "saved-views",
+    "file": "src/app/api/saved-views/route.ts:101-117",
+    "summary": "POST isShared gate ORs cross-module admin roles; PATCH gates per-module — non-CRM-admin partners-admin can publish CRM shared views via POST.",
+    "scenario": "Partners-admin (no CRM ADMIN) POSTs scope='crm-opportunities', isShared=true; module gate passes (has crm); isAdmin true via partners disjunct; row created shared.",
+    "recommended_fix": "Replace POST's cross-module isAdmin with the same per-scope `isModuleAdmin` block PATCH uses.",
+    "regression_of_v11_fix": true
+  },
+  {
+    "rank": 36,
+    "severity": "HIGH",
+    "domain": "saved-views",
+    "file": "src/app/api/saved-views/route.ts:7-15",
+    "summary": "POST filters/sort/columns have no size cap — v11 8KB boundedJson applied only to PATCH.",
+    "scenario": "User POSTs filters with 5 MB blob; persisted to DB; shared views balloon every GET.",
+    "recommended_fix": "Reuse boundedJson from [id]/route.ts in createSchema; also add a server-side body size limit at the route level.",
+    "regression_of_v11_fix": true
+  },
+  {
+    "rank": 37,
+    "severity": "HIGH",
+    "domain": "saved-views",
+    "file": "src/app/api/saved-views/route.ts:22-48",
+    "summary": "moduleForScope only recognizes hr/crm/partners — task scopes 'tasks:my:*'/'tasks:entity:*' return null → 403 for every user.",
+    "scenario": "TaskList sends scope='tasks:my:mine'; moduleForScope returns null; GET and POST return 403; toolbar quietly fails.",
+    "recommended_fix": "Add a 'tasks' branch returning a virtual module the user always has (or skip module gating for the 'tasks' prefix and check task RBAC separately).",
+    "regression_of_v11_fix": true
+  },
+  {
+    "rank": 38,
+    "severity": "HIGH",
+    "domain": "reports",
+    "file": "src/app/api/crm/reports/sales-report/export/route.ts:258-287",
+    "summary": "Excel safeLabel applied only to pivot headers; data cells (customerCompanyName, customerContactPhone, leadSource, owner name) write raw — formula injection.",
+    "scenario": "Rep sets customerCompanyName='=HYPERLINK(...)'; export writes verbatim; manager opens .xlsx; formula evaluates.",
+    "recommended_fix": "Wrap every r.getCell(...).value assignment in safeLabel for any string-typed column; move safeLabel to a shared util and apply consistently.",
+    "regression_of_v11_fix": true
+  },
+  {
+    "rank": 39,
+    "severity": "HIGH",
+    "domain": "reports",
+    "file": "src/app/(dashboard)/crm/admin/sales-report/client.tsx:114-116 + loss-analytics/route.ts:158-166",
+    "summary": "wonValue tile reads loss.totals.wonValueEGP but the endpoint never returns it — KPI permanently 0.",
+    "scenario": "Manager opens sales-report; tile renders 0 EGP regardless of real won revenue.",
+    "recommended_fix": "Either add wonValueEGP to loss-analytics totals (sum estimatedValueEGP for WON in window) or change the client to fetch from win-rate-cube where wonValue exists.",
+    "regression_of_v11_fix": true
+  },
+  {
+    "rank": 40,
+    "severity": "HIGH",
+    "domain": "audit-logs",
+    "file": "src/app/api/audit-logs/route.ts:42-52,145-149",
+    "summary": "GET passes startDate/endDate into new Date() unvalidated; malformed input becomes Invalid Date → Prisma 500.",
+    "scenario": "?startDate=abc → endOfDay computes Invalid Date → Prisma throws → 500.",
+    "recommended_fix": "Validate dates via a zod ISO/date schema at the top of GET; return 400 with a field-level error on parse failure.",
+    "regression_of_v11_fix": false
+  },
+  {
+    "rank": 41,
+    "severity": "HIGH",
+    "domain": "audit-logs",
+    "file": "src/app/api/audit-logs/route.ts:44,65-105",
+    "summary": "page has no upper bound; cross-module pagination runs both findMany in parallel — page=10M triggers two huge-skip scans.",
+    "scenario": "Admin or stale link sends page=9999999; skip ≈ 5e8 against HrAuditLog and PartnerAuditLog in parallel.",
+    "recommended_fix": "Clamp page to a sane max (e.g. Math.min(page, Math.ceil(totalCount/PAGE_SIZE))); short-circuit when both module counts are known and skip exceeds totals.",
+    "regression_of_v11_fix": false
+  },
+  {
+    "rank": 42,
+    "severity": "HIGH",
+    "domain": "workflows",
+    "file": "src/app/api/crm/admin/workflows/[id]/test-fire/route.ts:41-47",
+    "summary": "Test-fire payload lacks entity fields; predicates always evaluate false; UI toast says 'fired' but run log stays empty.",
+    "scenario": "Admin tests opp.stage.changed with priority=HOT condition; payload missing priority; conditionOk=false; no run row written; UI shows green success.",
+    "recommended_fix": "In test-fire, hydrate the entity by entityType+entityId and spread its fields into the payload (same fix as Rank 4).",
+    "regression_of_v11_fix": true
+  },
+  {
+    "rank": 43,
+    "severity": "HIGH",
+    "domain": "alert-rules",
+    "file": "src/app/api/cron/alert-rules/route.ts:138-168",
+    "summary": "Suppression row written unconditionally even when no notification was created (channels=['slack'], targetUserId null) — silent forever-skip.",
+    "scenario": "Rule with channels=['slack']; in-app branch skipped; fire row still inserted; next tick is suppressed; partner never alerted.",
+    "recommended_fix": "Move the crmAlertRuleFire.create inside a conditional that succeeded — write only when a real notification (or future channel adapter) delivered.",
+    "regression_of_v11_fix": false
+  },
+  {
+    "rank": 44,
+    "severity": "HIGH",
+    "domain": "alert-rules",
+    "file": "src/app/api/crm/admin/alert-rules/route.ts:23-30,67-87",
+    "summary": "PATCH allows scope change without re-validating predicateJson — re-purposing a rule silently dead.",
+    "scenario": "PATCH scope=coldLead on a rule whose predicate references 'stage'; cron evaluates against cold leads with no stage field; eq returns false; never fires.",
+    "recommended_fix": "In patchSchema, refuse a scope change unless predicateJson is also supplied; or validate predicateJson field paths against scope on every PATCH.",
+    "regression_of_v11_fix": false
+  },
+  {
+    "rank": 45,
+    "severity": "HIGH",
+    "domain": "calls",
+    "file": "src/app/(dashboard)/crm/calls/actions.ts:131-163",
+    "summary": "GET /api/crm/calls?repId= overrides REP role-scope; rep can read any rep's calls.",
+    "scenario": "REP appends ?repId=<other-rep>; `where.callerId = filters.repId` replaces the scoped callerId; full call history + linked PII returned.",
+    "recommended_fix": "For REP role, ignore filters.repId or enforce `if (filters.repId && filters.repId !== session.id) return 403`; merge via AND for managers.",
+    "regression_of_v11_fix": true
+  },
+  {
+    "rank": 46,
+    "severity": "HIGH",
+    "domain": "meetings",
+    "file": "src/app/api/crm/meetings/route.ts:10-28,296",
+    "summary": "POST accepts client-supplied status — REP can create meetings already APPROVED or DONE.",
+    "scenario": "REP posts {status:'APPROVED'}; row created skipping assistant queue; approvedById left null.",
+    "recommended_fix": "Force `status: 'PENDING_APPROVAL'` in the create (drop from createSchema); enforce APPROVED only via /approve endpoint with role gate.",
+    "regression_of_v11_fix": false
+  },
+  {
+    "rank": 47,
+    "severity": "HIGH",
+    "domain": "meetings",
+    "file": "src/app/api/crm/meetings/route.ts:221-258 + 259-309",
+    "summary": "Cross-rep product-overlap check runs outside the advisory-locked tx; the lock key is hash(scheduledById) so reps don't serialize.",
+    "scenario": "Rep A and Rep B both book customerNeed='POS' at the same slot; productConflict pre-tx returns null for both; locks don't contend (different keys); both inserts succeed.",
+    "recommended_fix": "Acquire a second advisory lock keyed on hash(customerNeed + startHourBucket) inside the tx; re-run the product-overlap findFirst (including customerNeed) inside the lock before insert.",
+    "regression_of_v11_fix": true
+  },
+  {
+    "rank": 48,
+    "severity": "HIGH",
+    "domain": "meetings",
+    "file": "src/app/api/crm/meetings/route.ts:30-41,252",
+    "summary": "Meeting code generator is a plain read with no advisory lock — concurrent creates collide on @unique(code) → opaque 500.",
+    "scenario": "Two reps create meetings same second; both compute MTG-00100; second insert throws P2002; catch only intercepts __CONFLICT__ string; 500 to user.",
+    "recommended_fix": "Refactor to use the same generateOpportunityCode lock pattern, BUT pass the tx in and call code-gen + INSERT inside one tx (also fix the Rank 56 auto-code defect at the same time).",
+    "regression_of_v11_fix": false
+  },
+  {
+    "rank": 49,
+    "severity": "HIGH",
+    "domain": "meetings",
+    "file": "src/app/api/crm/meetings/[id]/route.ts:49-102",
+    "summary": "Per-id GET returns full PII (contactPhone, contactName, customerNeed, notes, deniedReason) to non-scheduler — v11 only masked the list endpoint.",
+    "scenario": "Assistant who once approved meeting M opens GET /api/crm/meetings/<M>; reads customer phone+name+need+notes+denyReason verbatim.",
+    "recommended_fix": "Apply the same mask the list endpoint uses to the single-id GET; if business needs an approver-only view, scope-mask by role.",
+    "regression_of_v11_fix": false
+  },
+  {
+    "rank": 50,
+    "severity": "HIGH",
+    "domain": "meetings",
+    "file": "src/app/api/crm/meetings/route.ts:165-188",
+    "summary": "Manager booking on behalf can attach meeting to a different rep's opportunity (manager branch skips ownerId check).",
+    "scenario": "Manager POSTs {scheduledById: repA, opportunityId: repB_opp}; oppOwnerCheck spreads {} for managers; meeting binds rep A to rep B's deal.",
+    "recommended_fix": "Even for managers, require `ownerId IN [scheduledById]` OR an explicit assigned-shadow link; do not silently allow cross-owner attachment.",
+    "regression_of_v11_fix": false
+  },
+  {
+    "rank": 51,
+    "severity": "HIGH",
+    "domain": "hr-overtime",
+    "file": "src/app/api/hr/overtime/requests/[id]/approve/route.ts:11-50",
+    "summary": "Single-row OT approve has no canAccessCompany / subordinate check — team_lead newly granted by v11 can approve any company's OT.",
+    "scenario": "team_lead in Company A POSTs approve on a Company B OT id; can(authUser,'overtime:approve') passes; calculatedAmount written.",
+    "recommended_fix": "Add `if (!canAccessCompany(authUser, ot.employee.companyId)) return 403`; for team_lead also require employee's directManagerId === self (or subordinate chain).",
+    "regression_of_v11_fix": true
+  },
+  {
+    "rank": 52,
+    "severity": "HIGH",
+    "domain": "hr-incidents",
+    "file": "src/app/api/hr/incidents/route.ts:83-114",
+    "summary": "Incidents GET grants accountant/hr_manager/ceo isPrivileged with no company-scope filter; ?company= has no allowlist.",
+    "scenario": "Accountant scoped to Company A sees all companies' disciplinary records; ?company=companyB accepted verbatim.",
+    "recommended_fix": "Add `else if (!hasAnyRole(authUser,['super_admin'])) where.employee = { companyId: { in: authUser.companies } }` like bonuses; intersect ?company= with the allowed set.",
+    "regression_of_v11_fix": false
+  },
+  {
+    "rank": 53,
+    "severity": "HIGH",
+    "domain": "hr-incidents",
+    "file": "src/app/api/hr/incidents/route.ts:161-205",
+    "summary": "Incident create has no cross-company gate — HR manager in Company A can write a disciplinary action against a Company B employee.",
+    "scenario": "POST {employee:<companyB_emp>, violation_rule, incident_date}; only isHROrAdmin; incident created; deduction computed against B's payroll.",
+    "recommended_fix": "Lookup employee, then `if (!canAccessCompany(authUser, employee.companyId)) return 403` before writing.",
+    "regression_of_v11_fix": false
+  },
+  {
+    "rank": 54,
+    "severity": "HIGH",
+    "domain": "hr-employees",
+    "file": "src/app/api/hr/employees/route.ts:56-73",
+    "summary": "GET grants 'view all' to accountant/ceo with no company-scope filter; cross-tenant employee + salary + nationalId + IBAN leak.",
+    "scenario": "Accountant in Company A hits /api/hr/employees; canViewAllEmployees true; no companyId scope; full roster of all companies returned.",
+    "recommended_fix": "Inside canViewAllEmployees branch, additionally scope `where.companyId = { in: authUser.companies }` unless super_admin.",
+    "regression_of_v11_fix": false
+  },
+  {
+    "rank": 55,
+    "severity": "HIGH",
+    "domain": "hr-employees",
+    "file": "src/app/api/hr/employees/route.ts:197-216",
+    "summary": "Employee create silently hijacks an existing User account when work_email matches — forces hrAccess=true and binds the new HrEmployee.userId.",
+    "scenario": "HR manager creates employee with work_email=existing CEO's email; transaction flips CEO.hrAccess=true and rebinds HrEmployee.userId to CEO.id; identity confusion / privilege flag manipulation.",
+    "recommended_fix": "On existingUser match, return 409 'email already in use'; require an explicit consent flow (target user verifies and opts in to HR module).",
+    "regression_of_v11_fix": true
+  },
+  {
+    "rank": 56,
+    "severity": "HIGH",
+    "domain": "hr-incidents",
+    "file": "src/lib/hr/validations/incident.ts:48-63 + violation-rules/route.ts:48-83",
+    "summary": "Violation rule offense_N.deduction_pct unbounded (no min/max) — hr_manager can save 999% or negative deduction.",
+    "scenario": "Admin POSTs offense_1.deduction_pct=999; first incident under rule yields deductionAmount = 9.99 * baseSalary.",
+    "recommended_fix": "Tighten offenseSchema: `deduction_pct: z.number().min(0).max(100)` (or z.union with string coercion); reject negative or >100.",
+    "regression_of_v11_fix": false
+  },
+  {
+    "rank": 57,
+    "severity": "HIGH",
+    "domain": "hr-bonuses",
+    "file": "src/app/api/hr/bonuses/[id]/route.ts:124-156",
+    "summary": "PATCH cross-company gate only validates CURRENT employee, not NEW employee when data.employee is supplied — bonus can be reassigned to a Company B employee.",
+    "scenario": "Company A HR PATCH {employee:<companyB_emp>}; existing.companyId check passes (Company A); update writes employeeId; bonus now in Company B.",
+    "recommended_fix": "If data.employee is provided, also lookup target employee and `canAccessCompany(authUser, target.companyId)` before writing; re-run payroll-lock against target's company.",
+    "regression_of_v11_fix": true
+  },
+  {
+    "rank": 58,
+    "severity": "HIGH",
+    "domain": "hr-leave",
+    "file": "src/app/api/hr/attendance/leave-requests/[id]/route.ts:66-103",
+    "summary": "PATCH lets HR rewrite dates of an already-APPROVED leave — no status guard, no attendance-log re-fan.",
+    "scenario": "Approved leave 20-24 has attendance 'leave' rows; HR PATCH new range 27-31; 20-24 rows orphaned, 27-31 absent.",
+    "recommended_fix": "Refuse PATCH on status='approved'/'denied' (require revoke+re-create) OR transactionally clear old day rows and upsert new ones.",
+    "regression_of_v11_fix": false
+  },
+  {
+    "rank": 59,
+    "severity": "HIGH",
+    "domain": "hr-leave",
+    "file": "src/app/api/hr/attendance/leave-requests/[id]/deny/route.ts:26-41",
+    "summary": "Deny route was not given the updateMany race-gate that approve has — concurrent denies double-fire notifications.",
+    "scenario": "Two HR managers click Deny; both pass read-check; both run regular update; last-write-wins; two 'Leave Denied' notifications sent.",
+    "recommended_fix": "Replace update with `updateMany({where:{id,status:'pending'},...})` and short-circuit with 409 when count=0; mirror approve.",
+    "regression_of_v11_fix": true
+  },
+  {
+    "rank": 60,
+    "severity": "HIGH",
+    "domain": "hr-leave",
+    "file": "src/app/api/hr/attendance/leave-requests/[id]/approve/route.ts:10-24",
+    "summary": "Leave approve has no cross-company gate — HR manager in Company A can approve leave for Company B (same hole on deny).",
+    "scenario": "Manager POSTs approve on companyB leave id; isHROrAdmin only; status flipped, attendance written for foreign employee.",
+    "recommended_fix": "Add `if (!canAccessCompany(authUser, lr.employee.companyId)) return 403`; mirror on deny route.",
+    "regression_of_v11_fix": false
+  }
+]

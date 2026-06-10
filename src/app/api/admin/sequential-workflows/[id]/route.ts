@@ -4,6 +4,8 @@ import { z } from "zod";
 import { auth } from "@/lib/auth";
 import { db } from "@/lib/db";
 import { describeZodError } from "@/lib/zod-errors";
+// audit v12 MEDIUM (MED-54): use canonical isPlatformAdmin instead of local copy
+import { isPlatformAdmin } from "@/lib/crm/admin-gates";
 
 const stepSchema = z.object({
   position: z.number().int().min(0).max(100).optional(),
@@ -27,13 +29,6 @@ const patchSchema = z.object({
   /** When supplied, fully replaces the workflow's step list. */
   steps: z.array(stepSchema).max(50).optional(),
 });
-
-function isPlatformAdmin(session: Session) {
-  return (
-    !!session.user.hrRoles?.includes("super_admin") ||
-    (!!session.user.modules?.includes("partners") && !session.user.partnerId)
-  );
-}
 
 export async function GET(_req: Request, { params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;

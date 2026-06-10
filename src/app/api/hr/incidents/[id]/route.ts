@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server'
 import { db as prisma } from '@/lib/db'
 import { requireAuth } from '@/lib/hr/auth-utils'
-import { isHROrAdmin } from '@/lib/hr/permissions'
+import { isHROrAdmin, canAccessCompany } from '@/lib/hr/permissions'
 import { createAuditLog, getClientIp } from '@/lib/hr/audit'
 import { updateIncidentSchema } from '@/lib/hr/validations'
 
@@ -100,6 +100,11 @@ export async function GET(
       }
     }
 
+    // audit v12 HIGH (HIGH-53) recheck — gate privileged users to their own company scope
+    if (isHROrAdmin(authUser) && !canAccessCompany(authUser, incident.employee.companyId)) {
+      return NextResponse.json({ detail: 'Not found.' }, { status: 404 })
+    }
+
     await createAuditLog({
       userId: authUser.id,
       action: 'read',
@@ -135,6 +140,13 @@ export async function PATCH(
       return NextResponse.json({ detail: parsed.error.issues[0].message }, { status: 400 })
     }
     const data = parsed.data
+
+    // audit v12 HIGH (HIGH-53) recheck — fetch before update to enforce company-scope gate
+    const existing = await prisma.hrIncident.findUnique({ where: { id: pk }, include: { employee: true } })
+    if (!existing) return NextResponse.json({ detail: 'Not found.' }, { status: 404 })
+    if (!canAccessCompany(authUser, existing.employee.companyId)) {
+      return NextResponse.json({ detail: 'Permission denied.' }, { status: 403 })
+    }
 
     const updateData: Record<string, unknown> = { updatedAt: new Date() }
 
@@ -175,6 +187,13 @@ export async function DELETE(
 
     const { id } = await params
     const pk = id
+
+    // audit v12 HIGH (HIGH-53) recheck — fetch before delete to enforce company-scope gate
+    const existing = await prisma.hrIncident.findUnique({ where: { id: pk }, include: { employee: true } })
+    if (!existing) return NextResponse.json({ detail: 'Not found.' }, { status: 404 })
+    if (!canAccessCompany(authUser, existing.employee.companyId)) {
+      return NextResponse.json({ detail: 'Permission denied.' }, { status: 403 })
+    }
 
     await prisma.hrIncident.delete({ where: { id: pk } })
 

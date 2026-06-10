@@ -95,10 +95,12 @@ const webhook: ActionDefinition<z.infer<typeof WebhookConfig>> = {
         config.body === "$input" || config.body === undefined
           ? ctx.input
           : config.body;
+      // audit v12 LOW (LOW-14): add 10-second timeout to prevent indefinite hang
       const res = await fetch(config.url, {
         method: "POST",
         headers: { "Content-Type": "application/json", ...(config.headers ?? {}) },
         body: JSON.stringify(body),
+        signal: AbortSignal.timeout(10_000), // 10-second timeout
       });
       if (!res.ok) return { ok: false, error: `HTTP ${res.status}` };
       return { ok: true, result: { status: res.status } };

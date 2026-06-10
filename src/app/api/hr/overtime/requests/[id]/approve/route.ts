@@ -1,7 +1,8 @@
 import { NextResponse } from 'next/server'
 import { db as prisma } from '@/lib/db'
 import { requireAuth } from '@/lib/hr/auth-utils'
-import { isHROrAdmin } from '@/lib/hr/permissions'
+import { can, canAccessCompany, isTeamLead } from '@/lib/hr/permissions'
+import { getSubordinateEmployeeIds } from '@/lib/hr/subordinates'
 
 export async function POST(
   request: Request,
@@ -9,7 +10,7 @@ export async function POST(
 ) {
   try {
     const authUser = await requireAuth(request)
-    if (!isHROrAdmin(authUser)) {
+    if (!can(authUser, 'overtime:approve')) {
       return NextResponse.json({ detail: 'Permission denied.' }, { status: 403 })
     }
 
@@ -25,6 +26,29 @@ export async function POST(
       },
     })
     if (!otRequest) return NextResponse.json({ detail: 'Not found.' }, { status: 404 })
+
+    // audit v12 HIGH: company-scoping — prevent cross-company OT approval.
+    // super_admin and CEO bypass via canAccessCompany; all other roles must
+    // belong to the same company as the employee.
+    if (otRequest.employee && !canAccessCompany(authUser, otRequest.employee.companyId)) {
+      return NextResponse.json({ detail: 'Permission denied.' }, { status: 403 })
+    }
+
+    // audit v12 HIGH: team_lead subordinate check — a team_lead may only
+    // approve OT for employees that are in their direct/indirect report chain.
+    if (isTeamLead(authUser) && otRequest.employee) {
+      const myEmployee = await prisma.hrEmployee.findFirst({
+        where: { userId: authUser.id },
+        select: { id: true },
+      })
+      if (!myEmployee) {
+        return NextResponse.json({ detail: 'Permission denied.' }, { status: 403 })
+      }
+      const subordinateIds = await getSubordinateEmployeeIds(myEmployee.id)
+      if (!subordinateIds.has(otRequest.employee.id)) {
+        return NextResponse.json({ detail: 'Permission denied.' }, { status: 403 })
+      }
+    }
 
     if (otRequest.status !== 'pending') {
       return NextResponse.json({ detail: 'Only pending requests can be approved.' }, { status: 400 })
@@ -46,8 +70,12 @@ export async function POST(
       calculatedAmount = parseFloat(String(otRequest.hoursRequested)) * parseFloat(String(policy.rateMultiplier)) * hourlyRate
     }
 
-    const updated = await prisma.hrOvertimeRequest.update({
-      where: { id: pk },
+    // audit v12 MEDIUM (MED-44) recheck-hardening: race-gate the status
+    // flip via updateMany with status='pending' so two team leads racing
+    // the same request can't both succeed (would yield two notifications
+    // and a double-paid OT). Mirrors the pattern HIGH-60 just added.
+    const flip = await prisma.hrOvertimeRequest.updateMany({
+      where: { id: pk, status: 'pending' },
       data: {
         status: 'approved',
         approvedById: authUser.id,
@@ -55,12 +83,24 @@ export async function POST(
         calculatedAmount: Math.round(calculatedAmount * 100) / 100,
         updatedAt: now,
       },
+    })
+    if (flip.count === 0) {
+      return NextResponse.json(
+        { detail: 'Overtime request was already approved by another reviewer.' },
+        { status: 409 },
+      )
+    }
+    const updated = await prisma.hrOvertimeRequest.findUnique({
+      where: { id: pk },
       include: {
         employee: { include: { company: true, department: true } },
         overtimePolicy: true,
         approvedBy: true,
       },
     })
+    if (!updated) {
+      return NextResponse.json({ detail: 'Not found after approval.' }, { status: 404 })
+    }
 
     // Notify the employee
     if (employee?.userId) {

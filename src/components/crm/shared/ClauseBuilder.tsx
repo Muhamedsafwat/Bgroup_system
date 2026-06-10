@@ -32,12 +32,16 @@ export type Clause = {
   value: string | number | string[] | null;
 };
 
+// audit v12 MEDIUM (MED-36): added notNull/isNull to all field types so the
+// engine's notNull/isNull handlers are reachable from the clause-builder UI.
 const OPS_BY_TYPE: Record<FieldDef["type"], { value: string; label: string }[]> = {
   text: [
     { value: "eq", label: "is" },
     { value: "neq", label: "is not" },
     { value: "contains", label: "contains" },
     { value: "exists", label: "is set" },
+    { value: "notNull", label: "is not empty" },
+    { value: "isNull", label: "is empty" },
   ],
   number: [
     { value: "eq", label: "equals" },
@@ -46,11 +50,15 @@ const OPS_BY_TYPE: Record<FieldDef["type"], { value: string; label: string }[]> 
     { value: "gte", label: "≥" },
     { value: "lt", label: "less than" },
     { value: "lte", label: "≤" },
+    { value: "notNull", label: "is set" },
+    { value: "isNull", label: "is not set" },
   ],
   enum: [
     { value: "eq", label: "is" },
     { value: "neq", label: "is not" },
     { value: "in", label: "is one of" },
+    { value: "notNull", label: "is set" },
+    { value: "isNull", label: "is not set" },
   ],
 };
 
@@ -90,7 +98,8 @@ export function ClauseBuilder({
         clauses.map((c, idx) => {
           const fieldDef = fields.find((f) => f.key === c.field) ?? fields[0];
           const ops = OPS_BY_TYPE[fieldDef.type];
-          const showValue = c.op !== "exists";
+          // audit v12 MEDIUM (MED-36): hide value input for no-argument operators
+          const showValue = c.op !== "exists" && c.op !== "notNull" && c.op !== "isNull";
           const isMulti = c.op === "in";
           return (
             <div key={idx} className="flex flex-wrap items-center gap-1.5">

@@ -24,6 +24,9 @@ export default async function OpportunitiesPage({
     stage,
     entityId: params.entityId as string | undefined,
     priority: params.priority as string | undefined,
+    ownerId: params.ownerId as string | undefined,
+    sort: params.sort as string | undefined,
+    mineOnly: params.mine === "1",
     page: params.page ? Number(params.page) : 1,
   });
 

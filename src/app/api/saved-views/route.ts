@@ -4,12 +4,23 @@ import { db } from "@/lib/db";
 import { z } from "zod";
 import { describeZodError } from "@/lib/zod-errors";
 
+// SECURITY (audit v12 HIGH #36): bound JSON blob size on POST — mirrors the
+// boundedJson guard already applied to PATCH in [id]/route.ts. Without this,
+// a caller could persist a multi-MB `filters` blob on creation, ballooning
+// every subsequent GET for shared views. Cap each field at 8 KB serialised.
+// A 32 KB total-body ceiling is enforced before parsing (see POST handler).
+const boundedJson = z
+  .unknown()
+  .refine((v) => JSON.stringify(v ?? {}).length <= 8192, {
+    message: "Field is too large (max 8 KB).",
+  });
+
 const createSchema = z.object({
   scope: z.string().min(1).max(80),
   name: z.string().trim().min(1).max(60),
-  filters: z.unknown(),
-  sort: z.unknown().optional(),
-  columns: z.unknown().optional(),
+  filters: boundedJson,
+  sort: boundedJson.optional(),
+  columns: boundedJson.optional(),
   isShared: z.boolean().optional(),
   isDefault: z.boolean().optional(),
 });
@@ -19,7 +30,10 @@ const createSchema = z.object({
  * gate access so a CRM-only user can't list / create HR saved views.
  * Returns null if the scope is unknown — those are rejected as 400.
  */
-function moduleForScope(scope: string): "hr" | "crm" | "partners" | null {
+// audit v12 HIGH (HIGH-37): added "tasks" to return type — tasks scopes were
+// unmatched, causing moduleForScope to return null and every task saved-view
+// request to be rejected with 403.
+function moduleForScope(scope: string): "hr" | "crm" | "partners" | "tasks" | null {
   if (
     scope.startsWith("hr-") ||
     scope === "hr" ||
@@ -44,6 +58,15 @@ function moduleForScope(scope: string): "hr" | "crm" | "partners" | null {
   ) {
     return "partners";
   }
+  // audit v12 HIGH #37: tasks scopes are available to every authenticated user.
+  if (
+    scope.startsWith("tasks-") ||
+    scope === "tasks" ||
+    scope.startsWith("tasks:") ||
+    scope.startsWith("tasks/")
+  ) {
+    return "tasks";
+  }
   return null;
 }
 
@@ -63,7 +86,9 @@ export async function GET(req: Request) {
   // version returned every shared row for any `scope` value, leaking
   // HR filter sets to CRM-only users (and vice versa).
   const module = moduleForScope(scope);
-  if (!module || !session.user.modules?.includes(module)) {
+  // audit v12 HIGH #37: tasks module is available to all authenticated users —
+  // skip the modules-array check when the resolved module is "tasks".
+  if (!module || (module !== "tasks" && !session.user.modules?.includes(module))) {
     return NextResponse.json({ error: "Forbidden" }, { status: 403 });
   }
 
@@ -83,7 +108,19 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
-  const body = await req.json();
+  // SECURITY (audit v12 HIGH #36): reject bodies over 32 KB before parsing
+  // to prevent a multi-MB request from being fully buffered and decoded.
+  const rawText = await req.text();
+  if (rawText.length > 32768) {
+    return NextResponse.json({ error: "Request body too large (max 32 KB)." }, { status: 413 });
+  }
+  let body: unknown;
+  try {
+    body = JSON.parse(rawText);
+  } catch {
+    return NextResponse.json({ error: "Invalid JSON." }, { status: 400 });
+  }
+
   const parsed = createSchema.safeParse(body);
   if (!parsed.success) {
     const __z = describeZodError(parsed.error);
@@ -94,15 +131,35 @@ export async function POST(req: Request) {
   // they don't have access to (e.g. a CRM-only ADMIN creating a shared
   // HR view that pollutes every HR user's view menu).
   const module = moduleForScope(parsed.data.scope);
-  if (!module || !session.user.modules?.includes(module)) {
+  // audit v12 HIGH #37: tasks module is available to all authenticated users —
+  // skip the modules-array check when the resolved module is "tasks".
+  if (!module || (module !== "tasks" && !session.user.modules?.includes(module))) {
     return NextResponse.json({ error: "Forbidden" }, { status: 403 });
   }
 
-  // Only allow sharing if user is admin in any module — defensive.
-  const isAdmin =
-    session.user.crmRole === "ADMIN" ||
-    session.user.hrRoles?.includes("super_admin") ||
-    (session.user.modules?.includes("partners") && !session.user.partnerId);
+  // SECURITY (audit v12 HIGH #35): derive isModuleAdmin from the module that
+  // owns the requested scope only, so a CRM admin cannot share HR views.
+  // A platform super_admin (hrRoles includes "super_admin") spans all modules.
+  const isPlatformAdmin = session.user.hrRoles?.includes("super_admin") ?? false;
+  let isModuleAdmin = false;
+  if (isPlatformAdmin) {
+    isModuleAdmin = true;
+  } else if (module === "crm") {
+    isModuleAdmin = session.user.crmRole === "ADMIN";
+  } else if (module === "hr") {
+    isModuleAdmin = false; // only platform super_admin can share HR views
+  } else if (module === "partners") {
+    isModuleAdmin =
+      session.user.modules?.includes("partners") === true &&
+      !session.user.partnerId;
+  }
+
+  if (parsed.data.isShared && !isModuleAdmin) {
+    return NextResponse.json(
+      { error: "Forbidden: insufficient role to create a shared view for this scope." },
+      { status: 403 }
+    );
+  }
 
   const view = await db.savedView.create({
     data: {
@@ -112,7 +169,7 @@ export async function POST(req: Request) {
       filters: parsed.data.filters as object,
       sort: parsed.data.sort as object | undefined,
       columns: parsed.data.columns as object | undefined,
-      isShared: !!parsed.data.isShared && !!isAdmin,
+      isShared: !!parsed.data.isShared,
       isDefault: !!parsed.data.isDefault,
     },
   });

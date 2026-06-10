@@ -51,6 +51,20 @@ export function canTransition(
   fromStage: CrmOpportunityStage,
   toStage: CrmOpportunityStage
 ): TransitionResult {
+  // audit v12 HIGH (HIGH-24): guard against unknown stages before
+  // any numeric comparison runs. STAGE_ORDER[unknown] is undefined,
+  // and every `<`/`>` against undefined evaluates false — so an
+  // unknown source/target stage silently fell through to the
+  // unconditional `return { allowed: true }` at the bottom of this
+  // function. Reject explicitly instead.
+  const knownStages = Object.keys(STAGE_ORDER) as CrmOpportunityStage[];
+  if (!knownStages.includes(fromStage)) {
+    return { allowed: false, error: `Unknown source stage: ${fromStage}` };
+  }
+  if (!knownStages.includes(toStage)) {
+    return { allowed: false, error: `Unknown target stage: ${toStage}` };
+  }
+
   if (fromStage === toStage) {
     return { allowed: false, error: "Already in this stage" };
   }

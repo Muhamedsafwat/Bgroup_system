@@ -4,11 +4,19 @@ import { db } from "@/lib/db";
 import { z } from "zod";
 import { describeZodError } from "@/lib/zod-errors";
 
+// audit v12 HIGH (HIGH-36) recheck: per-field 8 KB cap mirrors the boundedJson
+// guard in route.ts (POST). Previously missing from PATCH — added here.
+const boundedJson = z
+  .unknown()
+  .refine((v) => JSON.stringify(v ?? {}).length <= 8192, {
+    message: "Field is too large (max 8 KB).",
+  });
+
 const patchSchema = z.object({
   name: z.string().trim().min(1).max(60).optional(),
-  filters: z.unknown().optional(),
-  sort: z.unknown().optional(),
-  columns: z.unknown().optional(),
+  filters: boundedJson.optional(),
+  sort: boundedJson.optional(),
+  columns: boundedJson.optional(),
   isShared: z.boolean().optional(),
   isDefault: z.boolean().optional(),
 });
@@ -28,7 +36,17 @@ export async function PATCH(
     return NextResponse.json({ error: "Not found" }, { status: 404 });
   }
 
-  const body = await req.json();
+  // audit v12 HIGH (HIGH-36) recheck: 32 KB total-body ceiling guard.
+  const rawText = await req.text();
+  if (rawText.length > 32768) {
+    return NextResponse.json({ error: "Request body too large (max 32 KB)." }, { status: 413 });
+  }
+  let body: unknown;
+  try {
+    body = JSON.parse(rawText);
+  } catch {
+    return NextResponse.json({ error: "Invalid JSON." }, { status: 400 });
+  }
   const parsed = patchSchema.safeParse(body);
   if (!parsed.success) {
     { const __z = describeZodError(parsed.error); return NextResponse.json({ error: __z.message, fieldErrors: __z.fieldErrors }, { status: 422 }); }

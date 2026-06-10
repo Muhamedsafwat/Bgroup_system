@@ -127,10 +127,27 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
 
   // Mirror every opp attachment: copy the file into the task's storage tree
   // so downstream views work even if the opp's files are later cleaned up.
-  for (const a of opp.attachments) {
+  // audit v12 MEDIUM (MED-1): cap attachment count to prevent DoS via many attachments
+  const MAX_CASCADE_ATTACHMENTS = 20;
+  const attachmentsToProcess = opp.attachments.slice(0, MAX_CASCADE_ATTACHMENTS);
+  for (const a of attachmentsToProcess) {
     try {
       const src = path.join(process.cwd(), "public", a.url.replace(/^\//, ""));
-      const buf = await fs.readFile(src);
+      // audit v12 MEDIUM (MED-1): path-traversal guard — ensure src stays within public/
+      const publicRoot = path.join(process.cwd(), "public");
+      const resolvedSrc = path.resolve(src);
+      if (!resolvedSrc.startsWith(publicRoot + path.sep) && resolvedSrc !== publicRoot) {
+        console.warn("[opp→workflow cascade] skipping attachment with traversal path:", a.url);
+        continue;
+      }
+      // audit v12 MEDIUM (MED-1): per-file size cap to prevent DoS via large files
+      const stat = await fs.stat(resolvedSrc);
+      const MAX_FILE_BYTES = 10 * 1024 * 1024; // 10 MB
+      if (stat.size > MAX_FILE_BYTES) {
+        console.warn("[opp→workflow cascade] skipping oversized attachment:", a.filename);
+        continue;
+      }
+      const buf = await fs.readFile(resolvedSrc);
       const safeName = a.filename.replace(/[\\/]/g, "_").slice(0, 200);
       const hash = crypto.randomBytes(8).toString("hex");
       const relDir = `uploads/tasks/${firstTaskId}`;

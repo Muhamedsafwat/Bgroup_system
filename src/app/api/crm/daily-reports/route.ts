@@ -13,6 +13,7 @@ const upsertSchema = z.object({
   meetingsHeld: z.number().int().min(0).max(50).optional(),
   newLeads: z.number().int().min(0).max(100).optional(),
   notes: z.string().trim().max(2000).optional(),
+  repId: z.string().optional(), // audit v12 MEDIUM (MED-26): allow managers/admins to submit on behalf of another rep
 });
 
 function isManagerOrAdmin(session: Session) {
@@ -111,9 +112,12 @@ export async function POST(req: Request) {
   }
   const data = parsed.data;
 
-  // Always upsert for the caller (managers reporting on behalf of others
-  // should switch context — keeping the API simple for now).
-  const repId = crmProfileId;
+  // audit v12 MEDIUM (MED-26): Managers/admins may submit on behalf of another rep via body.repId.
+  // Reps are always restricted to their own profile.
+  let repId = crmProfileId;
+  if (data.repId && isManagerOrAdmin(session)) {
+    repId = data.repId;
+  }
   const reportDate = new Date(`${data.reportDate}T00:00:00.000Z`);
 
   const report = await db.crmDailyReport.upsert({

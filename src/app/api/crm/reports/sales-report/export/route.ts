@@ -37,6 +37,14 @@ function ymd(d: Date): string {
   return d.toISOString().slice(0, 10);
 }
 
+// audit v12 HIGH (HIGH-38): Prevent formula-injection by prefixing any cell
+// value that begins with a formula-trigger character (=, +, -, @, tab, CR)
+// with a single-quote so Excel treats it as plain text.
+function safeLabel(v: string | null | undefined, fallback = "—"): string {
+  const s = v ?? fallback;
+  return /^[=+\-@\t\r]/.test(s) ? "'" + s : s;
+}
+
 // Maps internal priority codes to the reference's "Quality" labels.
 const PRIORITY_TO_QUALITY: Record<string, string> = {
   HOT: "Excellent",
@@ -257,20 +265,20 @@ export async function GET(req: Request) {
         (s, p) => s + Number(p.unitPriceEGP) * Number(p.quantity),
         0,
       );
-      r.getCell(1).value = o.customerCompanyName ?? "—";
-      r.getCell(2).value = serviceName;
+      r.getCell(1).value = safeLabel(o.customerCompanyName);
+      r.getCell(2).value = safeLabel(serviceName);
       r.getCell(3).value = serviceCost > 0
         ? Math.round(serviceCost)
         : Math.round(Number(o.estimatedValueEGP));
       r.getCell(3).numFmt = "#,##0";
       r.getCell(4).value = Math.round(Number(o.estimatedValueEGP));
       r.getCell(4).numFmt = "#,##0";
-      r.getCell(5).value = o.stage;
-      r.getCell(6).value = o.customerContactPhone ?? "—";
-      r.getCell(7).value = o.leadSource ?? "—";
-      r.getCell(8).value = PRIORITY_TO_QUALITY[o.priority] ?? o.priority;
-      r.getCell(9).value = o.dealType;
-      r.getCell(10).value = o.owner?.fullName ?? "—";
+      r.getCell(5).value = safeLabel(o.stage);
+      r.getCell(6).value = safeLabel(o.customerContactPhone);
+      r.getCell(7).value = safeLabel(o.leadSource);
+      r.getCell(8).value = safeLabel(PRIORITY_TO_QUALITY[o.priority] ?? o.priority);
+      r.getCell(9).value = safeLabel(o.dealType);
+      r.getCell(10).value = safeLabel(o.owner?.fullName);
       r.getCell(11).value = o.probabilityPct / 100;
       r.getCell(11).numFmt = "0%";
       styleDataRow(r);
@@ -288,12 +296,18 @@ export async function GET(req: Request) {
   currentRow += 1;
 
   // Pivot: unique service labels → SUMIF totals + % share row.
+  // audit v12 MEDIUM (MED-32): wrap with safeLabel() so these pivot labels
+  // match exactly what is stored in col B data cells (also wrapped with
+  // safeLabel), allowing SUMIF formulas to find the correct rows.
   const serviceLabels = Array.from(
     new Set(
       opps.map((o) =>
-        o.products.map((p) => p.product?.nameEn).filter(Boolean).join(", ") ||
-        o.title ||
-        "—",
+        safeLabel(
+          o.products.map((p) => p.product?.nameEn).filter(Boolean).join(", ") ||
+          o.title ||
+          null,
+          "—",
+        ),
       ),
     ),
   ).slice(0, 10);
@@ -362,13 +376,16 @@ export async function GET(req: Request) {
   currentRow += 1;
 
   // Three bucket tables side-by-side: source / quality / lead stage.
+  // audit v12 MEDIUM (MED-32): use safeLabel() on leadSource and stage so
+  // these bucket labels match the values stored in cols G and E respectively,
+  // enabling COUNTIF formulas to return correct counts for affected labels.
   const sourceBuckets = Array.from(
-    new Set(opps.map((o) => o.leadSource ?? "(unknown)")),
+    new Set(opps.map((o) => safeLabel(o.leadSource, "(unknown)"))),
   );
   const qualityBuckets = Array.from(
     new Set(opps.map((o) => PRIORITY_TO_QUALITY[o.priority] ?? o.priority)),
   );
-  const stageBuckets = Array.from(new Set(opps.map((o) => o.stage)));
+  const stageBuckets = Array.from(new Set(opps.map((o) => safeLabel(o.stage))));
 
   const subHeaderRow = currentRow;
   const sub = sheet.getRow(subHeaderRow);

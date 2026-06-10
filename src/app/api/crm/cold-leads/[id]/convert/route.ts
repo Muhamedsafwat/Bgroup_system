@@ -82,6 +82,7 @@ export async function POST(
     where: { nameEn: { equals: companyName, mode: "insensitive" } },
     select: { id: true },
   });
+  let companyWasCreated = false; // audit v12 MEDIUM (MED-8): track so we can clean up on TOCTOU loser path
   if (!company) {
     const created = await db.crmCompany.create({
       data: {
@@ -94,6 +95,7 @@ export async function POST(
       select: { id: true },
     });
     company = created;
+    companyWasCreated = true;
   }
 
   // Find-or-create primary contact for this lead.
@@ -152,6 +154,18 @@ export async function POST(
         deletedById: session.user.crmProfileId,
       },
     });
+    // audit v12 MEDIUM (MED-8): clean up orphaned contact and company created by
+    // this losing request so they don't linger as unreferenced records.
+    if (contactId) {
+      await db.crmContact.delete({ where: { id: contactId } });
+    }
+    if (companyWasCreated) {
+      // Only delete the newly created company if nothing else references it now.
+      const refs = await db.crmContact.count({ where: { companyId: company.id } });
+      if (refs === 0) {
+        await db.crmCompany.delete({ where: { id: company.id } });
+      }
+    }
     const winner = await db.crmColdLead.findUnique({
       where: { id },
       select: { convertedOpportunityId: true },

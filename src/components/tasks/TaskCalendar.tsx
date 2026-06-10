@@ -93,7 +93,11 @@ export function TaskCalendar() {
     return map;
   }, [tasks]);
 
-  const monthLabel = cursor.toLocaleDateString(undefined, { month: "long", year: "numeric" });
+  // audit v12 MEDIUM (MED-72): use current locale for month label, weekdays, and RTL chevron/aria fixes
+  const monthLabel = cursor.toLocaleDateString(locale, { month: "long", year: "numeric" });
+  const weekdays = Array.from({ length: 7 }, (_, i) =>
+    new Date(2023, 0, i + 1).toLocaleDateString(locale, { weekday: "short" })
+  );
   const today = ymd(new Date());
 
   return (
@@ -104,9 +108,9 @@ export function TaskCalendar() {
             variant="outline"
             size="icon"
             onClick={() => setCursor(new Date(cursor.getFullYear(), cursor.getMonth() - 1, 1))}
-            aria-label="Previous month"
+            aria-label={isAr ? "الشهر السابق" : "Previous month"}
           >
-            <ChevronLeft className="h-4 w-4" />
+            {isAr ? <ChevronRight className="h-4 w-4" /> : <ChevronLeft className="h-4 w-4" />}
           </Button>
           <Button
             variant="outline"
@@ -119,9 +123,9 @@ export function TaskCalendar() {
             variant="outline"
             size="icon"
             onClick={() => setCursor(new Date(cursor.getFullYear(), cursor.getMonth() + 1, 1))}
-            aria-label="Next month"
+            aria-label={isAr ? "الشهر التالي" : "Next month"}
           >
-            <ChevronRight className="h-4 w-4" />
+            {isAr ? <ChevronLeft className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}
           </Button>
           <h2 className="text-base font-semibold ms-2">{monthLabel}</h2>
         </div>
@@ -135,7 +139,7 @@ export function TaskCalendar() {
 
       <div className="rounded-lg border bg-card overflow-hidden">
         <div className="grid grid-cols-7 border-b bg-muted/30">
-          {["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"].map((d) => (
+          {weekdays.map((d) => (
             <div key={d} className="px-2 py-2 text-xs font-semibold text-muted-foreground text-center">
               {d}
             </div>

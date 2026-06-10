@@ -9,7 +9,8 @@ const createSchema = z.object({
   name: z.string().trim().min(1).max(60),
   minRevenue90d: z.number().nonnegative(),
   commissionRate: z.number().min(0).max(100),
-  perks: z.array(z.string()).optional().default([]),
+  // audit v12 LOW (LOW-10): cap per-string length and array size to prevent unbounded jsonb payloads
+  perks: z.array(z.string().max(200)).max(50).optional().default([]),
   rank: z.number().int().optional().default(0),
 });
 

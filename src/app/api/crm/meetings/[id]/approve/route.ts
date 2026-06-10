@@ -47,9 +47,47 @@ export async function POST(_req: Request, { params }: { params: Promise<{ id: st
     );
   }
 
-  // Idempotent: if already approved, just return current state.
-  if (meeting.status === "APPROVED" || meeting.status === "CONFIRMED" || meeting.status === "DONE") {
-    return NextResponse.json({ meeting });
+  // audit v12 LOW (LOW-15): enforce same-entity scope — approvers may only act
+  // on meetings that belong to their own CrmEntity. Super-admins are exempt.
+  const isSuperAdmin = session.user.hrRoles?.includes("super_admin");
+  if (!isSuperAdmin) {
+    // Derive the meeting's entity: prefer opportunity (has entityId), fall back
+    // to the scheduler's profile entity when the meeting is company-only.
+    let meetingEntityId: string | null | undefined;
+    if (meeting.opportunityId) {
+      const opp = await db.crmOpportunity.findUnique({
+        where: { id: meeting.opportunityId },
+        select: { entityId: true },
+      });
+      meetingEntityId = opp?.entityId;
+    } else {
+      const scheduler = await db.crmUserProfile.findUnique({
+        where: { id: meeting.scheduledById },
+        select: { entityId: true },
+      });
+      meetingEntityId = scheduler?.entityId;
+    }
+    const approverEntityId = session.user.crmEntityId;
+    if (meetingEntityId && approverEntityId !== meetingEntityId) {
+      return NextResponse.json(
+        { error: "You can only approve meetings within your own entity" },
+        { status: 403 }
+      );
+    }
+  }
+
+  // audit v12 MEDIUM (MED-30): terminal states are now a 409; APPROVED checks caller identity.
+  if (meeting.status === "CONFIRMED" || meeting.status === "DONE") {
+    return NextResponse.json({ error: "Meeting is already in a terminal state" }, { status: 409 });
+  }
+  if (meeting.status === "APPROVED") {
+    if (meeting.approvedById !== session.user.crmProfileId) {
+      return NextResponse.json(
+        { error: "Meeting was already approved by a different approver" },
+        { status: 409 }
+      );
+    }
+    return NextResponse.json({ meeting }); // true idempotent re-submit by same approver
   }
 
   const updated = await db.crmMeeting.update({

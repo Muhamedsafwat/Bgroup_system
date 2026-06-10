@@ -26,10 +26,10 @@ export async function GET(
     })
     if (!employee) return NextResponse.json({ detail: 'Not found.' }, { status: 404 })
 
-    // Company scoping for non-admin users
-    if (!isSuperAdmin(authUser) && !isHROrAdmin(authUser)) {
-      const emp = await prisma.hrEmployee.findUnique({ where: { userId: authUser.id } })
-      if (emp && emp.companyId !== employee.companyId) {
+    // audit v12 HIGH (HIGH-54) recheck — enforce company scope for ALL non-super_admin roles
+    // (hr_manager, ceo, accountant, etc.) to prevent cross-tenant leakage of salary/nationalId/IBAN.
+    if (!isSuperAdmin(authUser)) {
+      if (!authUser.companies.includes(employee.companyId)) {
         return NextResponse.json({ detail: 'Not found.' }, { status: 404 })
       }
     }

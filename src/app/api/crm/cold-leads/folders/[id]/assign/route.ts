@@ -72,10 +72,14 @@ export async function POST(
     );
   }
 
+  // audit v12 HIGH (HIGH-27): exclude CONVERTED + ARCHIVED so a stale
+  // selection that included a CONVERTED row doesn't silently flip
+  // its status to ASSIGNED while leaving convertedOpportunityId set.
   const leadIds = (
     await db.crmColdLead.findMany({
       where: {
         importBatchId: folderId,
+        status: { notIn: ["CONVERTED", "ARCHIVED"] },
         ...(onlyUnassigned ? { assignedToId: null } : {}),
       },
       select: { id: true },
@@ -93,15 +97,33 @@ export async function POST(
     });
   }
 
-  // Round-robin — leadIds[i] → repIds[i % repIds.length].
+  // audit v12 HIGH (HIGH-27): wrap in a single tx so a mid-loop failure
+  // doesn't leave the folder half-assigned. Write a per-row audit via
+  // CrmColdLeadDisposition to mirror the distribute endpoint.
   const now = new Date();
-  for (let i = 0; i < leadIds.length; i++) {
-    const repId = parsed.data.repIds[i % parsed.data.repIds.length];
-    await db.crmColdLead.update({
-      where: { id: leadIds[i] },
-      data: { assignedToId: repId, assignedAt: now, status: "ASSIGNED" },
-    });
-  }
+  await db.$transaction(async (tx) => {
+    for (let i = 0; i < leadIds.length; i++) {
+      const repId = parsed.data.repIds[i % parsed.data.repIds.length];
+      await tx.crmColdLead.update({
+        where: { id: leadIds[i] },
+        data: { assignedToId: repId, assignedAt: now, status: "ASSIGNED" },
+      });
+      // audit v12 HIGH (HIGH-30) recheck: skip disposition row when actor
+      // has no crmProfileId (super_admin / partners-admin pass isManagerOrAdmin
+      // without a CRM profile, so crmProfileId can be undefined at runtime).
+      if (session.user.crmProfileId) {
+        await tx.crmColdLeadDisposition.create({
+          data: {
+            coldLeadId: leadIds[i],
+            repId: session.user.crmProfileId,
+            actingAdminId: session.user.actingAsCrmProfileId ?? null,
+            disposition: "ASSIGNED",
+            notes: `Folder bulk-assign to rep ${repId}`,
+          },
+        });
+      }
+    }
+  });
 
   return NextResponse.json({
     ok: true,

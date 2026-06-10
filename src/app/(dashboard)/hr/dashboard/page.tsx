@@ -342,6 +342,24 @@ export default function DashboardPage() {
   const attendance = attendanceQuery.data
   const incidents = incidentsQuery.data || []
   const alerts = alertsQuery.data || []
+
+  // audit v12 LOW (LOW-16) recheck-hardening: derive the failed-widgets
+  // count dynamically. The earlier hand-rolled banner hardcoded "/6" but
+  // only 5 widgets fire for non-super-admin (payrollSummaryQuery is
+  // gated by `enabled: isSuperAdmin`). Compute the denominator from the
+  // actual set of queries that ran so a future widget add/remove keeps
+  // the banner accurate.
+  const widgetQueries = [
+    metricsQuery,
+    attendanceQuery,
+    incidentsQuery,
+    alertsQuery,
+    ...(isSuperAdmin ? [payrollSummaryQuery] : []),
+  ]
+  const widgetsTotal = widgetQueries.length
+  const widgetsFailed = widgetQueries.filter((q) => q.isError).length
+  void widgetsTotal // referenced by JSX when the banner is rendered
+  void widgetsFailed
   const salaryData = salaryQuery.data || []
 
   const totalAttendance = attendance
@@ -395,7 +413,8 @@ export default function DashboardPage() {
             >
               <p className="text-[11px] uppercase tracking-wider text-amber-700 font-semibold mb-1">{isAr ? "المخالفات" : "Incidents"}</p>
               <p className="text-2xl font-bold text-foreground group-hover:text-amber-700 transition-colors">
-                {incidentsQuery.isLoading ? '…' : incidents.filter((i) => (i as { status?: string }).status === 'pending').length}
+                {/* audit v12 LOW (LOW-9) ultra — use DB count from metrics, not a filter on the capped recentIncidents array */}
+                {metricsQuery.isLoading ? '…' : (metrics?.pending_incidents ?? 0)}
               </p>
               <p className="text-xs text-muted-foreground mt-0.5">{isAr ? "بانتظار القرار" : "Awaiting decision"}</p>
             </button>

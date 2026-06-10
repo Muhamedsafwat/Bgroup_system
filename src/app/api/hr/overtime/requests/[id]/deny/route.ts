@@ -1,7 +1,8 @@
 import { NextResponse } from 'next/server'
 import { db as prisma } from '@/lib/db'
 import { requireAuth } from '@/lib/hr/auth-utils'
-import { isHROrAdmin } from '@/lib/hr/permissions'
+import { assertCan, canAccessCompany, isTeamLead } from '@/lib/hr/permissions'
+import { getSubordinateEmployeeIds } from '@/lib/hr/subordinates'
 import { denyOvertimeRequestSchema } from '@/lib/hr/validations'
 
 export async function POST(
@@ -10,9 +11,8 @@ export async function POST(
 ) {
   try {
     const authUser = await requireAuth(request)
-    if (!isHROrAdmin(authUser)) {
-      return NextResponse.json({ detail: 'Permission denied.' }, { status: 403 })
-    }
+    // audit v12 MEDIUM (MED-41): use assertCan so team_lead is also permitted
+    assertCan(authUser, 'overtime:approve')
 
     const { id } = await params
     const pk = id
@@ -24,46 +24,69 @@ export async function POST(
     const data = parsed.data
     const now = new Date()
 
-    const otRequest = await prisma.hrOvertimeRequest.findUnique({
-      where: { id: pk },
-      include: { employee: true },
-    })
-    if (!otRequest) return NextResponse.json({ detail: 'Not found.' }, { status: 404 })
-
-    if (otRequest.status !== 'pending') {
-      return NextResponse.json({ detail: 'Only pending requests can be denied.' }, { status: 400 })
-    }
-
     const denialReason = data.denial_reason || data.reason || ''
 
     if (!denialReason || denialReason.trim().length === 0) {
       return NextResponse.json({ detail: 'A reason is required when denying overtime.' }, { status: 400 })
     }
 
-    const updated = await prisma.hrOvertimeRequest.update({
+    // audit v12 HIGH (HIGH-51) recheck: pre-fetch to enable company-scope and
+    // subordinate-chain checks, mirroring the guards in approve/route.ts.
+    const otRequest = await prisma.hrOvertimeRequest.findUnique({
       where: { id: pk },
-      data: {
-        status: 'denied',
-        approvedById: authUser.id,
-        approvedAt: now,
-        denialReason,
-        updatedAt: now,
-      },
-      include: {
-        employee: { include: { company: true, department: true } },
-        overtimePolicy: true,
-        approvedBy: true,
-      },
+      include: { employee: { include: { company: true, department: true } } },
     })
+    if (!otRequest) return NextResponse.json({ detail: 'Not found.' }, { status: 404 })
+
+    if (otRequest.employee && !canAccessCompany(authUser, otRequest.employee.companyId)) {
+      return NextResponse.json({ detail: 'Permission denied.' }, { status: 403 })
+    }
+
+    if (isTeamLead(authUser) && otRequest.employee) {
+      const myEmployee = await prisma.hrEmployee.findFirst({
+        where: { userId: authUser.id },
+        select: { id: true },
+      })
+      if (!myEmployee) return NextResponse.json({ detail: 'Permission denied.' }, { status: 403 })
+      const subordinateIds = await getSubordinateEmployeeIds(myEmployee.id)
+      if (!subordinateIds.has(otRequest.employee.id)) {
+        return NextResponse.json({ detail: 'Permission denied.' }, { status: 403 })
+      }
+    }
+
+    // audit v12 MEDIUM (MED-41): atomic compound where prevents TOCTOU race
+    let updated
+    try {
+      updated = await prisma.hrOvertimeRequest.update({
+        where: { id: pk, status: 'pending' },
+        data: {
+          status: 'denied',
+          approvedById: authUser.id,
+          approvedAt: now,
+          denialReason,
+          updatedAt: now,
+        },
+        include: {
+          employee: { include: { company: true, department: true } },
+          overtimePolicy: true,
+          approvedBy: true,
+        },
+      })
+    } catch (err: any) {
+      if (err?.code === 'P2025') {
+        return NextResponse.json({ detail: 'Not found or already processed.' }, { status: 409 })
+      }
+      throw err
+    }
 
     // Notify the employee
-    if (otRequest.employee?.userId) {
+    if (updated.employee?.userId) {
       await prisma.hrNotification.create({
         data: {
-          userId: otRequest.employee.userId,
+          userId: updated.employee.userId,
           notificationType: 'ot_denied',
           title: 'Overtime Request Denied',
-          message: `Your OT request for ${otRequest.date instanceof Date ? otRequest.date.toISOString().split('T')[0] : otRequest.date} has been denied. Reason: ${denialReason || 'Not specified'}.`,
+          message: `Your OT request for ${updated.date instanceof Date ? updated.date.toISOString().split('T')[0] : updated.date} has been denied. Reason: ${denialReason || 'Not specified'}.`,
           isRead: false,
           relatedObjectType: 'OvertimeRequest',
           relatedObjectId: pk,
