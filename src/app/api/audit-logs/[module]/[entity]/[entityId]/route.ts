@@ -53,13 +53,19 @@ export async function GET(
   }
 
   if (module === "partners") {
+    // audit v12 LOW (LOW-7): allow platform admins OR partner users viewing their own resources
     const isPartnersAdmin =
       session.user.modules?.includes("partners") && !session.user.partnerId;
-    if (!isPartnersAdmin) {
+    const isPartner = !!session.user.partnerId;
+    if (!isPartnersAdmin && !isPartner) {
       return NextResponse.json({ error: "Forbidden" }, { status: 403 });
     }
     const rows = await db.partnerAuditLog.findMany({
-      where: { entity, entityId },
+      where: {
+        entity,
+        entityId,
+        ...(isPartner ? { partnerId: session.user.partnerId } : {}),
+      },
       orderBy: { createdAt: "desc" },
       take: 100,
     });

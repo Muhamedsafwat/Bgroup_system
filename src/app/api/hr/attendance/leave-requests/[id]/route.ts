@@ -76,11 +76,57 @@ export async function PATCH(
     const { id } = await params
     const pk = id
     const body = await request.json()
+    // audit v12 HIGH (HIGH-58) ultra: block status transitions via PATCH at
+    // the raw-body layer so the rejection fires before Zod strips the field.
+    // Approved/denied transitions must go through the dedicated /approve or
+    // /deny sub-routes which set approvedById/approvedAt, fan out attendance
+    // logs, enforce canAccessCompany, and send notifications.
+    if (body && typeof body === 'object' && 'status' in body) {
+      return NextResponse.json(
+        {
+          detail:
+            'Status transitions are not allowed via PATCH. ' +
+            'Use POST /approve or POST /deny instead.',
+        },
+        { status: 409 }
+      )
+    }
     const parsed = updateLeaveRequestSchema.safeParse(body)
     if (!parsed.success) {
       return NextResponse.json({ detail: parsed.error.issues[0].message }, { status: 400 })
     }
     const data = parsed.data
+
+    // audit v12 HIGH: guard against rewriting date/type on a finalised request,
+    // which would orphan approved attendance-log rows (20-24 stay 'leave') and
+    // leave the new range (27-31) with 'absent' rows.
+    // Approved/denied requests must be revoked and re-created instead.
+    const existing = await prisma.hrLeaveRequest.findUnique({
+      where: { id: pk },
+      select: { status: true },
+    })
+    if (!existing) {
+      return NextResponse.json({ detail: 'Not found.' }, { status: 404 })
+    }
+    const isDateOrTypeChange =
+      data.start_date !== undefined ||
+      data.end_date !== undefined ||
+      data.leave_type !== undefined ||
+      data.days_count !== undefined
+    if (
+      (existing.status === 'approved' || existing.status === 'denied') &&
+      isDateOrTypeChange
+    ) {
+      return NextResponse.json(
+        {
+          detail:
+            'Cannot modify dates or leave type on an approved/denied request. ' +
+            'Revoke the request and create a new one.',
+        },
+        { status: 409 }
+      )
+    }
+
     const updateData: Record<string, unknown> = { updatedAt: new Date() }
 
     if (data.leave_type !== undefined) updateData.leaveTypeId = data.leave_type
@@ -88,7 +134,6 @@ export async function PATCH(
     if (data.end_date !== undefined) updateData.endDate = new Date(data.end_date)
     if (data.days_count !== undefined) updateData.daysCount = data.days_count
     if (data.reason !== undefined) updateData.reason = data.reason
-    if (data.status !== undefined) updateData.status = data.status
 
     await prisma.hrLeaveRequest.update({ where: { id: pk }, data: updateData })
 

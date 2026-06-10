@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server'
 import { db as prisma } from '@/lib/db'
 import { requireAuth } from '@/lib/hr/auth-utils'
-import { isHROrAdmin, hasAnyRole } from '@/lib/hr/permissions'
+import { isHROrAdmin, hasAnyRole, canAccessCompany } from '@/lib/hr/permissions'
 import { createAuditLog, getClientIp } from '@/lib/hr/audit'
 import { createBonusSchema } from '@/lib/hr/validations'
 
@@ -150,6 +150,10 @@ export async function POST(request: Request) {
     const employee = await prisma.hrEmployee.findUnique({ where: { id: employeeId } })
     if (!employee) {
       return NextResponse.json({ detail: 'Employee not found.' }, { status: 400 })
+    }
+    // audit v12 HIGH (HIGH-57) recheck: validate cross-company access before creating bonus.
+    if (!canAccessCompany(authUser, employee.companyId)) {
+      return NextResponse.json({ detail: 'Permission denied.' }, { status: 403 })
     }
 
     // Auto-compute amount from rule

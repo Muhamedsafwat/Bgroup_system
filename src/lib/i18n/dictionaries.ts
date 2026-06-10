@@ -619,6 +619,27 @@ const ar = {
     noAttendanceData: "لا توجد بيانات حضور متاحة",
     noActiveReps: "لا يوجد مندوبون نشطون للتوزيع.",
   },
+
+  // audit v12 MEDIUM (MED-69) — NotificationCenter i18n
+  notifications: {
+    errors: {
+      markReadFailed: "تعذّر تمييز الإشعار كمقروء",
+      markAllReadFailed: "تعذّر تمييز جميع الإشعارات كمقروءة",
+    },
+    modules: {
+      hr: "الموارد البشرية",
+      crm: "CRM",
+      partners: "الشركاء",
+    },
+  },
+
+  // audit v12 MEDIUM (MED-75) — ImpersonationBanner i18n
+  impersonationBanner: {
+    acting_as: "أنت تتصرف باسم",
+    audit_logged: "كل إجراء مسجّل تحت حسابك كمدير.",
+    return_to_admin: "العودة إلى المدير",
+    stop_error: "تعذّر إيقاف انتحال الهوية",
+  },
 };
 
 type Dictionary = typeof ar;
@@ -1207,6 +1228,27 @@ const en: Dictionary = {
     noPayrollForPeriod: "No payroll data for this period",
     noAttendanceData: "No attendance data available",
     noActiveReps: "No active reps to distribute to.",
+  },
+
+  // audit v12 MEDIUM (MED-69) — NotificationCenter i18n
+  notifications: {
+    errors: {
+      markReadFailed: "Couldn't mark notification as read",
+      markAllReadFailed: "Couldn't mark all as read",
+    },
+    modules: {
+      hr: "HR",
+      crm: "CRM",
+      partners: "Partners",
+    },
+  },
+
+  // audit v12 MEDIUM (MED-75) — ImpersonationBanner i18n
+  impersonationBanner: {
+    acting_as: "You're acting as",
+    audit_logged: "Every action is audit-logged under your admin account.",
+    return_to_admin: "Return to admin",
+    stop_error: "Couldn't stop impersonation",
   },
 };
 

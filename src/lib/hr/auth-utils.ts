@@ -29,6 +29,12 @@ export interface AuthUser {
   isSuperuser: boolean
   roles: string[]
   companies: string[]
+  // audit v12 MEDIUM (MED-52) followup: when an admin impersonates
+  // another user, this holds the real admin's user id so HR routes
+  // can stamp `actingAdminId` on audit rows. NextAuth populates this
+  // from session.user.actingAs.realUserId during impersonation; for
+  // direct sign-in callers it is undefined.
+  actingAsUserId?: string
 }
 
 // ─── Django Password Verification ──────────────────────────
@@ -167,7 +173,19 @@ export async function getCurrentUser(request?: Request): Promise<AuthUser | null
     const { auth } = await import('@/lib/auth')
     const session = await auth()
     if (session?.user?.id && session.user.modules?.includes('hr')) {
-      return getUserById(session.user.id)
+      const user = await getUserById(session.user.id)
+      if (!user) return null
+      // audit v12 MEDIUM (MED-52) followup: when the NextAuth session
+      // is in impersonation mode, surface the real admin's user id so
+      // downstream HR routes can record `actingAdminId` on audits.
+      // session.user.actingAs holds the IMPERSONATED user info; the
+      // real admin user id lives on actingAs.realUserId. Mirror it
+      // onto the returned AuthUser.
+      const actingAs = session.user.actingAs as { realUserId?: string } | undefined
+      if (actingAs?.realUserId) {
+        return { ...user, actingAsUserId: actingAs.realUserId }
+      }
+      return user
     }
   } catch {
     // auth() can throw if called outside request scope — ignore and fall through.

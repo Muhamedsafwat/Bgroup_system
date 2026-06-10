@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server'
 import { db as prisma } from '@/lib/db'
 import { requireAuth } from '@/lib/hr/auth-utils'
-import { isHROrAdmin, hasAnyRole } from '@/lib/hr/permissions'
+import { isHROrAdmin, hasAnyRole, canAccessCompany } from '@/lib/hr/permissions'
 import { createIncidentSchema } from '@/lib/hr/validations'
 
 const ACTION_DISPLAY: Record<string, string> = {
@@ -87,6 +87,20 @@ export async function GET(request: Request) {
       where.employeeId = emp.id
     }
 
+    // audit v12 HIGH (HIGH-52): scope non-super_admin privileged users to their allowed companies
+    if (isPrivileged && !hasAnyRole(authUser, ['super_admin'])) {
+      const allowedCompanies = authUser.companies ?? []
+      const requestedCompany = url.searchParams.get('company')
+      if (requestedCompany) {
+        if (!allowedCompanies.includes(requestedCompany)) {
+          return NextResponse.json([])
+        }
+        where.employee = { ...where.employee, companyId: requestedCompany }
+      } else {
+        where.employee = { ...where.employee, companyId: { in: allowedCompanies } }
+      }
+    }
+
     // Filter by employee
     const employeeId = url.searchParams.get('employee')
     if (employeeId) {
@@ -107,9 +121,10 @@ export async function GET(request: Request) {
       where.violationRuleId = violationRuleId
     }
 
-    // Filter by company (through employee)
+    // Filter by company (through employee) — only for super_admin; non-super_admin privileged
+    // users are already scoped above by the audit v12 HIGH (HIGH-52) block
     const companyId = url.searchParams.get('company')
-    if (companyId) {
+    if (companyId && hasAnyRole(authUser, ['super_admin'])) {
       where.employee = { ...where.employee, companyId }
     }
 
@@ -189,6 +204,12 @@ export async function POST(request: Request) {
       return NextResponse.json({ detail: 'Employee not found.' }, { status: 400 })
     }
 
+    // audit v12 HIGH: cross-company gate — prevent HR managers from filing incidents
+    // against employees belonging to a company they do not have access to.
+    if (!canAccessCompany(authUser, employee.companyId)) {
+      return NextResponse.json({ detail: 'Permission denied.' }, { status: 403 })
+    }
+
     const payrollPeriod = await prisma.hrPayrollPeriod.findFirst({
       where: {
         month,
@@ -216,9 +237,19 @@ export async function POST(request: Request) {
     // Employee already fetched above for payroll lock check
 
     // Calculate offense number within the reset period
+    // audit v12 MEDIUM (MED-42) recheck: use true calendar-month subtraction
+    // instead of the fixed 30-days-per-month approximation to avoid a shorter
+    // window that drops legitimate prior offenses near the boundary.
     const resetMonths = violationRule.category.resetPeriodMonths
     const windowStart = new Date(incidentDate)
-    windowStart.setDate(windowStart.getDate() - resetMonths * 30)
+    windowStart.setMonth(windowStart.getMonth() - resetMonths)
+    // Clamp end-of-month overshoot: if setMonth rolled into the next month
+    // (e.g. Jan 31 - 1 month = Mar 3 due to Feb having 28 days), walk back
+    // to the last day of the intended month.
+    const expectedMonth = ((incidentDate.getMonth() - resetMonths) % 12 + 12) % 12
+    if (windowStart.getMonth() !== expectedMonth) {
+      windowStart.setDate(0) // setDate(0) = last day of previous month
+    }
 
     const existingCount = await prisma.hrIncident.count({
       where: {

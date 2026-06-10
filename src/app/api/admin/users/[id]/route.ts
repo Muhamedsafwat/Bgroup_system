@@ -5,6 +5,8 @@ import { auth } from "@/lib/auth";
 import { db } from "@/lib/db";
 import { CrmRole } from "@/generated/prisma";
 import { describeZodError, describeError } from "@/lib/zod-errors";
+// audit v12 MEDIUM (MED-54): use canonical isPlatformAdmin instead of local copy
+import { isPlatformAdmin } from "@/lib/crm/admin-gates";
 
 /**
  * PATCH /api/admin/users/[id]
@@ -30,14 +32,6 @@ import { describeZodError, describeError } from "@/lib/zod-errors";
  * memberships for the same rep are preserved. Only meaningful when the
  * target user is a MANAGER/ADMIN.
  */
-function isPlatformAdmin(session: Session | null) {
-  if (!session?.user) return false;
-  return (
-    !!session.user.hrRoles?.includes("super_admin") ||
-    (!!session.user.modules?.includes("partners") && !session.user.partnerId)
-  );
-}
-
 const hrBlock = z
   .object({
     positionEn: z.string().trim().max(120).optional().nullable(),

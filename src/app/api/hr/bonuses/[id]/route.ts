@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server'
 import { db as prisma } from '@/lib/db'
 import { requireAuth } from '@/lib/hr/auth-utils'
-import { isHROrAdmin } from '@/lib/hr/permissions'
+import { isHROrAdmin, canAccessCompany } from '@/lib/hr/permissions'
 import { updateBonusSchema } from '@/lib/hr/validations'
 
 const bonusIncludes = {
@@ -106,11 +106,39 @@ export async function PATCH(
     const data = parsed.data
     const updateData: Record<string, unknown> = { updatedAt: new Date() }
 
+    // audit v12 HIGH: validate cross-company access before writing any update.
+    // Fetch the existing bonus to confirm the caller can access its current company.
+    const existing = await prisma.hrBonus.findUnique({
+      where: { id: pk },
+      include: { employee: { select: { companyId: true } } },
+    })
+    if (!existing) {
+      return NextResponse.json({ detail: 'Not found.' }, { status: 404 })
+    }
+    if (existing.employee && !canAccessCompany(authUser, existing.employee.companyId)) {
+      return NextResponse.json({ detail: 'Permission denied.' }, { status: 403 })
+    }
+
+    // audit v12 HIGH: if reassigning to a different employee, verify the target
+    // employee also belongs to a company the caller is authorised to access.
+    if (data.employee !== undefined) {
+      const targetEmployee = await prisma.hrEmployee.findUnique({
+        where: { id: data.employee },
+        select: { companyId: true },
+      })
+      if (!targetEmployee) {
+        return NextResponse.json({ detail: 'Target employee not found.' }, { status: 400 })
+      }
+      if (!canAccessCompany(authUser, targetEmployee.companyId)) {
+        return NextResponse.json({ detail: 'Permission denied.' }, { status: 403 })
+      }
+      updateData.employeeId = data.employee
+    }
+
     if (data.bonus_date !== undefined) updateData.bonusDate = new Date(data.bonus_date)
     if (data.comments !== undefined) updateData.comments = data.comments
     if (data.evidence !== undefined) updateData.evidence = data.evidence
     if (data.bonus_rule !== undefined) updateData.bonusRuleId = data.bonus_rule
-    if (data.employee !== undefined) updateData.employeeId = data.employee
 
     const bonus = await prisma.hrBonus.update({
       where: { id: pk },
@@ -138,6 +166,16 @@ export async function DELETE(
 
     const { id } = await params
     const pk = id
+
+    // audit v12 HIGH (HIGH-57) recheck: validate cross-company access before deleting.
+    const existing = await prisma.hrBonus.findUnique({
+      where: { id: pk },
+      include: { employee: { select: { companyId: true } } },
+    })
+    if (!existing) return NextResponse.json({ detail: 'Not found.' }, { status: 404 })
+    if (existing.employee && !canAccessCompany(authUser, existing.employee.companyId)) {
+      return NextResponse.json({ detail: 'Permission denied.' }, { status: 403 })
+    }
 
     await prisma.hrBonus.delete({ where: { id: pk } })
 

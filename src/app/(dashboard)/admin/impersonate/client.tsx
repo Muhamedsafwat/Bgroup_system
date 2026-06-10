@@ -134,7 +134,8 @@ export function ImpersonateClient({ users, recent }: { users: U[]; recent: Audit
               </TableRow>
             </TableHeader>
             <TableBody>
-              {filtered.slice(0, 100).map((u) => (
+              {/* audit v12 LOW (LOW-11): removed .slice(0,100) so all matching users are shown */}
+              {filtered.map((u) => (
                 <TableRow key={u.id}>
                   <TableCell className="font-mono text-xs">{u.email}</TableCell>
                   <TableCell>{u.name ?? "—"}</TableCell>
@@ -159,11 +160,7 @@ export function ImpersonateClient({ users, recent }: { users: U[]; recent: Audit
               )}
             </TableBody>
           </Table>
-          {filtered.length > 100 && (
-            <p className="text-xs text-muted-foreground">
-              Showing first 100 — narrow the search.
-            </p>
-          )}
+          {/* audit v12 LOW (LOW-11): removed "Showing first 100" hint — all matches now shown */}
         </CardContent>
       </Card>
 

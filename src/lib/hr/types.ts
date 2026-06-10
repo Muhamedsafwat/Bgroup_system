@@ -369,6 +369,8 @@ export interface DashboardMetrics {
   active_employees: number
   attendance_rate: number
   pending_overtime: number
+  /** audit v12 LOW (LOW-9) ultra — full DB count of pending incidents */
+  pending_incidents: number
   monthly_salary_budget: number
   incidents_this_month: number
   bonuses_this_month: number

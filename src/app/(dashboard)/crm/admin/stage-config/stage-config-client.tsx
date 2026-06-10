@@ -23,13 +23,6 @@ import {
   DialogTitle,
   DialogFooter,
 } from "@/components/ui/dialog";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
 import { Plus, Trash2, RotateCcw } from "lucide-react";
 import {
   updateStageConfig,
@@ -37,20 +30,6 @@ import {
   deleteStageConfig,
   restoreStageConfig,
 } from "../actions";
-
-const ALL_STAGES = [
-  "NEW",
-  "CONTACTED",
-  "DISCOVERY",
-  "QUALIFIED",
-  "TECH_MEETING",
-  "PROPOSAL_SENT",
-  "NEGOTIATION",
-  "VERBAL_YES",
-  "POSTPONED",
-  "WON",
-  "LOST",
-] as const;
 
 type StageConfigItem = {
   id: string;
@@ -154,9 +133,10 @@ export function StageConfigClient({ configs: initial }: { configs: StageConfigIt
 
   const stageLabels = t.stages as Record<string, string>;
 
-  // Which enum values aren't yet configured (for the default entity bucket).
+  // audit v12 MEDIUM (MED-10): backend stage column is TEXT — keep configuredStages only
+  // for the duplicate-warning below; drop the restrictive availableStages filter so
+  // admins can enter any custom stage code (e.g. PILOT, FIELD_TRIAL).
   const configuredStages = new Set(configs.filter((c) => c.entityId === null).map((c) => c.stage));
-  const availableStages = ALL_STAGES.filter((s) => !configuredStages.has(s));
 
   async function handleAdd() {
     if (!newStage) return;
@@ -236,7 +216,7 @@ export function StageConfigClient({ configs: initial }: { configs: StageConfigIt
     <div className="space-y-6">
       <div className="flex items-center justify-between">
         <h1 className="text-2xl font-bold">{t.nav.stageConfig}</h1>
-        {!adding && availableStages.length > 0 && (
+        {!adding && (
           <Button size="sm" onClick={() => setAdding(true)}>
             <Plus className="h-4 w-4 me-1" /> {locale === "ar" ? "إضافة مرحلة" : "Add stage"}
           </Button>
@@ -252,14 +232,18 @@ export function StageConfigClient({ configs: initial }: { configs: StageConfigIt
             <div className="grid grid-cols-1 sm:grid-cols-6 gap-2 items-end">
               <div>
                 <label className="text-xs text-muted-foreground">{locale === "ar" ? "المرحلة" : "Stage"}</label>
-                <Select value={newStage} onValueChange={(v) => setNewStage(v ?? "")}>
-                  <SelectTrigger><SelectValue placeholder={locale === "ar" ? "اختر مرحلة" : "Pick a stage"} /></SelectTrigger>
-                  <SelectContent>
-                    {availableStages.map((s) => (
-                      <SelectItem key={s} value={s}>{stageLabels[s] ?? s}</SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
+                {/* audit v12 MEDIUM (MED-10): replaced <Select> with free-text <Input> so admins
+                    can enter any stage code (PILOT, FIELD_TRIAL, …) — not just the original 11 seeds */}
+                <Input
+                  value={newStage}
+                  onChange={(e) => setNewStage(e.target.value.toUpperCase().replace(/\s+/g, "_"))}
+                  placeholder={locale === "ar" ? "مثال: PILOT" : "e.g. PILOT"}
+                />
+                {newStage && configuredStages.has(newStage) && (
+                  <p className="text-[11px] text-amber-500 mt-0.5">
+                    {locale === "ar" ? "هذه المرحلة مُضافة مسبقاً" : "Stage already configured"}
+                  </p>
+                )}
               </div>
               <div>
                 <label className="text-xs text-muted-foreground">

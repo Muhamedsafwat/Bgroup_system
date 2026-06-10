@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server'
 import { db as prisma } from '@/lib/db'
 import { requireAuth } from '@/lib/hr/auth-utils'
-import { isHROrAdmin } from '@/lib/hr/permissions'
+import { isHROrAdmin, canAccessCompany } from '@/lib/hr/permissions'
 
 export async function POST(
   request: Request,
@@ -23,33 +23,47 @@ export async function POST(
     })
     if (!lr) return NextResponse.json({ detail: 'Not found.' }, { status: 404 })
 
+    // audit v12 HIGH: cross-company gate — HR manager in Company A must not deny leave for Company B
+    if (!canAccessCompany(authUser, lr.employee.companyId)) {
+      return NextResponse.json({ detail: 'Permission denied.' }, { status: 403 })
+    }
+
     if (lr.status !== 'pending') {
       return NextResponse.json({ detail: 'Leave request is not pending.' }, { status: 400 })
     }
 
-    // Update leave request status
-    await prisma.hrLeaveRequest.update({
-      where: { id: pk },
-      data: {
-        status: 'denied',
-        updatedAt: now,
-      },
-    })
-
-    // Create notification for the employee
-    if (lr.employee?.userId) {
-      await prisma.hrNotification.create({
+    // audit v12 HIGH (HIGH-59) ultra: wrap updateMany + notification in a single transaction so a
+    // failed notification cannot leave the leave request permanently denied with no notification sent;
+    // mirrors the atomicity guarantee already present in the approve route (MED-56).
+    let updateCount = 0
+    await prisma.$transaction(async (tx) => {
+      const { count } = await tx.hrLeaveRequest.updateMany({
+        where: { id: pk, status: 'pending' },
         data: {
-          userId: lr.employee.userId,
-          notificationType: 'leave',
-          title: 'Leave Request Denied',
-          message: `Your ${lr.leaveType?.nameEn || 'leave'} request from ${lr.startDate.toISOString().split('T')[0]} to ${lr.endDate.toISOString().split('T')[0]} has been denied.`,
-          isRead: false,
-          relatedObjectType: 'leave_request',
-          relatedObjectId: lr.id,
-          createdAt: now,
+          status: 'denied',
+          updatedAt: now,
         },
       })
+      updateCount = count
+
+      if (count > 0 && lr.employee?.userId) {
+        await tx.hrNotification.create({
+          data: {
+            userId: lr.employee.userId,
+            notificationType: 'leave',
+            title: 'Leave Request Denied',
+            message: `Your ${lr.leaveType?.nameEn || 'leave'} request from ${lr.startDate.toISOString().split('T')[0]} to ${lr.endDate.toISOString().split('T')[0]} has been denied.`,
+            isRead: false,
+            relatedObjectType: 'leave_request',
+            relatedObjectId: lr.id,
+            createdAt: now,
+          },
+        })
+      }
+    })
+
+    if (updateCount === 0) {
+      return NextResponse.json({ detail: 'Leave request is no longer pending.' }, { status: 409 })
     }
 
     // Return updated leave request

@@ -320,6 +320,77 @@ export function OpportunityListClient({
               <SelectItem value="COLD">{t.priorities.COLD}</SelectItem>
             </SelectContent>
           </Select>
+          {/* User-feature (2026-06-10): owner filter is only useful for
+              users who can see other people's opps. Reps are scoped to
+              their own list at the DB layer, so a "by rep" picker on
+              their toolbar would just confuse them — hide it. The
+              roster is already loaded for the bulk-transfer action, so
+              this is a free addition (no extra fetch). */}
+          {canTransfer && reps.length > 0 && (
+            <Select
+              value={searchParams.get("ownerId") || "all"}
+              onValueChange={(v: any) => setFilter("ownerId", v)}
+            >
+              <SelectTrigger className="w-40">
+                <SelectValue placeholder={locale === "ar" ? "المالك" : "Owner"} />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">{t.common.all}</SelectItem>
+                {reps.map((r) => (
+                  <SelectItem key={r.id} value={r.id}>
+                    {r.fullName}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          )}
+          {/* User-feature: Sort. Recently edited is the default; the
+              other options cover the workflows the user called out —
+              closest next action (chase queue), hottest first (focus on
+              the warmest deals), closing soonest (forecasting), highest
+              value, newest. */}
+          <Select
+            value={searchParams.get("sort") || "recent_edit"}
+            onValueChange={(v: any) => setFilter("sort", v === "recent_edit" ? "all" : v)}
+          >
+            <SelectTrigger className="w-48">
+              <SelectValue placeholder={locale === "ar" ? "ترتيب" : "Sort"} />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="recent_edit">
+                {locale === "ar" ? "آخر تعديل" : "Recently edited"}
+              </SelectItem>
+              <SelectItem value="next_action">
+                {locale === "ar" ? "أقرب إجراء قادم" : "Closest next action"}
+              </SelectItem>
+              <SelectItem value="priority_hot_first">
+                {locale === "ar" ? "الأهم أولاً (HOT → COLD)" : "Hottest first"}
+              </SelectItem>
+              <SelectItem value="closing_soonest">
+                {locale === "ar" ? "الأقرب للإغلاق" : "Closing soonest"}
+              </SelectItem>
+              <SelectItem value="value_desc">
+                {locale === "ar" ? "الأعلى قيمة" : "Highest value"}
+              </SelectItem>
+              <SelectItem value="newest">
+                {locale === "ar" ? "الأحدث" : "Newest"}
+              </SelectItem>
+            </SelectContent>
+          </Select>
+          {/* User-feature: "Mine only" toggle. For reps the toggle is a
+              no-op (their list is already scoped) so we hide it. For
+              managers/admins it's the fastest way to focus on their
+              own queue. */}
+          {canTransfer && (
+            <Button
+              variant={searchParams.get("mine") === "1" ? "secondary" : "outline"}
+              size="sm"
+              onClick={() => setFilter("mine", searchParams.get("mine") === "1" ? "all" : "1")}
+              className="h-9"
+            >
+              {locale === "ar" ? "خاصتي فقط" : "Mine only"}
+            </Button>
+          )}
         </div>
 
         <div className="flex gap-2">

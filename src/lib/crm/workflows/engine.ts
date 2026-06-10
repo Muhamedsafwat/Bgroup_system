@@ -53,6 +53,10 @@ type FireOptions = {
   // When true, skip suppression-window check (used for the manual
   // "test fire" admin button). Default false in production hooks.
   ignoreSuppression?: boolean;
+  // audit v12 MEDIUM (MED-37): when true, runAction returns immediately
+  // without touching the DB — prevents destructive writes during admin
+  // test-fire requests.
+  testMode?: boolean;
 };
 
 /**
@@ -112,16 +116,49 @@ function readPath(obj: unknown, path: string): unknown {
 // to hit this limit and that's also admin-gated.
 const MAX_PREDICATE_DEPTH = 50;
 
-function evalPredicate(pred: unknown, payload: WorkflowPayload, depth = 0): boolean {
+// v12 CRITICAL CRIT-6: numeric ops must accept Prisma Decimal (object),
+// numeric strings, and bigint. Returns NaN when v isn't a finite number.
+function toNumber(v: unknown): number {
+  if (typeof v === "number") return v;
+  if (typeof v === "bigint") return Number(v);
+  if (typeof v === "string") {
+    const n = Number(v);
+    return Number.isFinite(n) ? n : NaN;
+  }
+  if (v && typeof v === "object" && typeof (v as { toNumber?: () => number }).toNumber === "function") {
+    try {
+      const n = (v as { toNumber: () => number }).toNumber();
+      return Number.isFinite(n) ? n : NaN;
+    } catch {
+      return NaN;
+    }
+  }
+  return NaN;
+}
+
+// audit v11 LOW #9: caller can opt into strict mode where `pred == null`
+// means "no match" (fail-closed). Default still matches for workflow
+// back-compat ("no filter ⇒ every event"); alert-rules pass strict:true.
+export function evalPredicate(
+  pred: unknown,
+  payload: WorkflowPayload,
+  depth = 0,
+  opts: { strict?: boolean } = {},
+): boolean {
   if (depth > MAX_PREDICATE_DEPTH) return false;
-  if (pred == null) return true; // no predicate = always match
+  if (pred == null) return !opts.strict;
+  // audit v11 HIGH: legacy alert-rule predicates are stored as a flat
+  // clause array. Treat as implicit AND across clauses.
+  if (Array.isArray(pred)) {
+    return pred.every((c) => evalPredicate(c, payload, depth + 1, opts));
+  }
   if (typeof pred !== "object") return false;
   const p = pred as Predicate;
   if ("all" in p && Array.isArray(p.all)) {
-    return p.all.every((c) => evalPredicate(c, payload, depth + 1));
+    return p.all.every((c) => evalPredicate(c, payload, depth + 1, opts));
   }
   if ("any" in p && Array.isArray(p.any)) {
-    return p.any.some((c) => evalPredicate(c, payload, depth + 1));
+    return p.any.some((c) => evalPredicate(c, payload, depth + 1, opts));
   }
   if ("field" in p && "op" in p) {
     const left = readPath(payload, p.field);
@@ -131,20 +168,31 @@ function evalPredicate(pred: unknown, payload: WorkflowPayload, depth = 0): bool
         return left === right;
       case "neq":
         return left !== right;
-      case "gt":
-        return typeof left === "number" && typeof right === "number" && left > right;
-      case "gte":
-        return typeof left === "number" && typeof right === "number" && left >= right;
-      case "lt":
-        return typeof left === "number" && typeof right === "number" && left < right;
-      case "lte":
-        return typeof left === "number" && typeof right === "number" && left <= right;
+      case "gt": {
+        const a = toNumber(left), b = toNumber(right);
+        return Number.isFinite(a) && Number.isFinite(b) && a > b;
+      }
+      case "gte": {
+        const a = toNumber(left), b = toNumber(right);
+        return Number.isFinite(a) && Number.isFinite(b) && a >= b;
+      }
+      case "lt": {
+        const a = toNumber(left), b = toNumber(right);
+        return Number.isFinite(a) && Number.isFinite(b) && a < b;
+      }
+      case "lte": {
+        const a = toNumber(left), b = toNumber(right);
+        return Number.isFinite(a) && Number.isFinite(b) && a <= b;
+      }
       case "in":
         return Array.isArray(right) && right.includes(left as never);
       case "contains":
         return typeof left === "string" && typeof right === "string" && left.includes(right);
       case "exists":
+      case "notNull":
         return left !== undefined && left !== null;
+      case "isNull":
+        return left === undefined || left === null;
       default:
         return false;
     }
@@ -159,8 +207,11 @@ function evalPredicate(pred: unknown, payload: WorkflowPayload, depth = 0): bool
  */
 async function runAction(
   action: Record<string, unknown>,
-  payload: WorkflowPayload
+  payload: WorkflowPayload,
+  opts: FireOptions = {}
 ): Promise<Record<string, unknown>> {
+  // audit v12 MEDIUM (MED-37): dry-run guard — no real DB mutations during test-fire.
+  if (opts.testMode) return { kind: String(action.kind ?? "unknown"), ok: true, dryRun: true };
   const kind = action.kind;
   if (kind === "log-only") {
     return { kind, ok: true };
@@ -321,8 +372,10 @@ export async function fireWorkflow(
             data: {
               workflowId: wf.id,
               status: "suppressed",
-              entityType: payload.entityType ?? null,
-              entityId: payload.entityId ?? null,
+              // audit v12 LOW (LOW-8): use undefined (not null) so Prisma uses
+              // the column default in both branches, keeping behaviour consistent.
+              entityType: payload.entityType ?? undefined,
+              entityId: payload.entityId ?? undefined,
               payloadJson: payload as unknown as Prisma.InputJsonValue,
               finishedAt: new Date(),
             },
@@ -341,7 +394,7 @@ export async function fireWorkflow(
         },
       });
       try {
-        const result = await runAction(wf.actionJson as Record<string, unknown>, payload);
+        const result = await runAction(wf.actionJson as Record<string, unknown>, payload, opts);
         await db.crmWorkflowRun.update({
           where: { id: run.id },
           data: {

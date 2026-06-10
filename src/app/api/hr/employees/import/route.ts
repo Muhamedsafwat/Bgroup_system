@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server'
 import { db as prisma } from '@/lib/db'
 import { requireAuth } from '@/lib/hr/auth-utils'
-import { isHROrAdmin } from '@/lib/hr/permissions'
+import { isHROrAdmin, canAccessCompany } from '@/lib/hr/permissions'
 
 export async function POST(request: Request) {
   try {
@@ -14,6 +14,15 @@ export async function POST(request: Request) {
     const file = formData.get('file') as File | null
     if (!file) {
       return NextResponse.json({ detail: 'No file uploaded.' }, { status: 400 })
+    }
+
+    // audit v12 MEDIUM (MED-43): reject non-spreadsheet MIME types before parsing
+    const allowedTypes = [
+      'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+      'application/vnd.ms-excel',
+    ]
+    if (!allowedTypes.includes(file.type)) {
+      return NextResponse.json({ detail: 'Only .xlsx / .xls files are accepted.' }, { status: 400 })
     }
 
     const ExcelJS = await import('exceljs')
@@ -50,6 +59,12 @@ export async function POST(request: Request) {
       })
       if (!company) {
         errors.push({ row: rowNum, errors: { company_name: 'Company not found.' } })
+        continue
+      }
+
+      // audit v12 MEDIUM (MED-43): verify the authenticated user's companies scope includes this company
+      if (!canAccessCompany(authUser, company.id)) {
+        errors.push({ row: rowNum, errors: { company_name: 'Access to this company is not permitted.' } })
         continue
       }
 

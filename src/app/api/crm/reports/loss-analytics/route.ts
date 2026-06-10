@@ -74,13 +74,20 @@ export async function GET(req: Request) {
     },
   });
 
-  const wonCount = await db.crmOpportunity.count({
+  // audit v12 HIGH (HIGH-39): replaced .count() with .aggregate() so we
+  // also sum estimatedValueEGP for WON deals and can expose wonValueEGP
+  // in the totals payload (previously count-only, so wonValue was always 0).
+  const wonAgg = await db.crmOpportunity.aggregate({
     where: {
       stage: "WON",
       dateClosed: { gte: from, lte: to },
       deletedAt: null,
     },
+    _count: { _all: true },
+    _sum: { estimatedValueEGP: true },
   });
+  const wonCount = wonAgg._count._all;
+  const wonValueEGP = Number(wonAgg._sum.estimatedValueEGP ?? 0);
 
   type Agg = { count: number; totalValue: number };
   const bump = (m: Map<string, Agg>, key: string, val: number) => {
@@ -155,6 +162,7 @@ export async function GET(req: Request) {
       lostCount: totalLost,
       wonCount,
       lostValueEGP: Math.round(totalValueLost),
+      wonValueEGP: Math.round(wonValueEGP), // audit v12 HIGH (HIGH-39)
       lossRatePct,
     },
     byReason: toArr(byReason).map((r) => ({

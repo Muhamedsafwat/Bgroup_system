@@ -1,4 +1,4 @@
-import { NextResponse } from "next/server";
+﻿import { NextResponse } from "next/server";
 import type { Session } from "next-auth";
 import { z } from "zod";
 import { auth } from "@/lib/auth";
@@ -6,6 +6,10 @@ import { db } from "@/lib/db";
 import { CrmMeetingStatus, CrmMeetingType, type Prisma } from "@/generated/prisma";
 import { describeZodError } from "@/lib/zod-errors";
 import { isPlatformAdmin } from "@/lib/crm/admin-gates";
+// audit v12 HIGH (HIGH-48): import transactional code generator so that
+// MTG codes are assigned inside the advisory-locked transaction, preventing
+// duplicate codes under concurrent POST requests.
+import { generateMeetingCodeInTx } from "@/lib/crm/business/auto-code";
 
 const createSchema = z.object({
   startAt: z.string().datetime(),
@@ -22,24 +26,10 @@ const createSchema = z.object({
   contactPhone: z.string().trim().max(40).optional().nullable(),
   customerNeed: z.string().trim().max(120).optional().nullable(),
   notes: z.string().trim().max(2000).optional().nullable(),
-  status: z.nativeEnum(CrmMeetingStatus).optional(),
+  // audit v12 HIGH (HIGH-46): `status` intentionally omitted — clients must not be able to bypass the approval queue.
   /// Optional override — defaults to the calling rep. Admins can book on behalf of any rep.
   scheduledById: z.string().optional(),
 });
-
-async function generateCode(): Promise<string> {
-  const last = await db.crmMeeting.findFirst({
-    orderBy: { createdAt: "desc" },
-    select: { code: true },
-  });
-  let n = 1;
-  if (last?.code) {
-    const m = last.code.match(/(\d+)$/);
-    if (m) n = parseInt(m[1], 10) + 1;
-  }
-  return `MTG-${String(n).padStart(5, "0")}`;
-}
-
 
 export async function GET(req: Request) {
   const session = (await auth()) as Session | null;
@@ -60,17 +50,28 @@ export async function GET(req: Request) {
   // in the same time-slot. Pass `?scope=mine` to filter to just the caller.
   const scope = url.searchParams.get("scope") ?? "all";
 
-  // Validate from/to as ISO date(time)s before `new Date()` —
-  // `Invalid Date` would otherwise propagate to Prisma as a 500.
+  // audit v12 MEDIUM (MED-27): require a full ISO 8601 datetime with an
+  // explicit UTC offset or Z so the server always receives an unambiguous
+  // instant. Bare YYYY-MM-DD strings are rejected because JS parses them as
+  // UTC midnight, silently misplacing meetings in the user's local late-evening
+  // hours. Clients must pass e.g. "2026-06-10T00:00:00+03:00" or
+  // "2026-06-10T00:00:00Z".
+  const ISO_DATETIME_WITH_TZ =
+    /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(:\d{2}(\.\d+)?)?([+-]\d{2}:?\d{2}|Z)$/;
   function isValidDateString(s: string): boolean {
-    const d = new Date(s);
-    return !Number.isNaN(d.getTime());
+    return ISO_DATETIME_WITH_TZ.test(s) && !Number.isNaN(new Date(s).getTime());
   }
   if (from && !isValidDateString(from)) {
-    return NextResponse.json({ error: "`from` is not a valid date" }, { status: 400 });
+    return NextResponse.json(
+      { error: "`from` must be a full ISO 8601 datetime with timezone, e.g. \"2026-06-10T00:00:00+03:00\"" },
+      { status: 400 },
+    );
   }
   if (to && !isValidDateString(to)) {
-    return NextResponse.json({ error: "`to` is not a valid date" }, { status: 400 });
+    return NextResponse.json(
+      { error: "`to` must be a full ISO 8601 datetime with timezone, e.g. \"2026-06-10T23:59:59+03:00\"" },
+      { status: 400 },
+    );
   }
 
   const where: Prisma.CrmMeetingWhereInput = {};
@@ -95,7 +96,23 @@ export async function GET(req: Request) {
     },
     take: 500,
   });
-  return NextResponse.json({ meetings });
+  // audit v12 HIGH (HIGH-49) recheck: mask PII fields for callers who are not
+  // the scheduling rep and are not managers/admins. Mirrors the exact mask
+  // applied in the per-id GET handler so the list endpoint cannot be used as
+  // a bypass to retrieve customer PII for meetings the caller did not schedule.
+  const ownProfile = session.user.crmProfileId;
+  const callerIsManager =
+    session.user.crmRole === "MANAGER" ||
+    session.user.crmRole === "ADMIN" ||
+    !!session.user.hrRoles?.includes("super_admin");
+  const safeMeetings = callerIsManager
+    ? meetings
+    : meetings.map((m) =>
+        m.scheduledById === ownProfile
+          ? m
+          : { ...m, contactPhone: null, contactName: null, customerNeed: null, notes: null, deniedReason: null },
+      );
+  return NextResponse.json({ meetings: safeMeetings });
 }
 
 export async function POST(req: Request) {
@@ -138,16 +155,17 @@ export async function POST(req: Request) {
     scheduledById = data.scheduledById;
   }
 
-  // Verify the opportunity is real and (for non-managers) belongs to the
-  // caller. Managers/admins can pin a meeting to any opp in their scope.
-  // Without this check, a rep could attach their meeting to someone else's
-  // deal — the assistant would then think they're cleared to update that
-  // unrelated opp after the meeting.
+  // Verify the opportunity is real and belongs to scheduledById.
+  // audit v12 HIGH (HIGH-50): ownerId is now enforced unconditionally —
+  // previously managers spread an empty object, removing ownership validation
+  // entirely and allowing a manager to bind any rep's meeting to any opp.
+  // scheduledById is already resolved to the target rep's ID (line 138) or the
+  // caller (line 123), so this constraint is correct in both cases.
   const oppOwnerCheck = await db.crmOpportunity.findFirst({
     where: {
       id: data.opportunityId,
       deletedAt: null,
-      ...(isManager ? {} : { ownerId: scheduledById }),
+      ownerId: scheduledById,
     },
     select: { id: true, companyId: true },
   });
@@ -222,32 +240,114 @@ export async function POST(req: Request) {
     }
   }
 
-  const code = await generateCode();
-  const meeting = await db.crmMeeting.create({
-    data: {
-      code,
-      scheduledById,
-      actingAdminId: session.user.actingAsCrmProfileId ?? null,
-      startAt,
-      endAt,
-      durationMinutes: data.durationMinutes,
-      meetingType: data.meetingType ?? "DEMO",
-      opportunityId: data.opportunityId ?? null,
-      companyId: data.companyId ?? null,
-      contactName: data.contactName ?? null,
-      contactPhone: data.contactPhone ?? null,
-      customerNeed: data.customerNeed ?? null,
-      notes: data.notes ?? null,
-      // Every newly-booked meeting is a REQUEST until the assistant signs
-      // off. Manager-or-above bookings could conceivably skip the queue but
-      // we keep the rule uniform: any meeting starts in the approval queue.
-      status: data.status ?? "PENDING_APPROVAL",
-    },
-    include: {
-      scheduledBy: { select: { id: true, fullName: true } },
-      opportunity: { select: { id: true, code: true, title: true } },
-      company: { select: { id: true, nameEn: true } },
-    },
+  // audit v12 HIGH: wrap INSERT + product-overlap re-check in an
+  // advisory-locked transaction so concurrent cross-rep bookings for the
+  // SAME product in the SAME time-slot serialise. The pre-tx checks above
+  // are a best-effort fast path only. Without a second lock keyed on
+  // hash(customerNeed + startHourBucket), Rep A and Rep B both pass the
+  // pre-tx product findFirst (their per-rep lock keys differ), then both
+  // proceed to INSERT, double-booking the product slot.
+  //
+  // Lock key 1: hash(scheduledById)                   -- serialises per-rep
+  // Lock key 2: hash(customerNeed + startHourBucket)  -- serialises cross-rep
+  //             product-slot contention (new lock added by this fix).
+  function strHash(s: string): number {
+    let h = 0;
+    for (let i = 0; i < s.length; i++) {
+      h = ((h << 5) - h + s.charCodeAt(i)) | 0;
+    }
+    return h;
+  }
+
+  const txResult = await db.$transaction(async (tx) => {
+    // Lock 1: per-rep advisory lock.
+    await tx.$queryRawUnsafe(
+      `SELECT pg_advisory_xact_lock($1::bigint)`,
+      strHash(scheduledById),
+    );
+
+    // Lock 2 (audit v12 HIGH): per-product-slot advisory lock so that
+    // concurrent bookings for the same product by different reps serialise.
+    if (data.customerNeed) {
+      const startHourBucket = Math.floor(startAt.getTime() / (60 * 60 * 1000));
+      const productSlotHash = strHash(
+        `${data.customerNeed.toLowerCase()}:${startHourBucket}`,
+      );
+      await tx.$queryRawUnsafe(
+        `SELECT pg_advisory_xact_lock($1::bigint)`,
+        productSlotHash,
+      );
+
+      // Re-run the product-overlap check inside the lock -- race-free.
+      const productConflictInTx = await tx.crmMeeting.findFirst({
+        where: {
+          customerNeed: { equals: data.customerNeed, mode: "insensitive" },
+          status: { notIn: ["CANCELLED", "DENIED"] },
+          startAt: { lt: endAt },
+          endAt: { gt: startAt },
+        },
+        select: {
+          id: true,
+          code: true,
+          customerNeed: true,
+          scheduledBy: { select: { fullName: true } },
+        },
+      });
+      if (productConflictInTx) {
+        throw new Error(
+          `__PRODUCT_CONFLICT__:${productConflictInTx.customerNeed ?? ""}:${productConflictInTx.scheduledBy.fullName}:${productConflictInTx.code}`,
+        );
+      }
+    }
+
+    // audit v12 HIGH (HIGH-48): generate the meeting code inside the
+    // advisory-locked transaction so concurrent requests cannot read the
+    // same last row and produce a duplicate MTG code (P2002 race fix).
+    const code = await generateMeetingCodeInTx(tx);
+
+    return tx.crmMeeting.create({
+      data: {
+        code,
+        scheduledById,
+        actingAdminId: session.user.actingAsCrmProfileId ?? null,
+        startAt,
+        endAt,
+        durationMinutes: data.durationMinutes,
+        meetingType: data.meetingType ?? "DEMO",
+        opportunityId: data.opportunityId ?? null,
+        companyId: data.companyId ?? null,
+        contactName: data.contactName ?? null,
+        contactPhone: data.contactPhone ?? null,
+        customerNeed: data.customerNeed ?? null,
+        notes: data.notes ?? null,
+        // Every newly-booked meeting is a REQUEST until the assistant signs
+        // off. Manager-or-above bookings could conceivably skip the queue but
+        // we keep the rule uniform: any meeting starts in the approval queue.
+        // audit v12 HIGH (HIGH-46): hardcoded — client-supplied status is rejected at schema level above.
+        status: "PENDING_APPROVAL",
+      },
+      include: {
+        scheduledBy: { select: { id: true, fullName: true } },
+        opportunity: { select: { id: true, code: true, title: true } },
+        company: { select: { id: true, nameEn: true } },
+      },
+    });
+  }).catch((e: unknown) => {
+    if (e instanceof Error && e.message.startsWith("__PRODUCT_CONFLICT__:")) {
+      const parts = e.message.replace("__PRODUCT_CONFLICT__:", "").split(":");
+      const [productNeed, repName, conflictCode] = parts;
+      return { __product_conflict: true, productNeed, repName, conflictCode } as const;
+    }
+    throw e;
   });
-  return NextResponse.json({ meeting }, { status: 201 });
+
+  if (txResult && "__product_conflict" in txResult) {
+    return NextResponse.json(
+      {
+        error: `${txResult.productNeed} is already booked in this slot by ${txResult.repName} (meeting ${txResult.conflictCode}). Pick a different time or a different product.`,
+      },
+      { status: 409 },
+    );
+  }
+  return NextResponse.json({ meeting: txResult }, { status: 201 });
 }

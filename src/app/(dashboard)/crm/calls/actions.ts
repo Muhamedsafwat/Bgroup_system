@@ -15,6 +15,13 @@ export type CallFilters = {
   dateTo?: string;
   outcome?: string;
   callType?: string;
+  // audit v12 HIGH (HIGH-45) recheck-hardening: explicit repId filter for
+  // manager/admin "view this rep's calls" workflows. RBAC enforcement is
+  // applied below so a REP passing a foreign repId cannot escape their
+  // scope — the original audit warned about this surface even though
+  // no UI calls it today; pre-gating means a future caller can't
+  // accidentally bypass the role-scope.
+  repId?: string;
   page?: number;
   pageSize?: number;
 };
@@ -115,6 +122,21 @@ export async function getCalls(session: SessionUser, filters?: CallFilters) {
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const where: Record<string, any> = { ...scopeWhere };
+
+  // audit v12 HIGH (HIGH-45) recheck-hardening: only admins / managers /
+  // super_admin can scope to a specific rep. A REP passing repId for
+  // someone else is silently dropped — scopeCallByRole already pins
+  // them to their own callerId. We could 403 here, but the silent
+  // drop is more forgiving for shared-URL workflows.
+  if (filters?.repId) {
+    const isPrivileged =
+      session.role === "ADMIN" ||
+      session.role === "MANAGER" ||
+      session.role === "ACCOUNT_MGR";
+    if (isPrivileged) {
+      where.callerId = filters.repId;
+    }
+  }
 
   if (filters?.dateFrom || filters?.dateTo) {
     where.callAt = {};

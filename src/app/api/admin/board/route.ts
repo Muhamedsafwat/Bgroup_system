@@ -2,13 +2,8 @@ import { NextResponse } from "next/server";
 import type { Session } from "next-auth";
 import { auth } from "@/lib/auth";
 import { getBoardData, type Period } from "@/lib/admin/board-aggregator";
-
-function isPlatformAdmin(session: Session) {
-  return (
-    !!session.user.hrRoles?.includes("super_admin") ||
-    (!!session.user.modules?.includes("partners") && !session.user.partnerId)
-  );
-}
+// audit v12 MEDIUM (MED-54): use canonical isPlatformAdmin instead of local copy
+import { isPlatformAdmin } from "@/lib/crm/admin-gates";
 
 export async function GET(req: Request) {
   const session = (await auth()) as Session | null;

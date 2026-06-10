@@ -11,8 +11,8 @@ import { parseRecurrence, computeNextFixedDueAt } from "@/lib/tasks/recurrence";
  *
  * Auth modes (any one suffices):
  *   - Bearer token equal to env var `CRON_SECRET` (used by external cron).
- *   - Platform admin session (`super_admin` HR role or partners admin) — lets
- *     ops trigger manually from the dashboard if needed.
+ *   - Platform admin session (`super_admin` HR role only) — lets ops trigger
+ *     manually from the dashboard if needed.
  *
  * Idempotent: only spawns the next instance once per template per cycle.
  */
@@ -22,11 +22,9 @@ function authorised(req: Request, session: Session | null) {
     const auth = req.headers.get("authorization") ?? "";
     if (auth === `Bearer ${expected}`) return true;
   }
-  if (
-    session?.user?.id &&
-    (!!session.user.hrRoles?.includes("super_admin") ||
-      (!!session.user.modules?.includes("partners") && !session.user.partnerId))
-  ) {
+  // audit v12 MEDIUM (MED-53): restrict session-based access to super_admin only;
+  // removed partners-admin branch to align with alert-rules/route.ts.
+  if (session?.user?.id && session.user.hrRoles?.includes("super_admin")) {
     return true;
   }
   return false;

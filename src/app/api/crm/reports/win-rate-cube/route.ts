@@ -140,7 +140,8 @@ export async function GET(req: Request) {
     },
     byOwner: withRate(
       Array.from(byOwner.entries()).map(([k, v]) => ({
-        key: v.name,
+        key: k, // audit v12 MEDIUM (MED-31): use owner id (unique) not display name to avoid duplicate keys
+        name: v.name,
         data: { won: v.won, lost: v.lost, wonValue: v.wonValue, lostValue: v.lostValue } as Slice,
       }))
     ),

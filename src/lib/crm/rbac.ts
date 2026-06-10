@@ -18,6 +18,9 @@ import type { SessionUser } from "@/types";
  * - ADMIN: everything.
  */
 export function scopeOpportunityByRole(session: SessionUser) {
+  // audit v12 MEDIUM (MED-35): super_admin has no CrmRole but must see
+  // every opportunity — grant full access before the role switch.
+  if (session.isSuperAdmin) return {};
   switch (session.role) {
     case "REP":
       return { ownerId: session.id };

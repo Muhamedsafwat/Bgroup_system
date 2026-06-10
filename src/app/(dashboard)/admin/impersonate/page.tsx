@@ -33,7 +33,7 @@ export default async function ImpersonatePage() {
         partnersAccess: true,
       },
       orderBy: { email: "asc" },
-      take: 200,
+      take: 2000, // audit v12 LOW (LOW-11): raised from 200 so all users are reachable
     }),
     db.crmImpersonationAudit.findMany({
       orderBy: { at: "desc" },

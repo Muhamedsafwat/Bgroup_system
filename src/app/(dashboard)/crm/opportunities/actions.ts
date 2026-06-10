@@ -65,12 +65,37 @@ async function getStageProbability(stage: CrmOpportunityStage): Promise<number> 
   return config?.probabilityPct ?? STAGE_DEFAULT_PROBABILITY[stage];
 }
 
+// User-feature (2026-06-10): per-rep filtering surface on the
+// opportunities list. The supported sort keys are an explicit allowlist
+// — any unrecognised value silently falls back to recent_edit so a
+// stale saved-view doesn't 500. Priority sort is special-cased because
+// Postgres orders enum values alphabetically (COLD < HOT < WARM), not
+// by intensity, so the SQL has to express "HOT first" via a CASE.
+export type OpportunitySort =
+  | "recent_edit"
+  | "next_action"
+  | "priority_hot_first"
+  | "value_desc"
+  | "newest"
+  | "closing_soonest";
+
+const SORT_KEYS: OpportunitySort[] = [
+  "recent_edit",
+  "next_action",
+  "priority_hot_first",
+  "value_desc",
+  "newest",
+  "closing_soonest",
+];
+
 export async function getOpportunities(filters?: {
   search?: string;
   stage?: CrmOpportunityStage[];
   entityId?: string;
   priority?: string;
   ownerId?: string;
+  sort?: string;
+  mineOnly?: boolean;
   page?: number;
   pageSize?: number;
 }) {
@@ -93,12 +118,89 @@ export async function getOpportunities(filters?: {
   if (filters?.ownerId) {
     where.ownerId = filters.ownerId;
   }
+  // User-feature: "Mine only" toggle. Reps already get scope.ownerId
+  // from scopeOpportunityByRole, so the toggle is a no-op for them; for
+  // managers / admins it narrows the list down to their own profile.
+  // getRequiredSession resolves `id` to the crmProfileId (with a
+  // fallback to the auth user id for super-admins without a CRM row),
+  // so it's the right thing to compare against opp.ownerId.
+  if (filters?.mineOnly && session.id) {
+    where.ownerId = session.id;
+  }
   if (filters?.search) {
     where.OR = [
       { code: { contains: filters.search, mode: "insensitive" } },
       { title: { contains: filters.search, mode: "insensitive" } },
       { company: { nameEn: { contains: filters.search, mode: "insensitive" } } },
     ];
+  }
+
+  const sortKey: OpportunitySort = SORT_KEYS.includes(filters?.sort as OpportunitySort)
+    ? (filters!.sort as OpportunitySort)
+    : "recent_edit";
+
+  // Prisma orderBy lists run in declaration order. Each branch picks a
+  // stable secondary key (updatedAt) so paginated rows don't shuffle
+  // between page loads when the primary key ties.
+  let orderBy: unknown;
+  switch (sortKey) {
+    case "next_action":
+      orderBy = [{ nextActionDate: { sort: "asc", nulls: "last" } }, { updatedAt: "desc" }];
+      break;
+    case "priority_hot_first":
+      // CASE-style ordering via a stack of orderBy clauses: filter the
+      // table once per priority bucket isn't an option because the rows
+      // are paginated as one set. Prisma has no $sortRaw, so the closest
+      // we can express in JSON is to sort by priority enum desc (HOT >
+      // COLD wouldn't help because alphabetically COLD < HOT < WARM).
+      // Compromise: sort by priority ASC which puts COLD first under
+      // pure alphabetical, then we reverse on the client. To keep the
+      // server authoritative, special-case in the route below: load
+      // all hot, then all warm, then all cold, concatenate respecting
+      // pagination. For typical page sizes (<=50) this is cheap.
+      orderBy = [{ priority: "asc" }, { updatedAt: "desc" }];
+      break;
+    case "value_desc":
+      orderBy = [{ estimatedValueEGP: "desc" }, { updatedAt: "desc" }];
+      break;
+    case "newest":
+      orderBy = [{ createdAt: "desc" }];
+      break;
+    case "closing_soonest":
+      orderBy = [{ expectedCloseDate: { sort: "asc", nulls: "last" } }, { updatedAt: "desc" }];
+      break;
+    case "recent_edit":
+    default:
+      orderBy = [{ updatedAt: "desc" }];
+      break;
+  }
+
+  // Special-case the priority_hot_first sort. Postgres orders the
+  // CrmPriority enum alphabetically (COLD < HOT < WARM), which is the
+  // wrong ordering for "hottest first". Bucket-fetch + concatenate.
+  if (sortKey === "priority_hot_first") {
+    const priorities: Array<"HOT" | "WARM" | "COLD"> = ["HOT", "WARM", "COLD"];
+    const bucketed = await Promise.all(
+      priorities.map((p) =>
+        db.crmOpportunity.findMany({
+          where: { ...where, priority: p } as any,
+          include: {
+            company: { select: { id: true, nameEn: true, nameAr: true } },
+            primaryContact: { select: { id: true, fullName: true, phone: true } },
+            owner: { select: { id: true, fullName: true, fullNameAr: true } },
+            entity: { select: { id: true, code: true, nameEn: true, nameAr: true, color: true } },
+            products: {
+              include: { product: { select: { id: true, code: true, nameEn: true, nameAr: true } } },
+            },
+          },
+          orderBy: { updatedAt: "desc" },
+        }),
+      ),
+    );
+    const all = bucketed.flat();
+    const total = await db.crmOpportunity.count({ where: where as any });
+    const data = all.slice((page - 1) * pageSize, page * pageSize);
+    return JSON.parse(JSON.stringify({ data, total, page, pageSize }));
   }
 
   const [data, total] = await Promise.all([
@@ -113,7 +215,7 @@ export async function getOpportunities(filters?: {
           include: { product: { select: { id: true, code: true, nameEn: true, nameAr: true } } },
         },
       },
-      orderBy: { updatedAt: "desc" },
+      orderBy: orderBy as any,
       skip: (page - 1) * pageSize,
       take: pageSize,
     }),
@@ -607,8 +709,9 @@ export async function deleteOpportunity(id: string) {
     select: { id: true, ownerId: true, deletedAt: true },
   });
   if (!existing || existing.deletedAt) throw new Error("Opportunity not found");
-  if (existing.ownerId !== session.id && session.role !== "ADMIN") {
-    throw new Error("Only the owner or an admin can delete this opportunity");
+  // audit v12 MEDIUM (MED-3): MANAGER has full operational scope over all opportunities
+  if (existing.ownerId !== session.id && session.role !== "ADMIN" && session.role !== "MANAGER") {
+    throw new Error("Only the owner, a manager, or an admin can delete this opportunity");
   }
 
   await db.$transaction(async (tx) => {

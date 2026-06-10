@@ -33,6 +33,9 @@ export type SessionUser = {
   /// fields so the audit trail can reveal who actually triggered
   /// the action. Undefined when the user is acting as themselves.
   actingAdminId?: string;
+  // audit v12 MEDIUM (MED-35): platform super_admin has no CrmRole but
+  // must be treated as full-access admin across all CRM scopes.
+  isSuperAdmin?: boolean;
 };
 
 export type OpportunityWithRelations = {

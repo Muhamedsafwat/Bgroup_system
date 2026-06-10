@@ -30,9 +30,21 @@ function sessionOrNull(session: Session | null): SessionUser | null {
   };
 }
 
-const itemSchema = z.object({
-  id: z.string().optional(),
+// audit v12 MEDIUM (MED-2): split into create/update schemas so callers
+// sending only { id, status } for checkbox toggles are not rejected with 422,
+// and updates only overwrite fields that are explicitly provided.
+const createItemSchema = z.object({
   title: z.string().trim().min(1).max(160),
+  ownerSide: z.enum(["us", "them"]).optional(),
+  dueDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).nullable().optional(),
+  status: z.enum(["open", "done", "blocked"]).optional(),
+  orderIndex: z.number().int().min(0).max(999).optional(),
+  notes: z.string().trim().max(1000).optional(),
+});
+
+const updateItemSchema = z.object({
+  id: z.string(),
+  title: z.string().trim().min(1).max(160).optional(),
   ownerSide: z.enum(["us", "them"]).optional(),
   dueDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).nullable().optional(),
   status: z.enum(["open", "done", "blocked"]).optional(),
@@ -96,7 +108,10 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     });
     return NextResponse.json({ ok: true, shareToken: updated.shareToken });
   }
-  const parsed = itemSchema.safeParse(body);
+  const isUpdate = body && typeof body.id === "string";
+  const parsed = isUpdate
+    ? updateItemSchema.safeParse(body)
+    : createItemSchema.safeParse(body);
   if (!parsed.success) {
     const { message, fieldErrors } = describeZodError(parsed.error);
     return NextResponse.json({ error: message, fieldErrors }, { status: 422 });
@@ -107,34 +122,46 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     : parsed.data.dueDate === null
       ? null
       : undefined;
-  const itemData = {
-    title: parsed.data.title,
-    ownerSide: parsed.data.ownerSide ?? "us",
-    status: parsed.data.status ?? "open",
-    orderIndex: parsed.data.orderIndex ?? plan.items.length,
-    notes: parsed.data.notes ?? null,
-    ...(dueDate !== undefined ? { dueDate } : {}),
-  };
-  if (parsed.data.id) {
+  const itemData = isUpdate
+    ? {
+        ...(parsed.data.title !== undefined ? { title: parsed.data.title } : {}),
+        ...(parsed.data.ownerSide !== undefined ? { ownerSide: parsed.data.ownerSide } : {}),
+        ...(parsed.data.status !== undefined ? { status: parsed.data.status } : {}),
+        ...(parsed.data.orderIndex !== undefined ? { orderIndex: parsed.data.orderIndex } : {}),
+        ...(parsed.data.notes !== undefined ? { notes: parsed.data.notes } : {}),
+        ...(dueDate !== undefined ? { dueDate } : {}),
+      }
+    : {
+        title: parsed.data.title,
+        ownerSide: parsed.data.ownerSide ?? "us",
+        status: parsed.data.status ?? "open",
+        orderIndex: parsed.data.orderIndex ?? plan.items.length,
+        notes: parsed.data.notes ?? null,
+        ...(dueDate !== undefined ? { dueDate } : {}),
+      };
+  if (isUpdate) {
     // Verify the referenced item belongs to THIS opp's plan. Without
     // this guard, a REP with access to opp O1 could pass an itemId
     // from O2's plan and rewrite it — the URL-level gate() only
     // covers O1.
     const existing = await db.crmClosePlanItem.findUnique({
-      where: { id: parsed.data.id },
+      where: { id: (parsed.data as { id: string }).id },
       select: { planId: true },
     });
     if (!existing || existing.planId !== plan.id) {
       return NextResponse.json({ error: "Not found" }, { status: 404 });
     }
   }
-  const item = parsed.data.id
+  const item = isUpdate
     ? await db.crmClosePlanItem.update({
-        where: { id: parsed.data.id },
+        where: { id: (parsed.data as { id: string }).id },
         data: itemData,
       })
     : await db.crmClosePlanItem.create({
-        data: { ...itemData, planId: plan.id },
+        // The create branch is gated by `isUpdate === false` so the
+        // schema is createItemSchema which requires `title`. The TS
+        // narrow loses that across the ternary so we assert here.
+        data: { ...(itemData as { title: string } & typeof itemData), planId: plan.id },
       });
   return NextResponse.json({ ok: true, item });
 }

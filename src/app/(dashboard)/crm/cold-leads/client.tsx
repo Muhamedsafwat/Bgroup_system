@@ -287,7 +287,8 @@ export function ColdLeadsClient({
         toast.error(data.error ?? "Distribution failed");
         return;
       }
-      toast.success(`Assigned ${data.assigned} leads across ${distributeRepIds.size} rep(s)`);
+      const skippedMsg = data.skipped > 0 ? ` (${data.skipped} terminal-state leads skipped)` : "";
+      toast.success(`Assigned ${data.assigned} leads across ${distributeRepIds.size} rep(s)${skippedMsg}`);
       setDistributeOpen(false);
       setDistributeRepIds(new Set());
       fetchRows();
