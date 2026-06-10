@@ -1,6 +1,9 @@
 -- CreateEnum
 CREATE TYPE "CrmColdLeadStatus" AS ENUM ('NEW', 'ASSIGNED', 'NO_ANSWER', 'WAITING_LIST', 'NOT_INTERESTED', 'CONVERTED', 'ARCHIVED');
 
+-- CreateEnum
+CREATE TYPE "CrmDashboardVisibility" AS ENUM ('OWNER', 'SPECIFIC', 'EVERYONE');
+
 -- AlterEnum
 BEGIN;
 CREATE TYPE "CrmRole_new" AS ENUM ('REP', 'MANAGER', 'ASSISTANT', 'ACCOUNT_MGR', 'ADMIN');
@@ -27,12 +30,18 @@ ALTER TYPE "CrmMeetingStatus" ADD VALUE 'DENIED';
 -- DropForeignKey
 ALTER TABLE "crm_opportunities" DROP CONSTRAINT "crm_opportunities_companyId_fkey";
 
+-- DropForeignKey
+ALTER TABLE "crm_activity_logs" DROP CONSTRAINT "crm_activity_logs_actorId_fkey";
+
 -- AlterTable
 ALTER TABLE "users" ADD COLUMN     "mustChangePassword" BOOLEAN NOT NULL DEFAULT false;
 
 -- AlterTable
 ALTER TABLE "hr_employees" ADD COLUMN     "deletedAt" TIMESTAMP(3),
 ADD COLUMN     "deletedById" TEXT;
+
+-- AlterTable
+ALTER TABLE "hr_audit_logs" ADD COLUMN     "actingAdminId" TEXT;
 
 -- AlterTable
 ALTER TABLE "crm_user_profiles" ADD COLUMN     "hrEmployeeId" TEXT,
@@ -46,6 +55,8 @@ ADD COLUMN     "customerContactName" TEXT,
 ADD COLUMN     "customerContactPhone" TEXT,
 ADD COLUMN     "deletedAt" TIMESTAMP(3),
 ADD COLUMN     "deletedById" TEXT,
+ADD COLUMN     "depositAmount" DECIMAL(15,2),
+ADD COLUMN     "depositDate" DATE,
 ADD COLUMN     "forecastCategoryOverride" TEXT,
 ADD COLUMN     "pipelineId" TEXT,
 ALTER COLUMN "companyId" DROP NOT NULL,
@@ -53,17 +64,32 @@ DROP COLUMN "stage",
 ADD COLUMN     "stage" TEXT NOT NULL DEFAULT 'NEW';
 
 -- AlterTable
-ALTER TABLE "crm_stage_histories" DROP COLUMN "fromStage",
+ALTER TABLE "crm_stage_histories" ADD COLUMN     "actingAdminId" TEXT,
+DROP COLUMN "fromStage",
 ADD COLUMN     "fromStage" TEXT,
 DROP COLUMN "toStage",
 ADD COLUMN     "toStage" TEXT NOT NULL;
 
 -- AlterTable
-ALTER TABLE "crm_meetings" ADD COLUMN     "approvedAt" TIMESTAMP(3),
+ALTER TABLE "crm_calls" ADD COLUMN     "actingAdminId" TEXT;
+
+-- AlterTable
+ALTER TABLE "crm_daily_reports" ADD COLUMN     "actingAdminId" TEXT;
+
+-- AlterTable
+ALTER TABLE "crm_meetings" ADD COLUMN     "actingAdminId" TEXT,
+ADD COLUMN     "approvedAt" TIMESTAMP(3),
 ADD COLUMN     "approvedById" TEXT,
 ADD COLUMN     "deniedAt" TIMESTAMP(3),
 ADD COLUMN     "deniedReason" TEXT,
 ALTER COLUMN "status" SET DEFAULT 'PENDING_APPROVAL';
+
+-- AlterTable
+ALTER TABLE "crm_notes" ADD COLUMN     "actingAdminId" TEXT;
+
+-- AlterTable
+ALTER TABLE "crm_activity_logs" ADD COLUMN     "actingAdminId" TEXT,
+ALTER COLUMN "actorId" DROP NOT NULL;
 
 -- AlterTable
 ALTER TABLE "crm_stage_configs" ADD COLUMN     "customLabelAr" TEXT,
@@ -79,6 +105,9 @@ DROP COLUMN "stage",
 ADD COLUMN     "stage" TEXT NOT NULL;
 
 -- AlterTable
+ALTER TABLE "partner_profiles" ADD COLUMN     "currentTierId" TEXT;
+
+-- AlterTable
 ALTER TABLE "partner_leads" ADD COLUMN     "deletedAt" TIMESTAMP(3),
 ADD COLUMN     "deletedById" TEXT;
 
@@ -89,6 +118,9 @@ ADD COLUMN     "deletedById" TEXT;
 -- AlterTable
 ALTER TABLE "partner_deals" ADD COLUMN     "deletedAt" TIMESTAMP(3),
 ADD COLUMN     "deletedById" TEXT;
+
+-- AlterTable
+ALTER TABLE "partner_audit_logs" ADD COLUMN     "actingAdminId" TEXT;
 
 -- DropEnum
 DROP TYPE "CrmOpportunityStage";
@@ -154,6 +186,7 @@ CREATE TABLE "crm_cold_lead_dispositions" (
     "id" TEXT NOT NULL,
     "coldLeadId" TEXT NOT NULL,
     "repId" TEXT NOT NULL,
+    "actingAdminId" TEXT,
     "disposition" "CrmColdLeadStatus" NOT NULL,
     "notes" TEXT,
     "dispositionedAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -322,6 +355,47 @@ CREATE TABLE "crm_opportunity_competitors" (
 );
 
 -- CreateTable
+CREATE TABLE "crm_opportunity_comments" (
+    "id" TEXT NOT NULL,
+    "opportunityId" TEXT NOT NULL,
+    "authorId" TEXT NOT NULL,
+    "actingAdminId" TEXT,
+    "body" TEXT NOT NULL,
+    "editedAt" TIMESTAMP(3),
+    "deletedAt" TIMESTAMP(3),
+    "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    "updatedAt" TIMESTAMP(3) NOT NULL,
+
+    CONSTRAINT "crm_opportunity_comments_pkey" PRIMARY KEY ("id")
+);
+
+-- CreateTable
+CREATE TABLE "crm_opportunity_comment_mentions" (
+    "id" TEXT NOT NULL,
+    "commentId" TEXT NOT NULL,
+    "mentionedUserId" TEXT NOT NULL,
+    "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+
+    CONSTRAINT "crm_opportunity_comment_mentions_pkey" PRIMARY KEY ("id")
+);
+
+-- CreateTable
+CREATE TABLE "crm_notifications" (
+    "id" TEXT NOT NULL,
+    "userId" TEXT NOT NULL,
+    "type" TEXT NOT NULL,
+    "title" TEXT NOT NULL,
+    "message" TEXT NOT NULL,
+    "isRead" BOOLEAN NOT NULL DEFAULT false,
+    "href" TEXT,
+    "metadata" JSONB,
+    "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    "updatedAt" TIMESTAMP(3) NOT NULL,
+
+    CONSTRAINT "crm_notifications_pkey" PRIMARY KEY ("id")
+);
+
+-- CreateTable
 CREATE TABLE "crm_forecast_submissions" (
     "id" TEXT NOT NULL,
     "managerId" TEXT NOT NULL,
@@ -411,11 +485,22 @@ CREATE TABLE "crm_dashboards" (
     "ownerId" TEXT NOT NULL,
     "name" TEXT NOT NULL,
     "layoutJson" JSONB NOT NULL,
+    "visibility" "CrmDashboardVisibility" NOT NULL DEFAULT 'OWNER',
     "isShared" BOOLEAN NOT NULL DEFAULT false,
     "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
     "updatedAt" TIMESTAMP(3) NOT NULL,
 
     CONSTRAINT "crm_dashboards_pkey" PRIMARY KEY ("id")
+);
+
+-- CreateTable
+CREATE TABLE "crm_dashboard_shares" (
+    "id" TEXT NOT NULL,
+    "dashboardId" TEXT NOT NULL,
+    "userId" TEXT NOT NULL,
+    "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+
+    CONSTRAINT "crm_dashboard_shares_pkey" PRIMARY KEY ("id")
 );
 
 -- CreateTable
@@ -431,6 +516,16 @@ CREATE TABLE "crm_alert_rules" (
     "updatedAt" TIMESTAMP(3) NOT NULL,
 
     CONSTRAINT "crm_alert_rules_pkey" PRIMARY KEY ("id")
+);
+
+-- CreateTable
+CREATE TABLE "crm_alert_rule_fires" (
+    "id" TEXT NOT NULL,
+    "ruleId" TEXT NOT NULL,
+    "entityId" TEXT NOT NULL,
+    "firedAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+
+    CONSTRAINT "crm_alert_rule_fires_pkey" PRIMARY KEY ("id")
 );
 
 -- CreateTable
@@ -632,6 +727,24 @@ CREATE INDEX "crm_opportunity_competitors_opportunityId_idx" ON "crm_opportunity
 CREATE UNIQUE INDEX "crm_opportunity_competitors_opportunityId_competitorId_key" ON "crm_opportunity_competitors"("opportunityId", "competitorId");
 
 -- CreateIndex
+CREATE INDEX "crm_opportunity_comments_opportunityId_createdAt_idx" ON "crm_opportunity_comments"("opportunityId", "createdAt");
+
+-- CreateIndex
+CREATE INDEX "crm_opportunity_comments_authorId_idx" ON "crm_opportunity_comments"("authorId");
+
+-- CreateIndex
+CREATE INDEX "crm_opportunity_comment_mentions_mentionedUserId_idx" ON "crm_opportunity_comment_mentions"("mentionedUserId");
+
+-- CreateIndex
+CREATE UNIQUE INDEX "crm_opportunity_comment_mentions_commentId_mentionedUserId_key" ON "crm_opportunity_comment_mentions"("commentId", "mentionedUserId");
+
+-- CreateIndex
+CREATE INDEX "crm_notifications_userId_isRead_idx" ON "crm_notifications"("userId", "isRead");
+
+-- CreateIndex
+CREATE INDEX "crm_notifications_userId_createdAt_idx" ON "crm_notifications"("userId", "createdAt");
+
+-- CreateIndex
 CREATE INDEX "crm_forecast_submissions_periodKey_idx" ON "crm_forecast_submissions"("periodKey");
 
 -- CreateIndex
@@ -660,6 +773,21 @@ CREATE INDEX "crm_workflow_runs_entityId_idx" ON "crm_workflow_runs"("entityId")
 
 -- CreateIndex
 CREATE INDEX "crm_dashboards_ownerId_idx" ON "crm_dashboards"("ownerId");
+
+-- CreateIndex
+CREATE INDEX "crm_dashboards_visibility_idx" ON "crm_dashboards"("visibility");
+
+-- CreateIndex
+CREATE UNIQUE INDEX "crm_dashboards_ownerId_name_key" ON "crm_dashboards"("ownerId", "name");
+
+-- CreateIndex
+CREATE INDEX "crm_dashboard_shares_userId_idx" ON "crm_dashboard_shares"("userId");
+
+-- CreateIndex
+CREATE UNIQUE INDEX "crm_dashboard_shares_dashboardId_userId_key" ON "crm_dashboard_shares"("dashboardId", "userId");
+
+-- CreateIndex
+CREATE INDEX "crm_alert_rule_fires_ruleId_entityId_firedAt_idx" ON "crm_alert_rule_fires"("ruleId", "entityId", "firedAt");
 
 -- CreateIndex
 CREATE INDEX "crm_close_date_history_opportunityId_idx" ON "crm_close_date_history"("opportunityId");
@@ -714,6 +842,9 @@ CREATE INDEX "crm_meetings_approvedById_idx" ON "crm_meetings"("approvedById");
 
 -- CreateIndex
 CREATE UNIQUE INDEX "crm_stage_configs_entityId_stage_key" ON "crm_stage_configs"("entityId", "stage");
+
+-- CreateIndex
+CREATE INDEX "partner_profiles_currentTierId_idx" ON "partner_profiles"("currentTierId");
 
 -- CreateIndex
 CREATE INDEX "partner_leads_deletedAt_idx" ON "partner_leads"("deletedAt");
@@ -782,10 +913,28 @@ ALTER TABLE "crm_opportunity_competitors" ADD CONSTRAINT "crm_opportunity_compet
 ALTER TABLE "crm_opportunity_competitors" ADD CONSTRAINT "crm_opportunity_competitors_competitorId_fkey" FOREIGN KEY ("competitorId") REFERENCES "crm_competitors"("id") ON DELETE CASCADE ON UPDATE CASCADE;
 
 -- AddForeignKey
+ALTER TABLE "crm_opportunity_comments" ADD CONSTRAINT "crm_opportunity_comments_opportunityId_fkey" FOREIGN KEY ("opportunityId") REFERENCES "crm_opportunities"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "crm_opportunity_comments" ADD CONSTRAINT "crm_opportunity_comments_authorId_fkey" FOREIGN KEY ("authorId") REFERENCES "crm_user_profiles"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "crm_opportunity_comments" ADD CONSTRAINT "crm_opportunity_comments_actingAdminId_fkey" FOREIGN KEY ("actingAdminId") REFERENCES "crm_user_profiles"("id") ON DELETE SET NULL ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "crm_opportunity_comment_mentions" ADD CONSTRAINT "crm_opportunity_comment_mentions_commentId_fkey" FOREIGN KEY ("commentId") REFERENCES "crm_opportunity_comments"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "crm_opportunity_comment_mentions" ADD CONSTRAINT "crm_opportunity_comment_mentions_mentionedUserId_fkey" FOREIGN KEY ("mentionedUserId") REFERENCES "crm_user_profiles"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
+
+-- AddForeignKey
 ALTER TABLE "crm_forecast_submissions" ADD CONSTRAINT "crm_forecast_submissions_managerId_fkey" FOREIGN KEY ("managerId") REFERENCES "crm_user_profiles"("id") ON DELETE CASCADE ON UPDATE CASCADE;
 
 -- AddForeignKey
 ALTER TABLE "crm_meetings" ADD CONSTRAINT "crm_meetings_approvedById_fkey" FOREIGN KEY ("approvedById") REFERENCES "crm_user_profiles"("id") ON DELETE SET NULL ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "crm_activity_logs" ADD CONSTRAINT "crm_activity_logs_actorId_fkey" FOREIGN KEY ("actorId") REFERENCES "crm_user_profiles"("id") ON DELETE SET NULL ON UPDATE CASCADE;
 
 -- AddForeignKey
 ALTER TABLE "crm_stage_configs" ADD CONSTRAINT "crm_stage_configs_pipelineId_fkey" FOREIGN KEY ("pipelineId") REFERENCES "crm_pipelines"("id") ON DELETE SET NULL ON UPDATE CASCADE;
@@ -797,6 +946,15 @@ ALTER TABLE "crm_workflow_runs" ADD CONSTRAINT "crm_workflow_runs_workflowId_fke
 ALTER TABLE "crm_dashboards" ADD CONSTRAINT "crm_dashboards_ownerId_fkey" FOREIGN KEY ("ownerId") REFERENCES "crm_user_profiles"("id") ON DELETE CASCADE ON UPDATE CASCADE;
 
 -- AddForeignKey
+ALTER TABLE "crm_dashboard_shares" ADD CONSTRAINT "crm_dashboard_shares_dashboardId_fkey" FOREIGN KEY ("dashboardId") REFERENCES "crm_dashboards"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "crm_dashboard_shares" ADD CONSTRAINT "crm_dashboard_shares_userId_fkey" FOREIGN KEY ("userId") REFERENCES "crm_user_profiles"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "crm_alert_rule_fires" ADD CONSTRAINT "crm_alert_rule_fires_ruleId_fkey" FOREIGN KEY ("ruleId") REFERENCES "crm_alert_rules"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+
+-- AddForeignKey
 ALTER TABLE "crm_close_date_history" ADD CONSTRAINT "crm_close_date_history_opportunityId_fkey" FOREIGN KEY ("opportunityId") REFERENCES "crm_opportunities"("id") ON DELETE CASCADE ON UPDATE CASCADE;
 
 -- AddForeignKey
@@ -804,4 +962,7 @@ ALTER TABLE "crm_quotas" ADD CONSTRAINT "crm_quotas_repId_fkey" FOREIGN KEY ("re
 
 -- AddForeignKey
 ALTER TABLE "crm_saved_views" ADD CONSTRAINT "crm_saved_views_ownerId_fkey" FOREIGN KEY ("ownerId") REFERENCES "crm_user_profiles"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "partner_profiles" ADD CONSTRAINT "partner_profiles_currentTierId_fkey" FOREIGN KEY ("currentTierId") REFERENCES "partner_tiers"("id") ON DELETE SET NULL ON UPDATE CASCADE;
 
