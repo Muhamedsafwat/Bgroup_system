@@ -92,6 +92,8 @@ export function DashboardsClient() {
   const { locale } = useLocale();
   const [items, setItems] = useState<Dashboard[]>([]);
   const [loading, setLoading] = useState(true);
+  // audit v12 MEDIUM (MED-25) ultra — surface load failures so the user can retry
+  const [loadError, setLoadError] = useState(false);
   const [busy, setBusy] = useState(false);
   const [open, setOpen] = useState(false);
   const [editing, setEditing] = useState<Dashboard | null>(null);
@@ -102,9 +104,14 @@ export function DashboardsClient() {
 
   async function load() {
     setLoading(true);
+    setLoadError(false);
     try {
       const res = await fetch("/api/crm/dashboards");
-      if (res.ok) setItems((await res.json()).dashboards ?? []);
+      if (!res.ok) throw new Error("fetch failed");
+      setItems((await res.json()).dashboards ?? []);
+    } catch {
+      setLoadError(true);
+      toast.error("Failed to load dashboards");
     } finally {
       setLoading(false);
     }
@@ -218,6 +225,12 @@ export function DashboardsClient() {
         <CardContent>
           {loading ? (
             <p className="text-sm text-muted-foreground py-4 text-center">Loading…</p>
+          ) : loadError ? (
+            // audit v12 MEDIUM (MED-25) ultra — error branch with retry
+            <div className="py-4 text-center space-y-2">
+              <p className="text-sm text-destructive">Failed to load dashboards.</p>
+              <Button variant="outline" size="sm" onClick={load}>Retry</Button>
+            </div>
           ) : items.length === 0 ? (
             <p className="text-sm text-muted-foreground py-4 text-center">No dashboards yet.</p>
           ) : (
@@ -350,6 +363,18 @@ export function DashboardsClient() {
               <Checkbox checked={isShared} onCheckedChange={(v) => setIsShared(!!v)} />
               <span>Share with everyone (read-only for others)</span>
             </label>
+            {/* audit v12 MEDIUM (MED-24) recheck-hardening: surface the
+                blast-radius so an admin understands "everyone" really
+                means every user in the CRM module. Previously this
+                checkbox flipped silently; admins occasionally toggled
+                it thinking it meant their own team. */}
+            {isShared && (
+              <p className="text-xs text-amber-600 dark:text-amber-400 ms-6">
+                Every CRM user will see this dashboard. To restrict to a
+                specific list, leave this unchecked and use the API
+                (visibility=SPECIFIC + targetUserIds).
+              </p>
+            )}
           </div>
           <DialogFooter>
             <Button variant="outline" onClick={() => setOpen(false)} disabled={busy}>Cancel</Button>

@@ -45,6 +45,35 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     );
   }
 
+  // audit v12 LOW (LOW-15): enforce same-entity scope — deniers may only act
+  // on meetings that belong to their own CrmEntity. Super-admins are exempt.
+  const isSuperAdmin = session.user.hrRoles?.includes("super_admin");
+  if (!isSuperAdmin) {
+    // Derive the meeting's entity: prefer opportunity (has entityId), fall back
+    // to the scheduler's profile entity when the meeting is company-only.
+    let meetingEntityId: string | null | undefined;
+    if (meeting.opportunityId) {
+      const opp = await db.crmOpportunity.findUnique({
+        where: { id: meeting.opportunityId },
+        select: { entityId: true },
+      });
+      meetingEntityId = opp?.entityId;
+    } else {
+      const scheduler = await db.crmUserProfile.findUnique({
+        where: { id: meeting.scheduledById },
+        select: { entityId: true },
+      });
+      meetingEntityId = scheduler?.entityId;
+    }
+    const approverEntityId = session.user.crmEntityId;
+    if (meetingEntityId && approverEntityId !== meetingEntityId) {
+      return NextResponse.json(
+        { error: "You can only deny meetings within your own entity" },
+        { status: 403 }
+      );
+    }
+  }
+
   const body = await req.json();
   const parsed = denySchema.safeParse(body);
   if (!parsed.success) {

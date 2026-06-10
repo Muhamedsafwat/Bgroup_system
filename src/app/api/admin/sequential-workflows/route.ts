@@ -5,6 +5,8 @@ import { auth } from "@/lib/auth";
 import { db } from "@/lib/db";
 import { uniqueViolationMessage } from "@/lib/prisma-errors";
 import { describeZodError } from "@/lib/zod-errors";
+// audit v12 MEDIUM (MED-54): use canonical isPlatformAdmin instead of local copy
+import { isPlatformAdmin } from "@/lib/crm/admin-gates";
 
 const stepSchema = z.object({
   position: z.number().int().min(0).max(100).optional(),
@@ -36,13 +38,6 @@ const createSchema = z.object({
   (d) => d.kind !== "CUSTOM" || d.steps.every((s) => !!s.deadlineAt),
   { message: "Every step in a CUSTOM workflow must have an absolute deadline (deadlineAt)" }
 );
-
-function isPlatformAdmin(session: Session) {
-  return (
-    !!session.user.hrRoles?.includes("super_admin") ||
-    (!!session.user.modules?.includes("partners") && !session.user.partnerId)
-  );
-}
 
 export async function GET(req: Request) {
   const session = (await auth()) as Session | null;

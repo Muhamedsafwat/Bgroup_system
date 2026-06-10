@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server'
 import { db as prisma } from '@/lib/db'
 import { requireAuth } from '@/lib/hr/auth-utils'
-import { isHROrAdmin } from '@/lib/hr/permissions'
+import { isHROrAdmin, canAccessCompany } from '@/lib/hr/permissions'
 
 const bonusIncludes = {
   employee: {
@@ -68,6 +68,15 @@ export async function POST(
 
     const bonus = await prisma.hrBonus.findUnique({ where: { id: pk } })
     if (!bonus) return NextResponse.json({ detail: 'Not found.' }, { status: 404 })
+
+    // audit v12 HIGH (HIGH-57) recheck: validate cross-company access before approving.
+    const emp = await prisma.hrEmployee.findUnique({
+      where: { id: bonus.employeeId },
+      select: { companyId: true },
+    })
+    if (emp && !canAccessCompany(authUser, emp.companyId)) {
+      return NextResponse.json({ detail: 'Permission denied.' }, { status: 403 })
+    }
 
     if (bonus.status !== 'pending') {
       return NextResponse.json({ detail: 'Only pending bonuses can be applied.' }, { status: 400 })

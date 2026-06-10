@@ -51,11 +51,19 @@ export function PipelinesClient() {
   const [kind, setKind] = useState("new-business");
   const [description, setDescription] = useState("");
 
+  // audit v12 MEDIUM (MED-68) recheck — add error toast for non-ok response
   async function load() {
     setLoading(true);
     try {
       const res = await fetch("/api/crm/admin/pipelines");
-      if (res.ok) setPipelines((await res.json()).pipelines ?? []);
+      if (res.ok) {
+        setPipelines((await res.json()).pipelines ?? []);
+      } else {
+        const data = await res.json().catch(() => ({}));
+        toast.error(data.error ?? "Failed to load pipelines");
+      }
+    } catch {
+      toast.error("Failed to load pipelines");
     } finally {
       setLoading(false);
     }
@@ -101,13 +109,20 @@ export function PipelinesClient() {
     }
   }
 
+  // audit v12 MEDIUM (MED-68) recheck — add success/error toasts for toggle
   async function toggleActive(p: Pipeline) {
     const res = await fetch("/api/crm/admin/pipelines", {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ id: p.id, isActive: !p.isActive }),
     });
-    if (res.ok) load();
+    if (res.ok) {
+      toast.success(p.isActive ? "Pipeline deactivated" : "Pipeline activated");
+      load();
+    } else {
+      const data = await res.json().catch(() => ({}));
+      toast.error(data.error ?? "Failed to update pipeline");
+    }
   }
 
   return (

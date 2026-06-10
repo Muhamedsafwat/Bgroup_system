@@ -114,8 +114,9 @@ export default function AccountantPage() {
       const r = await fetch(`/api/crm/commissions-payable?month=${month}&year=${year}`, {
         credentials: 'include',
       })
+      // audit v12 MEDIUM (MED-65): throw on failure so isError is set and the UI surfaces an error
       if (!r.ok) {
-        return { period: { month: Number(month), year: Number(year) }, commissionRate: 0.05, totals: { reps: 0, dealCount: 0, wonValueEGP: 0, commissionEGP: 0 }, perRep: [] }
+        throw new Error(`Commissions fetch failed: ${r.status}`)
       }
       return r.json()
     },
@@ -295,6 +296,12 @@ export default function AccountantPage() {
       {/* Commissions Payable — sales reps' commission liability for this
           window. Not yet rolled into the payroll calculation; here so the
           accountant can size it before finalising. */}
+      {/* audit v12 MEDIUM (MED-65): surface error when commissions fetch fails */}
+      {commissionsQuery.isError && (
+        <p className="text-sm text-red-600">
+          Failed to load commissions data. Please refresh or try again.
+        </p>
+      )}
       {commissions && commissions.totals.reps > 0 && (
         <Card className="border-emerald-200 bg-emerald-50/40">
           <CardHeader className="pb-3">

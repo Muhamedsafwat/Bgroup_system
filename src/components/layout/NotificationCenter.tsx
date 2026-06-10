@@ -14,6 +14,8 @@ import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { cn } from "@/lib/utils";
 import { toast } from "sonner";
+// audit v12 MEDIUM (MED-69) — i18n integration for NotificationCenter
+import { useLocale } from "@/lib/i18n";
 
 type UnifiedNotification = {
   id: string;
@@ -58,6 +60,7 @@ export function NotificationCenter() {
   const [open, setOpen] = useState(false);
   const [tab, setTab] = useState<Tab>("all");
   const queryClient = useQueryClient();
+  const { t, locale } = useLocale();
 
   const { data, isLoading } = useQuery({
     queryKey: ["notifications"],
@@ -138,7 +141,7 @@ export function NotificationCenter() {
         // Without a toast the badge silently flickers back to the
         // unread count on the refetch. Surface the failure so the
         // user knows their click didn't stick.
-        toast.error("Couldn't mark notification as read");
+        toast.error(t.notifications.errors.markReadFailed);
         queryClient.invalidateQueries({ queryKey: ["notifications"] });
       }
     }
@@ -161,7 +164,7 @@ export function NotificationCenter() {
       // Same silent-failure pattern as handleClick — the bell badge
       // would jump back to the original count via the refetch with no
       // toast explaining why.
-      toast.error("Couldn't mark all as read");
+      toast.error(t.notifications.errors.markAllReadFailed);
       queryClient.invalidateQueries({ queryKey: ["notifications"] });
     }
   }
@@ -244,14 +247,14 @@ export function NotificationCenter() {
                             <div className="flex items-baseline justify-between gap-2">
                               <p className="text-sm font-medium truncate">{n.title}</p>
                               <span className="text-[10px] uppercase tracking-wide text-muted-foreground shrink-0">
-                                {n.module}
+                                {t.notifications.modules[n.module]}
                               </span>
                             </div>
                             <p className="text-xs text-muted-foreground mt-0.5 line-clamp-2">
                               {n.message}
                             </p>
                             <p className="text-[10px] text-muted-foreground mt-1">
-                              {new Date(n.createdAt).toLocaleString()}
+                              {new Date(n.createdAt).toLocaleString(locale)}
                             </p>
                           </div>
                         </div>

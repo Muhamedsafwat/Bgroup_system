@@ -5,6 +5,7 @@ import { useState } from "react";
 import { AlertTriangle, LogOut } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
+import { useLocale } from "@/lib/i18n"; // audit v12 MEDIUM (MED-75)
 
 /**
  * Tier-1 #30 — impersonation banner. Renders sticky at the top of
@@ -15,6 +16,7 @@ import { Button } from "@/components/ui/button";
  */
 export function ImpersonationBanner() {
   const { data: session, update: sessionUpdate } = useSession();
+  const { t } = useLocale();
   const [busy, setBusy] = useState(false);
   const actingAs = session?.user?.actingAs;
   if (!actingAs) return null;
@@ -25,7 +27,7 @@ export function ImpersonationBanner() {
       const res = await fetch("/api/admin/impersonate/stop", { method: "POST" });
       if (!res.ok) {
         const data = await res.json().catch(() => ({}));
-        toast.error(data.error ?? "Couldn't stop impersonation");
+        toast.error(data.error ?? t.impersonationBanner.stop_error);
         return;
       }
       // Force NextAuth to re-issue the JWT NOW (trigger='update' in
@@ -45,13 +47,13 @@ export function ImpersonationBanner() {
       <div className="px-4 py-2 flex items-center gap-2">
         <AlertTriangle className="h-4 w-4 shrink-0" />
         <span className="flex-1">
-          You&apos;re acting as{" "}
-          <strong>{session?.user?.name ?? session?.user?.email}</strong>.
-          Every action is audit-logged under your admin account.
+          {t.impersonationBanner.acting_as}{" "}
+          <strong>{session?.user?.name ?? session?.user?.email}</strong>.{" "}
+          {t.impersonationBanner.audit_logged}
         </span>
         <Button size="sm" variant="outline" className="h-7" onClick={stop} disabled={busy}>
           <LogOut className="h-3.5 w-3.5 me-1.5" />
-          Return to admin
+          {t.impersonationBanner.return_to_admin}
         </Button>
       </div>
     </div>

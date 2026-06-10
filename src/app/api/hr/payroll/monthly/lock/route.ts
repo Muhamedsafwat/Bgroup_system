@@ -24,81 +24,102 @@ export async function POST(request: Request) {
     const y = year !== undefined ? parseInt(String(year), 10) : now.getFullYear()
     const companyId = company
 
-    let period = await prisma.hrPayrollPeriod.findFirst({
-      where: { month: m, year: y, companyId },
-    })
+    // audit v12 MEDIUM (MED-55): wrap create-if-missing + status-gate + updates + notifications
+    // in a single transaction so concurrent requests cannot both pass the status check,
+    // produce a duplicate lock, or fire duplicate notifications.
+    const txResult = await prisma.$transaction(async (tx) => {
+      let period = await tx.hrPayrollPeriod.findFirst({
+        where: { month: m, year: y, companyId },
+      })
 
-    if (!period) {
-      // Create as open first, then lock
-      period = await prisma.hrPayrollPeriod.create({
-        data: {
-          companyId,
+      if (!period) {
+        // Create as open first, then lock
+        period = await tx.hrPayrollPeriod.create({
+          data: {
+            companyId,
+            month: m,
+            year: y,
+            status: 'open',
+            createdAt: now,
+            updatedAt: now,
+          },
+        })
+      }
+
+      if (period.status === 'locked') {
+        return { conflict: 'already_locked' as const, periodId: period.id }
+      }
+      if (period.status === 'finalized') {
+        return { conflict: 'finalized' as const, periodId: period.id }
+      }
+
+      // Atomically lock only if status is still not locked/finalized (race-safe check).
+      const lockResult = await tx.hrPayrollPeriod.updateMany({
+        where: { id: period.id, status: { notIn: ['locked', 'finalized'] } },
+        data: { status: 'locked', lockedById: authUser.id, lockedAt: now, updatedAt: now },
+      })
+      if (lockResult.count === 0) {
+        return { conflict: 'already_locked' as const, periodId: period.id }
+      }
+
+      await tx.hrMonthlySalary.updateMany({
+        where: {
+          employee: { companyId },
           month: m,
           year: y,
           status: 'open',
-          createdAt: now,
-          updatedAt: now,
         },
+        data: { status: 'locked' },
       })
-    }
 
-    if (period.status === 'locked') {
+      // Notify accountants and CEOs; skip duplicate notifications (extra guard against races).
+      const notifyUsers = await tx.hrUserRole.findMany({
+        where: { role: { name: { in: ['accountant', 'ceo'] } } },
+        select: { userId: true },
+      })
+      const uniqueUserIds = Array.from(new Set(notifyUsers.map((u) => u.userId)))
+      for (const uid of uniqueUserIds) {
+        const alreadyNotified = await tx.hrNotification.findFirst({
+          where: {
+            userId: uid,
+            notificationType: 'payroll_locked',
+            relatedObjectId: period.id,
+          },
+        })
+        if (!alreadyNotified) {
+          await tx.hrNotification.create({
+            data: {
+              userId: uid,
+              notificationType: 'payroll_locked',
+              title: 'Payroll Locked',
+              message: `Payroll for ${String(m).padStart(2, '0')}/${y} has been locked and is ready for review.`,
+              isRead: false,
+              relatedObjectType: 'PayrollPeriod',
+              relatedObjectId: period.id,
+              createdAt: now,
+            },
+          })
+        }
+      }
+
+      return { conflict: null, periodId: period.id }
+    })
+
+    if (txResult.conflict === 'already_locked') {
       return NextResponse.json({ detail: 'Payroll period is already locked.' }, { status: 400 })
     }
-    if (period.status === 'finalized') {
+    if (txResult.conflict === 'finalized') {
       return NextResponse.json({ detail: 'Cannot lock a finalized payroll period.' }, { status: 400 })
     }
-
-    // Now lock it
-    period = await prisma.hrPayrollPeriod.update({
-      where: { id: period.id },
-      data: {
-        status: 'locked',
-        lockedById: authUser.id,
-        lockedAt: now,
-        updatedAt: now,
-      },
-    })
-
-    await prisma.hrMonthlySalary.updateMany({
-      where: {
-        employee: { companyId },
-        month: m,
-        year: y,
-        status: 'open',
-      },
-      data: { status: 'locked' },
-    })
 
     await createAuditLog({
       userId: authUser.id,
       action: 'lock',
       entityType: 'payroll',
-      entityId: period.id,
+      entityId: txResult.periodId,
       details: `Locked payroll for company ${companyId}, ${m}/${y}`,
       ipAddress: getClientIp(request),
     })
-
-    // Notify accountants and CEOs
-    const notifyUsers = await prisma.hrUserRole.findMany({
-      where: { role: { name: { in: ['accountant', 'ceo'] } } },
-      select: { userId: true },
-    })
-    const uniqueUserIds = Array.from(new Set(notifyUsers.map((u) => u.userId)))
-    for (const uid of uniqueUserIds) {
-      await prisma.hrNotification.create({
-        data: {
-          userId: uid,
-          notificationType: 'payroll_locked',
-          title: 'Payroll Locked',
-          message: `Payroll for ${String(m).padStart(2, '0')}/${y} has been locked and is ready for review.`,
-          isRead: false,
-          relatedObjectType: 'PayrollPeriod',
-          relatedObjectId: period.id,
-          createdAt: now,
-        },
-      })
-    }
 
     return NextResponse.json({ detail: 'Payroll locked.', status: 'LOCKED' })
   } catch (error) {

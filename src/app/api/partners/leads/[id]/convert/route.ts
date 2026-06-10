@@ -17,6 +17,7 @@ export async function POST(
     return jsonError("Lead not found", 404);
   }
 
+  // audit v12 MEDIUM (MED-46): fast-path hint only — atomic check is inside the transaction
   if (lead.convertedToClientId) {
     return jsonError("Lead already converted", 400);
   }
@@ -27,27 +28,37 @@ export async function POST(
     return jsonError(parsed.error.issues[0].message, 400);
   }
 
-  const client = await db.$transaction(async (tx) => {
-    const newClient = await tx.partnerClient.create({
-      data: {
-        partnerId: lead.partnerId,
-        name: parsed.data.name || lead.name,
-        email: parsed.data.email || lead.email,
-        phone: parsed.data.phone || lead.phone,
-        company: parsed.data.company || lead.company,
-      },
-    });
+  let client;
+  try {
+    client = await db.$transaction(async (tx) => {
+      const newClient = await tx.partnerClient.create({
+        data: {
+          partnerId: lead.partnerId,
+          name: parsed.data.name || lead.name,
+          email: parsed.data.email || lead.email,
+          phone: parsed.data.phone || lead.phone,
+          company: parsed.data.company || lead.company,
+        },
+      });
 
-    await tx.partnerLead.update({
-      where: { id },
-      data: {
-        status: "QUALIFIED",
-        convertedToClientId: newClient.id,
-      },
-    });
+      // audit v12 MEDIUM (MED-46): conditional update guards against concurrent conversions —
+      // only succeeds when convertedToClientId is still null, preventing duplicate clients
+      const updated = await tx.partnerLead.updateMany({
+        where: { id, convertedToClientId: null },
+        data: { status: "QUALIFIED", convertedToClientId: newClient.id },
+      });
+      if (updated.count === 0) {
+        throw new Error("ALREADY_CONVERTED");
+      }
 
-    return newClient;
-  });
+      return newClient;
+    });
+  } catch (err) {
+    if (err instanceof Error && err.message === "ALREADY_CONVERTED") {
+      return jsonError("Lead already converted", 400);
+    }
+    throw err;
+  }
 
   return jsonSuccess(client, 201);
 }

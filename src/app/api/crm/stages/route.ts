@@ -35,11 +35,30 @@ export async function GET() {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
+  // audit v11 HIGH + v12 HIGH-26: filter by caller's entity (with
+  // global entityId=null as the fallback) and order per-entity rows
+  // BEFORE global rows. Postgres's default ORDER BY DESC puts NULLs
+  // FIRST, so the previous `entityId desc` ordering inverted the
+  // intent — global rows beat per-entity overrides. The explicit
+  // `nulls: 'last'` keeps non-null entityId rows first; the Set-based
+  // dedupe then preserves the per-entity row.
+  const callerEntityId = session.user.crmEntityId ?? null;
   const rows = await db.crmStageConfig.findMany({
-    where: { isActive: true },
-    orderBy: [{ displayOrder: "asc" }, { stage: "asc" }],
+    where: {
+      isActive: true,
+      OR: [
+        { entityId: null },
+        ...(callerEntityId ? [{ entityId: callerEntityId }] : []),
+      ],
+    },
+    orderBy: [
+      { entityId: { sort: "desc", nulls: "last" } },
+      { displayOrder: "asc" },
+      { stage: "asc" },
+    ],
     select: {
       stage: true,
+      entityId: true,
       customLabelEn: true,
       customLabelAr: true,
       displayOrder: true,
@@ -48,7 +67,7 @@ export async function GET() {
     },
   });
 
-  // Dedupe by stage code, preserving lowest displayOrder.
+  // Dedupe by stage code — per-entity row wins because of the orderBy.
   const seen = new Set<string>();
   const stages = rows
     .filter((r) => {

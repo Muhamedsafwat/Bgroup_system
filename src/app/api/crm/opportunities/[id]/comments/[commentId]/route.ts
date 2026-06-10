@@ -41,7 +41,9 @@ export async function DELETE(
   };
   const opp = await db.crmOpportunity.findFirst({
     where: { id, ...scopeOpportunityByRole(sUser), deletedAt: null },
-    select: { id: true },
+    // audit v12 MEDIUM (MED-18) recheck — also select entityId so we
+    // can enforce entity-level isolation for MANAGER moderation below.
+    select: { id: true, entityId: true },
   });
   if (!opp) {
     return NextResponse.json({ error: "Not found" }, { status: 404 });
@@ -59,8 +61,16 @@ export async function DELETE(
   // wider helper would (today: guarded by the crmProfileId check
   // above) let a platform partners-admin moderate the CRM if that
   // guard is ever relaxed.
+  //
+  // MANAGER moderation is restricted to their own entity: a MANAGER
+  // whose CrmUserProfile.entityId is "entity-A" must not be able to
+  // delete comments on opps belonging to "entity-B". ADMIN retains
+  // full org-wide moderation power. audit v12 MEDIUM (MED-18) recheck
   const isCrmAdmin =
-    session.user.crmRole === "ADMIN" || session.user.crmRole === "MANAGER";
+    session.user.crmRole === "ADMIN" ||
+    (session.user.crmRole === "MANAGER" &&
+      (!session.user.crmEntityId ||
+        opp.entityId === session.user.crmEntityId));
   if (!isAuthor && !isCrmAdmin) {
     return NextResponse.json({ error: "Forbidden" }, { status: 403 });
   }

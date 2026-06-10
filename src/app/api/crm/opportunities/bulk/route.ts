@@ -14,6 +14,11 @@ import {
 } from "@/lib/crm/business/pipeline";
 import { fireWorkflow } from "@/lib/crm/workflows/engine";
 import type { CrmCurrency } from "@/generated/prisma";
+import { canTransition } from "@/lib/crm/business/stage-transitions";
+import type { CrmOpportunityStage } from "@/types";
+// audit v12 HIGH: import activity-quota gate so bulk set-stage applies
+// the same policy as single-opp changeStage() and drag-drop paths.
+import { checkActivityQuota } from "@/lib/crm/business/activity-quota";
 
 /**
  * POST /api/crm/opportunities/bulk
@@ -202,7 +207,7 @@ export async function POST(req: Request) {
     // Validate the target stage is configured + active.
     const stageCfg = await db.crmStageConfig.findFirst({
       where: { stage: parsed.data.newStage, isActive: true },
-      select: { id: true },
+      select: { id: true, stageType: true },
     });
     if (!stageCfg) {
       return NextResponse.json(
@@ -239,10 +244,44 @@ export async function POST(req: Request) {
     // are satisfied. Rows that fail the gate are reported in the
     // response as `blocked` so the manager knows which opps need a
     // touch first.
-    const blocked: { id: string; missing: string[]; fromStage: string }[] = [];
+    const blocked: { id: string; missing: string[]; fromStage: string; reason?: string }[] = [];
     const toChange: typeof rows = [];
     for (const r of rows) {
       if (r.stage === newStage) continue; // skip no-op
+      // SECURITY (audit v11 CRIT #1): the bulk path previously
+      // skipped canTransition() entirely. That let managers
+      // mass-reopen WON/LOST deals, skip-forward more than two
+      // stages, and jump Postponed → Won without the matrix's
+      // intervening checks. Apply the same matrix the single-opp
+      // path uses.
+      const transition = canTransition(
+        r.stage as CrmOpportunityStage,
+        newStage as CrmOpportunityStage,
+      );
+      if (!transition.allowed) {
+        blocked.push({
+          id: r.id,
+          missing: [],
+          fromStage: r.stage,
+          reason: transition.error ?? "Transition not allowed",
+        });
+        continue;
+      }
+      // SECURITY (audit v11 CRIT #1): bulk-LOST without a lossReasonId
+      // would silently land 50 opps with lossReasonId=null and
+      // disappear from loss-reason dashboards. The single-opp gate
+      // forces a reason via the StageChangeModal; the bulk path
+      // never collects it. Refuse the operation outright — the UI
+      // should pick the reason first.
+      if (newStage === "LOST" && r.lossReasonId == null) {
+        blocked.push({
+          id: r.id,
+          missing: ["lossReasonId"],
+          fromStage: r.stage,
+          reason: "LOST requires a loss reason — set it on each opp first.",
+        });
+        continue;
+      }
       const required = requiredByStage.get(r.stage) ?? [];
       const missing: string[] = [];
       for (const field of required) {
@@ -256,24 +295,69 @@ export async function POST(req: Request) {
       }
       if (missing.length) {
         blocked.push({ id: r.id, missing, fromStage: r.stage });
-      } else {
-        toChange.push(r);
+        continue;
       }
+      // audit v12 HIGH: activity-quota gate — parity with single-opp
+      // changeStage() and drag-drop paths. Without this gate, managers
+      // could bulk-move DISCOVERY→CONTACTED while bypassing the admin-
+      // configured minimum-calls/meetings policy entirely.
+      //
+      // audit v12 HIGH (HIGH-21): SKIP the quota check when moving INTO
+      // a terminal loss/abandon stage. A rep can't satisfy "log 3
+      // calls" before being allowed to mark a dead deal LOST/POSTPONED.
+      // Honor the admin's stageType column when present; fall back to
+      // the seed codes.
+      const isTerminalLoss =
+        newStage === "LOST" ||
+        newStage === "POSTPONED" ||
+        stageCfg.stageType === "lost" ||
+        stageCfg.stageType === "abandoned";
+      if (!isTerminalLoss) {
+        // eslint-disable-next-line no-await-in-loop
+        const quotaError = await checkActivityQuota(r.id, r.stage);
+        if (quotaError) {
+          blocked.push({ id: r.id, missing: [], fromStage: r.stage, reason: quotaError });
+          continue;
+        }
+      }
+      toChange.push(r);
     }
-    const closesDeal = newStage === "WON" || newStage === "LOST";
+    // Honor CrmStageConfig.stageType so custom terminal stages
+    // (e.g. stageType='won' on 'WON_DEAL') stamp dateClosed and
+    // appear in won-rate KPIs. Fall back to the seed codes for installs
+    // that haven't populated stageType yet.
+    const closesDeal =
+      stageCfg.stageType === "won" ||
+      stageCfg.stageType === "lost" ||
+      newStage === "WON" ||
+      newStage === "LOST";
+    // audit v12 HIGH: build per-target-stage date-stamp fields once so
+    // each row gets the canonical side-effect timestamps that SLA
+    // reports and conversion dashboards depend on. The old bulk path
+    // only stamped dateClosed, so dateContacted/dateDiscovery/
+    // dateProposalSent were never set and SLA reports drifted.
+    const now = new Date();
+    const stageDateStamps: Record<string, unknown> = {};
+    if (newStage === "CONTACTED") stageDateStamps.dateContacted = now;
+    if (newStage === "DISCOVERY") stageDateStamps.dateDiscovery = now;
+    if (newStage === "PROPOSAL_SENT") stageDateStamps.dateProposalSent = now;
     // Bulk parity with the single-opp changeStage path:
     //   1. Resolve the target stage's probabilityPct ONCE (same target
     //      stage for every row in this call).
     //   2. Load FX rates ONCE.
     //   3. Per row: recompute weightedValueEGP with the new
     //      probability + the row's existing currency, write the
-    //      update + history together.
+    //      update + history + activity-log together.
     //   4. After commit: fan out `opp.stage.changed` workflows.
     // Without (1)+(3), forecast aggregates over `weightedValueEGP`
     // drift after every bulk move; without (4), workflows admins
     // configured for stage transitions silently skip.
     const probabilityPct = await getStageProbability(newStage);
     const fxRates = toChange.length ? await loadFxRates() : null;
+    // audit v12 HIGH: track per-row race-gate results so concurrency
+    // conflicts are reported back to the caller rather than silently
+    // clobbering a newer stage set by a concurrent rep.
+    const conflicted: string[] = [];
     if (toChange.length > 0 && fxRates) {
       await db.$transaction(async (tx) => {
         for (const r of toChange) {
@@ -284,16 +368,28 @@ export async function POST(req: Request) {
               probabilityPct,
               fxRates,
             );
-          await tx.crmOpportunity.update({
-            where: { id: r.id },
+          // audit v12 HIGH: race-gate — pin the WHERE clause to the
+          // source stage we validated against. A concurrent rep who
+          // already moved this opp to a different stage will cause
+          // claim.count === 0, skipping the history/log writes for
+          // this row and surfacing it in `conflicted` instead of
+          // silently clobbering the newer state (ATOMICITY fix).
+          const claim = await tx.crmOpportunity.updateMany({
+            where: { id: r.id, stage: r.stage },
             data: {
               stage: newStage,
               probabilityPct,
               estimatedValueEGP,
               weightedValueEGP,
-              ...(closesDeal ? { dateClosed: new Date() } : {}),
+              ...(closesDeal ? { dateClosed: now } : {}),
+              ...stageDateStamps,
             },
           });
+          if (claim.count === 0) {
+            // Concurrently moved — skip history + log for this row.
+            conflicted.push(r.id);
+            continue;
+          }
           await tx.crmStageHistory.create({
             data: {
               opportunityId: r.id,
@@ -303,12 +399,31 @@ export async function POST(req: Request) {
               actingAdminId: session.user.actingAsCrmProfileId ?? null,
             },
           });
+          // audit v12 HIGH: write CrmActivityLog per row so the
+          // activity feed reflects every bulk stage move. Previously
+          // the bulk set-stage path wrote no activity-log entries at
+          // all, leaving the feed empty after manager bulk-moves and
+          // making audit trails incomplete.
+          await tx.crmActivityLog.create({
+            data: {
+              opportunityId: r.id,
+              actorId: crmProfileId,
+              actingAdminId: session.user.actingAsCrmProfileId ?? null,
+              action: "stage_changed",
+              metadata: {
+                from: r.stage,
+                to: newStage,
+                source: "bulk",
+              },
+            },
+          });
         }
       });
       // Fire the stage-changed workflow per row AFTER commit. Engine
       // swallows its own errors so a workflow failure on row N
       // doesn't block rows N+1...M from getting their notifications.
       for (const r of toChange) {
+        if (conflicted.includes(r.id)) continue;
         await fireWorkflow("opp.stage.changed", {
           entityType: "opportunity",
           entityId: r.id,
@@ -319,12 +434,13 @@ export async function POST(req: Request) {
         });
       }
     }
-    affected = toChange.length;
+    affected = toChange.length - conflicted.length;
     return NextResponse.json({
       ok: true,
       affected,
       skipped: ids.length - visibleIds.length,
       blocked: blocked.length ? blocked : undefined,
+      conflicted: conflicted.length ? conflicted : undefined,
     });
   } else if (action === "soft-delete") {
     // Per-row soft-delete + audit so the activity log records the

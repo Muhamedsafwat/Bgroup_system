@@ -23,13 +23,26 @@ import { isAdminOnly } from "@/lib/crm/admin-gates";
 const createSchema = z.object({
   name: z.string().trim().min(1).max(120),
   scope: z.enum(["opportunity", "coldLead"]),
-  predicateJson: z.array(z.record(z.string(), z.unknown())).min(1),
-  channels: z.array(z.string().min(1)).default(["in-app"]),
+  // audit v12 MEDIUM (MED-58): bound predicateJson to prevent unbounded array payloads
+  predicateJson: z.array(z.record(z.string(), z.unknown())).min(1).max(20),
+  // audit v12 MEDIUM (MED-58): restrict to known channels, require at least one, cap at 3
+  channels: z.array(z.enum(["in-app", "email", "slack"])).min(1).max(3).default(["in-app"]),
   suppressionDays: z.number().int().min(0).max(365).optional(),
   isActive: z.boolean().optional(),
 });
 
-const patchSchema = createSchema.partial().extend({ id: z.string().min(1) });
+// audit v12 HIGH (HIGH-44): changing scope without updating the predicate leaves stale field
+// references that silently never fire against the new scope's entities.
+const patchSchema = createSchema
+  .partial()
+  .extend({ id: z.string().min(1) })
+  .refine(
+    (data) => !(data.scope !== undefined && data.predicateJson === undefined),
+    {
+      message: "predicateJson is required when changing scope",
+      path: ["predicateJson"],
+    }
+  );
 
 export async function GET() {
   const session = (await auth()) as Session | null;

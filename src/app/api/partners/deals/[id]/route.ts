@@ -101,6 +101,17 @@ export async function PATCH(
   }
 
   // Normal update (non-WON transition)
+  // audit v12 MEDIUM (MED-47) recheck — block value/status mutations on WON deals to
+  // prevent stale commission amounts and orphaned commission rows from status reversals.
+  if (existing.status === "WON") {
+    if (value !== undefined || (status && status !== "WON")) {
+      return jsonError(
+        "Cannot change value or status of a WON deal after commission has been created",
+        400
+      );
+    }
+  }
+
   const updated = await db.partnerDeal.update({
     where: { id },
     data: { ...(status && { status }), ...(value !== undefined && { value }), ...(notes !== undefined && { notes }) },

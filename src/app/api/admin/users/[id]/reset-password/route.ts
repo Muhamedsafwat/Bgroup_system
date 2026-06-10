@@ -4,6 +4,8 @@ import bcrypt from "bcryptjs";
 import { z } from "zod";
 import { auth } from "@/lib/auth";
 import { db } from "@/lib/db";
+// audit v12 MEDIUM (MED-54): use canonical isPlatformAdmin instead of local copy
+import { isPlatformAdmin } from "@/lib/crm/admin-gates";
 
 /**
  * POST /api/admin/users/[id]/reset-password
@@ -20,12 +22,6 @@ import { db } from "@/lib/db";
  * Every reset writes a row in `HrAuditLog` so we always have a trail of
  * "who changed whose password, when". Bcrypt cost 10 to match `auth.ts`.
  */
-function isPlatformAdmin(session: Session) {
-  return (
-    !!session.user.hrRoles?.includes("super_admin") ||
-    (!!session.user.modules?.includes("partners") && !session.user.partnerId)
-  );
-}
 
 const schema = z.object({
   newPassword: z
@@ -68,30 +64,38 @@ export async function POST(
   }
 
   const hash = await bcrypt.hash(parsed.data.newPassword, 10);
-  // Force the user to replace this admin-set password on their next login —
-  // the admin knows the plaintext temporarily, so it has to be rotated by
-  // the actual user before they can do anything else.
-  await db.user.update({
-    where: { id: target.id },
-    data: { password: hash, mustChangePassword: true },
-  });
-
-  // Audit trail — admins reading audit-logs/page.tsx can see every reset.
-  // HrAuditLog.userId is a FK to HrUserProfile.userId (User id), so we pass
-  // the actor's User id directly. The target user is captured in entityId so
-  // a "what happened to user X" filter on the log works correctly. We don't
-  // store oldValue/newValue — keeping bcrypt hashes out of the audit table
-  // by design; "password was reset" is the only fact we need.
   const ipAddress =
     request.headers.get("x-forwarded-for")?.split(",")[0]?.trim() ?? null;
-  const actorLinked = await db.hrUserProfile.findUnique({
-    where: { userId: session.user.id },
-    select: { userId: true },
-  });
-  if (actorLinked) {
-    await db.hrAuditLog.create({
+
+  // audit v12 MEDIUM (MED-51) ultra — wrap the password update and audit-log
+  // insert in a single transaction so neither commits without the other.
+  // The audit row is written unconditionally: when the acting admin has no
+  // HrUserProfile, userId is null and actingAdminId carries their identity,
+  // ensuring every admin reset is traceable regardless of HR-profile state.
+  await db.$transaction(async (tx) => {
+    // Force the user to replace this admin-set password on their next login —
+    // the admin knows the plaintext temporarily, so it has to be rotated by
+    // the actual user before they can do anything else.
+    await tx.user.update({
+      where: { id: target.id },
+      data: { password: hash, mustChangePassword: true },
+    });
+
+    // Audit trail — admins reading audit-logs/page.tsx can see every reset.
+    // HrAuditLog.userId is a FK to HrUserProfile.userId (User id), so we pass
+    // the actor's User id directly. The target user is captured in entityId so
+    // a "what happened to user X" filter on the log works correctly. We don't
+    // store oldValue/newValue — keeping bcrypt hashes out of the audit table
+    // by design; "password was reset" is the only fact we need.
+    const actorLinked = await tx.hrUserProfile.findUnique({
+      where: { userId: session.user.id },
+      select: { userId: true },
+    });
+
+    await tx.hrAuditLog.create({
       data: {
-        userId: actorLinked.userId,
+        userId: actorLinked?.userId ?? null,
+        actingAdminId: session.user.id,
         action: "admin_reset_password",
         entityType: "User",
         entityId: target.id,
@@ -99,7 +103,7 @@ export async function POST(
         ipAddress,
       },
     });
-  }
+  });
 
   return NextResponse.json({ ok: true, email: target.email });
 }

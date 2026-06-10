@@ -2,6 +2,8 @@ import { NextResponse } from "next/server";
 import type { Session } from "next-auth";
 import { auth } from "@/lib/auth";
 import { db } from "@/lib/db";
+// audit v12 MEDIUM (MED-54): use canonical isPlatformAdmin instead of local copy
+import { isPlatformAdmin } from "@/lib/crm/admin-gates";
 
 /**
  * Tier-1 #30 — stop impersonation. Three legitimate callers:
@@ -20,12 +22,6 @@ import { db } from "@/lib/db";
  * records the actual initiator so an admin can tell whether the
  * stop was self-service or forced by another admin.
  */
-function isPlatformAdmin(session: Session): boolean {
-  return (
-    !!session.user.hrRoles?.includes("super_admin") ||
-    (!!session.user.modules?.includes("partners") && !session.user.partnerId)
-  );
-}
 
 export async function POST(request: Request) {
   const session = (await auth()) as Session | null;
@@ -34,6 +30,12 @@ export async function POST(request: Request) {
   }
   const initiatorId = session.user.id;
   const actingAs = session.user.actingAs;
+  // audit v12 MEDIUM (MED-50): parse optional targeting fields so a
+  // platform admin can identify the exact session to force-stop,
+  // preventing arbitrary row selection when multiple admins are active.
+  const body = await request.json().catch(() => ({}));
+  const targetSessionId: string | undefined = body?.sessionId;
+  const targetAdminUserId: string | undefined = body?.adminUserId;
   // Candidate adminUserId values for the row lookup. When
   // impersonation is active, the actual admin's id lives on
   // `actingAs`; when the admin is on their own session, it's
@@ -50,12 +52,29 @@ export async function POST(request: Request) {
     : null;
   // Platform admins can force-stop ANY active session. They don't
   // need their id to match the row's adminUserId.
+  // audit v12 MEDIUM (MED-50): use the caller-supplied session id or
+  // admin id to target the specific row; fall back to most-recent row
+  // (orderBy createdAt desc) to avoid returning an arbitrary record.
   const rowForForceStop =
     !row && isPlatformAdmin(session)
-      ? await db.crmImpersonationSession.findFirst({
-          where: { adminUserId: { not: initiatorId } },
-        })
+      ? targetSessionId
+        ? await db.crmImpersonationSession.findUnique({
+            where: { id: targetSessionId },
+          })
+        : await db.crmImpersonationSession.findFirst({
+            where: {
+              adminUserId: targetAdminUserId
+                ? targetAdminUserId
+                : { not: initiatorId },
+            },
+            orderBy: { startedAt: "desc" },
+          })
       : null;
+  // audit v12 MEDIUM (MED-50): explicit ownership check — the force-stopped
+  // row must not belong to the initiator themselves.
+  if (rowForForceStop && rowForForceStop.adminUserId === initiatorId) {
+    return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+  }
   const finalRow = row ?? rowForForceStop;
   if (!finalRow) {
     return NextResponse.json({ ok: true, message: "No active impersonation" });

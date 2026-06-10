@@ -92,6 +92,29 @@ export function StageChangeModal({
       return;
     }
 
+    // audit v12 HIGH: depositRequired was declared but the modal never
+    // validated it. A WON close with depositAmount=0 was silently
+    // dropped by `|| undefined`, restoring the v10 "finance blind to
+    // deposit" bug. Block the submit instead.
+    if (requirements?.depositRequired) {
+      if (!depositAmount || depositAmount <= 0) {
+        toast.error(
+          locale === "ar"
+            ? "مبلغ الدفعة المقدمة مطلوب لإغلاق الصفقة كمربوحة"
+            : "Deposit amount is required to mark this deal WON",
+        );
+        return;
+      }
+      if (!depositDate) {
+        toast.error(
+          locale === "ar"
+            ? "تاريخ الدفعة المقدمة مطلوب لإغلاق الصفقة كمربوحة"
+            : "Deposit date is required to mark this deal WON",
+        );
+        return;
+      }
+    }
+
     setLoading(true);
     try {
       const result = await changeStage(opportunityId, {
@@ -99,7 +122,12 @@ export function StageChangeModal({
         lossReasonId: lossReasonId || undefined,
         lostToCompetitor: lostToCompetitor || undefined,
         proposalUrl: proposalUrl || undefined,
-        depositAmount: depositAmount || undefined,
+        // audit v12 HIGH: send depositAmount only when the stage
+        // requires it AND the rep entered something. `|| undefined`
+        // converted a real 0 into undefined — server then skipped
+        // persistence entirely. Now an explicit 0 surfaces as a
+        // server-side validation error rather than silent loss.
+        depositAmount: requirements?.depositRequired ? depositAmount : undefined,
         depositDate: depositDate || undefined,
         contractUrl: contractUrl || undefined,
       });

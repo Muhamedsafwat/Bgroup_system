@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server'
 import { db as prisma } from '@/lib/db'
 import { requireAuth } from '@/lib/hr/auth-utils'
-import { isHROrAdmin, canViewAllEmployees } from '@/lib/hr/permissions'
+import { isHROrAdmin, canViewAllEmployees, isSuperAdmin } from '@/lib/hr/permissions'
 import { serializeEmployeeList, serializeEmployeeDetail } from '@/lib/hr/employee-serializer'
 import { createAuditLog, getClientIp } from '@/lib/hr/audit'
 import { createEmployeeSchema } from '@/lib/hr/validations/employee'
@@ -53,8 +53,16 @@ export async function GET(request: Request) {
       ]
     }
 
+    // audit v12 HIGH: canViewAllEmployees roles (accountant, ceo, hr_manager) must still be
+    // scoped to their own companies; only super_admin may query across all tenants.
     if (!canViewAllEmployees(authUser)) {
       where.companyId = { in: authUser.companies }
+    } else if (!isSuperAdmin(authUser)) {
+      // Non-super_admin with view-all permission: restrict to their assigned companies
+      // to prevent cross-tenant employee/salary/nationalId/IBAN leakage.
+      if (!where.companyId) {
+        where.companyId = { in: authUser.companies }
+      }
     }
 
     const orderBy = url.searchParams.get('ordering') || 'employee_id'
@@ -135,56 +143,76 @@ export async function POST(request: Request) {
     const seq = lastEmp ? parseInt(lastEmp.employeeId.replace(prefix + '-', ''), 10) + 1 : 1
     const employeeIdStr = `${prefix}-${String(seq).padStart(3, '0')}`
 
-    const employee = await prisma.hrEmployee.create({
-      data: {
-        employeeId: employeeIdStr,
-        fullNameEn: body.full_name_en || '',
-        fullNameAr: body.full_name_ar || '',
-        nationalId: body.national_id || `NID-${Date.now()}`,
-        dateOfBirth: body.date_of_birth ? new Date(body.date_of_birth) : null,
-        gender: body.gender || '',
-        personalEmail: body.personal_email || '',
-        phone: body.phone || '',
-        address: body.address || '',
-        emergencyContactName: body.emergency_contact_name || '',
-        emergencyContactPhone: body.emergency_contact_phone || '',
-        positionEn: body.position_en || '',
-        positionAr: body.position_ar || '',
-        level: body.level || '',
-        employmentType: body.employment_type || 'full_time',
-        workModel: body.work_model || 'onsite',
-        contractStart: body.contract_start ? new Date(body.contract_start) : null,
-        contractEnd: body.contract_end ? new Date(body.contract_end) : null,
-        probationEnd: body.probation_end ? new Date(body.probation_end) : null,
-        status: body.status || 'active',
-        baseSalary: parseFloat(body.base_salary) || 0,
-        currency: body.currency || 'EGP',
-        bankName: body.bank_name || '',
-        bankAccount: body.bank_account || '',
-        iban: body.iban || '',
-        companyId,
-        departmentId: body.department ? body.department : null,
-        directManagerId: body.direct_manager ? body.direct_manager : null,
-        shiftId: body.shift ? body.shift : null,
-        createdAt: now,
-        updatedAt: now,
-      },
-      include: employeeIncludes,
-    })
-
-    // Create linked user account if work_email provided
+    // Hoist password derivation outside the transaction (async crypto, no DB side-effects)
+    let hashedPassword: string | undefined
     if (body.work_email) {
       const bcrypt = await import('bcryptjs')
       const crypto = await import('crypto')
       const tempPassword = crypto.randomBytes(6).toString('hex')
-      const hashedPassword = await bcrypt.hash(tempPassword, 12)
+      hashedPassword = await bcrypt.hash(tempPassword, 12)
+    }
 
-      const existingUser = await prisma.user.findUnique({ where: { email: body.work_email } })
-      if (!existingUser) {
-        const newUser = await prisma.user.create({
+    // audit v12 HIGH (HIGH-55) ultra: Wrap all writes in a single transaction so that
+    // any failure (email conflict, missing profile row, role creation, etc.) rolls back
+    // atomically — eliminating orphaned HrEmployee rows and partially-committed User records.
+    // The email-conflict check is moved BEFORE the hrEmployee.create so no compensating
+    // delete is ever needed.
+    let conflictEmail = false
+    const employee = await prisma.$transaction(async (tx) => {
+      // 1. Check email conflict FIRST — before any writes
+      if (body.work_email) {
+        const existingUser = await tx.user.findUnique({ where: { email: body.work_email } })
+        if (existingUser) {
+          conflictEmail = true
+          // Throwing inside a $transaction causes an automatic rollback (no writes committed yet)
+          throw Object.assign(new Error('CONFLICT_EMAIL'), { isConflict: true })
+        }
+      }
+
+      // 2. Create employee row
+      const emp = await tx.hrEmployee.create({
+        data: {
+          employeeId: employeeIdStr,
+          fullNameEn: body.full_name_en || '',
+          fullNameAr: body.full_name_ar || '',
+          nationalId: body.national_id || `NID-${Date.now()}`,
+          dateOfBirth: body.date_of_birth ? new Date(body.date_of_birth) : null,
+          gender: body.gender || '',
+          personalEmail: body.personal_email || '',
+          phone: body.phone || '',
+          address: body.address || '',
+          emergencyContactName: body.emergency_contact_name || '',
+          emergencyContactPhone: body.emergency_contact_phone || '',
+          positionEn: body.position_en || '',
+          positionAr: body.position_ar || '',
+          level: body.level || '',
+          employmentType: body.employment_type || 'full_time',
+          workModel: body.work_model || 'onsite',
+          contractStart: body.contract_start ? new Date(body.contract_start) : null,
+          contractEnd: body.contract_end ? new Date(body.contract_end) : null,
+          probationEnd: body.probation_end ? new Date(body.probation_end) : null,
+          status: body.status || 'active',
+          baseSalary: parseFloat(body.base_salary) || 0,
+          currency: body.currency || 'EGP',
+          bankName: body.bank_name || '',
+          bankAccount: body.bank_account || '',
+          iban: body.iban || '',
+          companyId,
+          departmentId: body.department ? body.department : null,
+          directManagerId: body.direct_manager ? body.direct_manager : null,
+          shiftId: body.shift ? body.shift : null,
+          createdAt: now,
+          updatedAt: now,
+        },
+        include: employeeIncludes,
+      })
+
+      // 3. If work_email provided, create linked user + profile + role within the same transaction
+      if (body.work_email) {
+        const newUser = await tx.user.create({
           data: {
             email: body.work_email,
-            password: hashedPassword,
+            password: hashedPassword!,
             hrAccess: true,
             createdAt: now,
             updatedAt: now,
@@ -192,12 +220,12 @@ export async function POST(request: Request) {
         })
 
         // Create the HR profile for the new user
-        await prisma.hrUserProfile.create({
+        await tx.hrUserProfile.create({
           data: {
             userId: newUser.id,
             username: body.work_email,
-            firstName: employee.fullNameEn.split(' ')[0] || '',
-            lastName: employee.fullNameEn.split(' ').slice(1).join(' ') || '',
+            firstName: emp.fullNameEn.split(' ')[0] || '',
+            lastName: emp.fullNameEn.split(' ').slice(1).join(' ') || '',
             phone: '',
             isActive: true,
             isSuperuser: false,
@@ -206,24 +234,37 @@ export async function POST(request: Request) {
           },
         })
 
-        await prisma.hrEmployee.update({
-          where: { id: employee.id },
+        await tx.hrEmployee.update({
+          where: { id: emp.id },
           data: { userId: newUser.id },
         })
 
         // Assign default 'employee' role
-        let employeeRole = await prisma.hrRole.findUnique({ where: { name: 'employee' } })
+        let employeeRole = await tx.hrRole.findUnique({ where: { name: 'employee' } })
         if (!employeeRole) {
-          employeeRole = await prisma.hrRole.create({ data: { name: 'employee' } })
+          employeeRole = await tx.hrRole.create({ data: { name: 'employee' } })
         }
-        await prisma.hrUserRole.create({
+        await tx.hrUserRole.create({
           data: { userId: newUser.id, roleId: employeeRole.id },
         })
       }
+
+      return emp
+    }).catch((err: any) => {
+      if (err?.isConflict) return null
+      throw err
+    })
+
+    // Return 409 if the email conflict was detected inside the transaction
+    if (conflictEmail || employee === null) {
+      return NextResponse.json(
+        { detail: 'The work email address is already associated with an existing account. The account owner must opt in to link their account to the HR module.' },
+        { status: 409 }
+      )
     }
 
     const created = await prisma.hrEmployee.findUnique({
-      where: { id: employee.id },
+      where: { id: employee!.id },
       include: employeeIncludes,
     })
 
@@ -231,7 +272,7 @@ export async function POST(request: Request) {
       userId: authUser.id,
       action: 'create',
       entityType: 'employee',
-      entityId: employee.id,
+      entityId: employee!.id,
       details: `Created employee ${employeeIdStr} (${body.full_name_en || ''})`,
       ipAddress: getClientIp(request),
     })

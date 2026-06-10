@@ -115,14 +115,15 @@ export function TeamCalendar() {
     <div className="space-y-3">
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-2">
+          {/* audit v12 MEDIUM (MED-73): localized aria-labels and RTL-flipped chevrons */}
           <Button
             variant="outline"
             size="icon"
             className="h-9 w-9"
             onClick={() => setCursor(new Date(cursor.getFullYear(), cursor.getMonth() - 1, 1))}
-            aria-label="Previous month"
+            aria-label={isAr ? "الشهر السابق" : "Previous month"}
           >
-            <ChevronLeft className="h-4 w-4" />
+            <ChevronLeft className={cn("h-4 w-4", isAr && "rotate-180")} />
           </Button>
           <h2 className="text-lg font-semibold text-foreground min-w-40">
             {monthLabel}
@@ -132,9 +133,9 @@ export function TeamCalendar() {
             size="icon"
             className="h-9 w-9"
             onClick={() => setCursor(new Date(cursor.getFullYear(), cursor.getMonth() + 1, 1))}
-            aria-label="Next month"
+            aria-label={isAr ? "الشهر التالي" : "Next month"}
           >
-            <ChevronRight className="h-4 w-4" />
+            <ChevronRight className={cn("h-4 w-4", isAr && "rotate-180")} />
           </Button>
           <Button
             variant="ghost"
@@ -153,7 +154,8 @@ export function TeamCalendar() {
       <Card className="p-0 overflow-hidden">
         {/* Weekday header */}
         <div className="grid grid-cols-7 bg-muted/40 border-b border-border text-xs font-medium text-muted-foreground">
-          {["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"].map((d) => (
+          {/* audit v12 MEDIUM (MED-73): localized weekday headers */}
+          {(isAr ? ["الإث", "الثل", "الأر", "الخم", "الجم", "السب", "الأح"] : ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]).map((d) => (
             <div key={d} className="px-2 py-2 text-center">
               {d}
             </div>

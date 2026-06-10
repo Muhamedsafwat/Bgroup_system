@@ -58,14 +58,26 @@ export async function POST(request: Request) {
   // admin, which managers don't want to wait on. Active-rep validation
   // above still prevents assigning to disabled accounts.
 
+  // audit v12 LOW (LOW-13) recheck: filter out terminal-state leads before
+  // assigning so CONVERTED/ARCHIVED leads are never silently re-queued.
+  const eligibleLeads = await db.crmColdLead.findMany({
+    where: {
+      id: { in: parsed.data.leadIds },
+      status: { notIn: ["CONVERTED", "ARCHIVED"] },
+    },
+    select: { id: true },
+  });
+  const eligibleIds = eligibleLeads.map((l) => l.id);
+  const skipped = parsed.data.leadIds.length - eligibleIds.length;
+
   // Round-robin assignment.
   const now = new Date();
-  const updates: Promise<unknown>[] = [];
-  for (let i = 0; i < parsed.data.leadIds.length; i++) {
+  const updates: ReturnType<typeof db.crmColdLead.update>[] = [];
+  for (let i = 0; i < eligibleIds.length; i++) {
     const repId = parsed.data.repIds[i % parsed.data.repIds.length];
     updates.push(
       db.crmColdLead.update({
-        where: { id: parsed.data.leadIds[i] },
+        where: { id: eligibleIds[i] },
         data: {
           assignedToId: repId,
           assignedAt: now,
@@ -74,11 +86,12 @@ export async function POST(request: Request) {
       })
     );
   }
-  await Promise.all(updates);
+  await db.$transaction(updates);
 
   return NextResponse.json({
     ok: true,
-    assigned: parsed.data.leadIds.length,
-    perRep: Math.floor(parsed.data.leadIds.length / parsed.data.repIds.length),
+    assigned: eligibleIds.length,
+    skipped,
+    perRep: Math.floor(eligibleIds.length / parsed.data.repIds.length),
   });
 }

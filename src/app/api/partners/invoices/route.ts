@@ -58,11 +58,17 @@ export async function POST(request: NextRequest) {
     return jsonError("Invoices can only be requested for won deals", 400);
   }
 
+  // audit v12 MEDIUM (MED-64): capture resolved amount and ensure it does not exceed deal value
+  const requestedAmount = parsed.data.amount ?? deal.value;
+  if (requestedAmount > deal.value) {
+    return jsonError("Invoice amount cannot exceed deal value", 400);
+  }
+
   const invoice = await db.partnerInvoice.create({
     data: {
       partnerId: user.partnerId,
       dealId: deal.id,
-      amount: parsed.data.amount ?? deal.value,
+      amount: requestedAmount,
     },
     include: {
       deal: {

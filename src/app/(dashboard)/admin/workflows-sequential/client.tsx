@@ -21,6 +21,7 @@ export function WorkflowsListClient() {
   const [workflows, setWorkflows] = useState<Workflow[]>([]);
   const [loading, setLoading] = useState(true);
 
+  // audit v12 MEDIUM (MED-66): handle non-OK responses and surface errors to the user
   async function refresh() {
     setLoading(true);
     try {
@@ -28,6 +29,8 @@ export function WorkflowsListClient() {
       if (res.ok) {
         const data = await res.json();
         setWorkflows(data.workflows ?? []);
+      } else {
+        toast.error("Failed to load workflows");
       }
     } finally {
       setLoading(false);
@@ -51,15 +54,20 @@ export function WorkflowsListClient() {
     toast.success(`Run started — first task: ${data.firstTaskId}`);
   }
 
+  // audit v12 MEDIUM (MED-66): wrap fetch in try/catch to handle network-level errors
   async function remove(id: string) {
     if (!confirm("Delete this workflow? In-flight runs will be cascaded.")) return;
-    const res = await fetch(`/api/admin/sequential-workflows/${id}`, { method: "DELETE" });
-    if (!res.ok) {
-      toast.error("Delete failed");
-      return;
+    try {
+      const res = await fetch(`/api/admin/sequential-workflows/${id}`, { method: "DELETE" });
+      if (!res.ok) {
+        toast.error("Delete failed");
+        return;
+      }
+      toast.success("Deleted");
+      refresh();
+    } catch {
+      toast.error("Delete failed — network error");
     }
-    toast.success("Deleted");
-    refresh();
   }
 
   return (

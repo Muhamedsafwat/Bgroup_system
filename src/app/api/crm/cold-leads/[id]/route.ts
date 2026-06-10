@@ -159,6 +159,21 @@ export async function PATCH(
     }
   }
 
+  // audit v12 HIGH (HIGH-29): when an admin transitions a lead OUT of
+  // CONVERTED, clear convertedOpportunityId so the FK doesn't keep
+  // pointing at a linked opp that no longer represents this lead.
+  // Without this, a manager rolling back a mis-convert leaves a
+  // half-broken pair: lead.status='NEW' but lead.convertedOpportunityId
+  // still set, which then trips every other route that asserts the
+  // pairing invariant.
+  if (
+    parsed.data.status !== undefined &&
+    parsed.data.status !== "CONVERTED" &&
+    lead.status === "CONVERTED"
+  ) {
+    data.convertedOpportunityId = null;
+  }
+
   const updated = await db.crmColdLead.update({
     where: { id },
     data,

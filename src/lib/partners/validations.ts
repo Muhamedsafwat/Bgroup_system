@@ -116,7 +116,8 @@ export const reviewContractSchema = z.object({
 
 export const requestInvoiceSchema = z.object({
   dealId: z.string(),
-  amount: z.number().min(0).optional(),
+  // audit v12 MEDIUM (MED-64): reject zero-value invoices at schema layer
+  amount: z.number().positive("Amount must be greater than zero").optional(),
 });
 
 export const reviewInvoiceSchema = z.object({

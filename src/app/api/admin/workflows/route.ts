@@ -5,6 +5,8 @@ import { db } from "@/lib/db";
 import { z } from "zod";
 import { ACTIONS, findAction } from "@/lib/workflows/actions";
 import { describeZodError } from "@/lib/zod-errors";
+// audit v12 MEDIUM (MED-54): use canonical isPlatformAdmin instead of local copy
+import { isPlatformAdmin } from "@/lib/crm/admin-gates";
 
 const stepSchema = z.object({
   kind: z.string().min(1),
@@ -28,14 +30,6 @@ const createSchema = z.object({
   steps: z.array(stepSchema).min(1),
   isActive: z.boolean().optional().default(true),
 });
-
-function isPlatformAdmin(session: Session | null): boolean {
-  if (!session?.user) return false;
-  return (
-    !!session.user.hrRoles?.includes("super_admin") ||
-    (!!session.user.modules?.includes("partners") && !session.user.partnerId)
-  );
-}
 
 export async function GET() {
   const session = (await auth()) as Session | null;

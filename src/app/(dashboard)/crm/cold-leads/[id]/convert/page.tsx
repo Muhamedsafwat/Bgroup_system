@@ -2,6 +2,7 @@ import { notFound, redirect } from "next/navigation";
 import { auth } from "@/lib/auth";
 import { db } from "@/lib/db";
 import { ConvertColdLeadClient } from "./client";
+import { isManagerOrAdmin } from "@/lib/crm/admin-gates"; // audit v12 MEDIUM (MED-6)
 
 /**
  * Cold-lead → opportunity conversion. Renders the OpportunityForm pre-seeded
@@ -33,11 +34,13 @@ export default async function ConvertColdLeadPage({
   });
   if (!lead) notFound();
 
-  // Only the assigned rep, a manager, or an admin can convert.
-  const role = session.user.crmRole;
-  const isManagerOrAdmin = role === "ADMIN" || role === "MANAGER";
-  if (lead.assignedToId !== session.user.crmProfileId && !isManagerOrAdmin) {
+  // audit v12 MEDIUM (MED-6): Use the shared gate so platform super_admin is included.
+  if (lead.assignedToId !== session.user.crmProfileId && !isManagerOrAdmin(session)) {
     redirect("/crm/cold-leads");
+  }
+  // Block conversion for statuses that are terminal / non-convertible.
+  if (lead.status === "ARCHIVED" || lead.status === "CONVERTED") {
+    redirect(`/crm/cold-leads/${id}`);
   }
   if (lead.convertedOpportunityId) {
     redirect(`/crm/opportunities/${lead.convertedOpportunityId}`);
