@@ -4,18 +4,13 @@ import { z } from "zod";
 import { auth } from "@/lib/auth";
 import { triggerWorkflow } from "@/lib/sequential-workflows/engine";
 import { describeZodError } from "@/lib/zod-errors";
+// audit v12 MEDIUM (MED-54): use canonical isPlatformAdmin instead of local copy
+import { isPlatformAdmin } from "@/lib/crm/admin-gates";
 
 const bodySchema = z.object({
   entityType: z.string().nullable().optional(),
   entityId: z.string().nullable().optional(),
 });
-
-function isPlatformAdmin(session: Session) {
-  return (
-    !!session.user.hrRoles?.includes("super_admin") ||
-    (!!session.user.modules?.includes("partners") && !session.user.partnerId)
-  );
-}
 
 export async function POST(req: Request, { params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;

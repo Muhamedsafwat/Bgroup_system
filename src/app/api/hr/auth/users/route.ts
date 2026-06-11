@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server'
 import { db as prisma } from '@/lib/db'
-import { requireAuth } from '@/lib/hr/auth-utils'
+import { requireAuth, type AuthUser } from '@/lib/hr/auth-utils'
 import { isHROrAdmin, isSuperAdmin } from '@/lib/hr/permissions'
 import { serializeUser } from '@/lib/hr/serializers'
 import { validatePassword } from '@/lib/hr/validations/auth'
@@ -141,6 +141,9 @@ export async function POST(request: Request) {
       }
     }
 
+    // audit v12 MEDIUM (MED-52): AuthUser carries no impersonation field today;
+    // actingAdminId will remain undefined until the HR JWT is extended to carry
+    // an actingAsUserId claim (see auth-utils.ts AuthUser interface).
     await createAuditLog({
       userId: authUser.id,
       action: 'create',
@@ -148,6 +151,7 @@ export async function POST(request: Request) {
       entityId: user.id,
       details: `Created user ${email}`,
       ipAddress: getClientIp(request),
+      actingAdminId: (authUser as AuthUser & { actingAsUserId?: string }).actingAsUserId,
     })
 
     const userData = await serializeUser(user.id)

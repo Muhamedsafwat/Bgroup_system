@@ -43,6 +43,12 @@ export async function GET(request: Request) {
     if (companyId) otWhere.employee = { companyId: companyId }
     const pendingOvertime = await prisma.hrOvertimeRequest.count({ where: otWhere })
 
+    // audit v12 LOW (LOW-9) ultra — use a real DB count for pending incidents so
+    // the Action Queue tile is never capped by the recentIncidents take:10 limit.
+    const incPendingWhere: Record<string, unknown> = { status: 'pending' }
+    if (companyId) incPendingWhere.employee = { companyId: companyId }
+    const pendingIncidents = await prisma.hrIncident.count({ where: incPendingWhere })
+
     // Monthly salary budget
     const salaryWhere: Record<string, unknown> = { month, year }
     if (companyId) salaryWhere.employee = { companyId: companyId }
@@ -101,6 +107,7 @@ export async function GET(request: Request) {
       active_employees: activeEmployees,
       attendance_rate: attendanceRate,
       pending_overtime: pendingOvertime,
+      pending_incidents: pendingIncidents,
       monthly_salary_budget: monthlySalaryBudget,
       incidents_this_month: incidentsThisMonth,
       bonuses_this_month: bonusesThisMonth,

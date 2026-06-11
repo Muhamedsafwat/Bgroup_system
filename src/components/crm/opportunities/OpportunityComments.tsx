@@ -85,7 +85,11 @@ function renderBody(body: string, mentions: Mention[]) {
     if (match.index > lastIndex) parts.push(body.slice(lastIndex, match.index));
     const m = byId.get(match[1]);
     if (m) parts.push({ mention: m });
-    else parts.push(match[0]);
+    // audit v12 HIGH-32: don't leak raw cuid when the mentioned id
+    // isn't in the comment's mentions array (deleted user, server-
+    // filtered cross-entity mention, etc.). Render an anonymized
+    // placeholder instead of the raw `@<cuid>` string.
+    else parts.push("@?");
     lastIndex = match.index + match[0].length;
   }
   if (lastIndex < body.length) parts.push(body.slice(lastIndex));
@@ -129,10 +133,11 @@ export function OpportunityComments({ oppId }: { oppId: string }) {
   // to splice the @<id> token back in once a pick is made.
   const pickerRange = useRef<{ start: number; end: number } | null>(null);
 
-  // Initial load + 30s poll. The bell SSE also invalidates when a
-  // mention lands, but this thread doesn't subscribe to the bus
-  // directly — a polling backstop keeps reading reps in sync with
-  // each other without a per-thread channel.
+  // audit v12 HIGH (HIGH-31): Initial load + 30s poll backstop. In addition,
+  // a dedicated SSE useEffect below subscribes to /api/events and triggers an
+  // immediate re-fetch when a data.invalidate event arrives for this opp's
+  // comments. This means Rep B sees Rep A's deletion within milliseconds
+  // instead of waiting up to 30 seconds for the next poll cycle.
   const [loadError, setLoadError] = useState<string | null>(null);
   useEffect(() => {
     let mounted = true;
@@ -166,6 +171,54 @@ export function OpportunityComments({ oppId }: { oppId: string }) {
       clearInterval(interval);
     };
   }, [oppId]);
+
+  // audit v12 HIGH (HIGH-31): Stable ref so the SSE handler always calls the
+  // latest load closure without needing to be listed as a dep (which would
+  // close and reopen the EventSource on every render).
+  const loadRef = useRef<(firstLoad: boolean) => Promise<void>>(async () => {});
+  useEffect(() => {
+    loadRef.current = async (firstLoad: boolean) => {
+      try {
+        const res = await fetch(`/api/crm/opportunities/${oppId}/comments`);
+        if (!res.ok) throw new Error("Failed to load comments");
+        const data = await res.json();
+        setComments(data.comments ?? []);
+        setLoadError(null);
+      } catch (e) {
+        if (firstLoad) {
+          setLoadError(e instanceof Error ? e.message : "Couldn't load comments");
+        }
+        console.warn("[OpportunityComments] load (SSE-triggered) failed:", e);
+      } finally {
+        setLoading(false);
+      }
+    };
+  }); // no deps — keep it current on every render
+
+  // audit v12 HIGH (HIGH-31): SSE listener — fires an immediate re-fetch
+  // when the server publishes a data.invalidate event for this opp's
+  // comments (e.g. after a DELETE). Ensures Rep B sees deletions in
+  // real-time rather than waiting up to 30 s for the poll cycle.
+  useEffect(() => {
+    const es = new EventSource("/api/events");
+    es.addEventListener("message", (e) => {
+      try {
+        const payload = JSON.parse(e.data);
+        if (
+          payload.type === "data.invalidate" &&
+          Array.isArray(payload.queryKeys) &&
+          payload.queryKeys.some(
+            (k: unknown[]) => Array.isArray(k) && k[0] === "comments" && k[1] === oppId
+          )
+        ) {
+          loadRef.current(false);
+        }
+      } catch {
+        // ignore malformed SSE frames
+      }
+    });
+    return () => es.close();
+  }, [oppId]); // oppId is stable; loadRef never changes identity
 
   // Scroll to bottom on new content.
   useEffect(() => {
@@ -359,13 +412,22 @@ export function OpportunityComments({ oppId }: { oppId: string }) {
         return;
       }
       // Replace the placeholder with the canonical server row.
-      setComments((prev) => prev.map((c) => (c.id === tempId ? data.comment : c)));
+      // audit v12 HIGH (HIGH-33): filter out any canonical row already inserted by a
+      // background poll before swapping the optimistic placeholder, preventing two React
+      // rows with the same id when a poll races the POST response.
+      setComments((prev) =>
+        prev
+          .filter((c) => c.id !== data.comment.id || c.id === tempId)
+          .map((c) => (c.id === tempId ? data.comment : c))
+      );
     } finally {
       setSubmitting(false);
     }
   }
 
   async function deleteComment(c: Comment) {
+    // audit v12 MEDIUM (MED-16): guard against deleting not-yet-confirmed optimistic rows
+    if (c.id.startsWith("optimistic-")) return;
     if (!confirm("Delete this comment?")) return;
     const prev = comments;
     setComments((cur) => cur.filter((x) => x.id !== c.id));
@@ -428,8 +490,9 @@ export function OpportunityComments({ oppId }: { oppId: string }) {
                   </span>
                   {c.isOwn && (
                     <button
+                      disabled={c.id.startsWith("optimistic-")}
                       onClick={() => deleteComment(c)}
-                      className="text-muted-foreground hover:text-destructive p-0.5"
+                      className="text-muted-foreground hover:text-destructive p-0.5 disabled:opacity-40 disabled:cursor-not-allowed"
                       aria-label="Delete comment"
                     >
                       <Trash2 className="h-3.5 w-3.5" />

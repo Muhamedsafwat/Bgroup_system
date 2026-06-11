@@ -119,7 +119,7 @@ export function SalesReportClient() {
           won: loss?.totals?.wonCount ?? 0,
           lost: loss?.totals?.lostCount ?? 0,
           ongoing: ongoing?.opportunities?.length ?? 0,
-          wonValue: 0,
+          wonValue: loss?.totals?.wonValueEGP ?? 0, // audit v12 HIGH (HIGH-39): read from API instead of hardcoding 0
         },
       });
     } finally {

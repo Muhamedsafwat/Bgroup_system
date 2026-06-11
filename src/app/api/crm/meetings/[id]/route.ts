@@ -98,7 +98,27 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
     recentActivity = JSON.parse(JSON.stringify(activity));
   }
 
-  return NextResponse.json({ meeting, recentNotes, recentActivity });
+  // SECURITY (audit v12 HIGH): apply the same PII mask that the list
+  // endpoint uses — contactPhone, contactName, customerNeed, notes, and
+  // deniedReason are only visible to the rep who scheduled the meeting or to
+  // managers/admins. An approver who did not schedule the meeting must not
+  // be able to read customer PII through this per-id endpoint.
+  const ownProfile = session.user.crmProfileId;
+  const safeMeeting =
+    meeting?.scheduledById === ownProfile || isManager(session)
+      ? meeting
+      : meeting
+        ? {
+            ...meeting,
+            contactPhone: null,
+            contactName: null,
+            customerNeed: null,
+            notes: null,
+            deniedReason: null,
+          }
+        : meeting;
+
+  return NextResponse.json({ meeting: safeMeeting, recentNotes, recentActivity });
 }
 
 export async function PATCH(req: Request, { params }: { params: Promise<{ id: string }> }) {
@@ -126,7 +146,16 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
     startAt.getTime() !== result.meeting.startAt.getTime() ||
     durationMinutes !== result.meeting.durationMinutes;
 
-  if (slotChanged && (data.status ?? result.meeting.status) !== "CANCELLED") {
+  // audit v12 MEDIUM (MED-28): also run the conflict check when a status-only
+  // PATCH reactivates a previously CANCELLED meeting, so two meetings can never
+  // share the same slot even when the slot itself did not change.
+  const newStatus = data.status ?? result.meeting.status;
+  const statusBecomesActive =
+    data.status !== undefined &&
+    data.status !== "CANCELLED" &&
+    result.meeting.status === "CANCELLED";
+
+  if ((slotChanged || statusBecomesActive) && newStatus !== "CANCELLED") {
     const conflict = await db.crmMeeting.findFirst({
       where: {
         scheduledById: result.meeting.scheduledById,

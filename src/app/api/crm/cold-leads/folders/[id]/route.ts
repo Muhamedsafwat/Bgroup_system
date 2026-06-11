@@ -97,17 +97,54 @@ export async function DELETE(
   const leadCount = existing._count.leads;
 
   if (deleteLeads) {
-    // Destructive path — wipe every lead in this folder, then the folder
-    // itself. `crmColdLead.deleteMany` cascades through child rows
-    // (dispositions) because their FK has onDelete:Cascade in the schema.
-    await db.$transaction(async (tx) => {
-      await tx.crmColdLead.deleteMany({ where: { importBatchId: id } });
-      await tx.crmColdLeadImport.delete({ where: { id } });
+    // audit v12 HIGH (HIGH-28): CONVERTED leads have a non-null
+    // `convertedOpportunityId` FK pointing at a live CrmOpportunity
+    // (`CrmOpportunity.convertedFromColdLead`). Hard-deleting them
+    // throws P2003 (Restrict) — or worse, leaves dangling references
+    // if the FK is later relaxed. Count converted leads first, skip
+    // them in the deleteMany, and refuse the folder delete if any
+    // were skipped (the operator can re-run after un-converting or
+    // accept the detached fate of those rows).
+    const convertedCount = await db.crmColdLead.count({
+      where: {
+        importBatchId: id,
+        convertedOpportunityId: { not: null },
+      },
     });
+    const deletableCount = leadCount - convertedCount;
+
+    await db.$transaction(async (tx) => {
+      await tx.crmColdLead.deleteMany({
+        where: {
+          importBatchId: id,
+          convertedOpportunityId: null,
+        },
+      });
+      // Only delete the folder when no converted leads remained — else
+      // the folder still has leads in it.
+      if (convertedCount === 0) {
+        await tx.crmColdLeadImport.delete({ where: { id } });
+      }
+    });
+
+    if (convertedCount > 0) {
+      return NextResponse.json(
+        {
+          ok: false,
+          mode: "cascade-partial",
+          leadsDeleted: deletableCount,
+          leadsSkipped: convertedCount,
+          message:
+            "Some leads in this folder are linked to opportunities and were not deleted. The folder was left intact with the converted leads still in it.",
+        },
+        { status: 409 },
+      );
+    }
+
     return NextResponse.json({
       ok: true,
       mode: "cascade",
-      leadsDeleted: leadCount,
+      leadsDeleted: deletableCount,
     });
   }
 

@@ -721,11 +721,12 @@ export function OpportunityForm({
                     className="inline-flex items-center gap-1 rounded-full bg-primary/10 px-2 py-0.5 text-xs"
                   >
                     {locale === "ar" ? p.nameAr : p.nameEn}
+                    {/* audit v12 MEDIUM (MED-71): a11y aria-label */}
                     <button
                       type="button"
                       onClick={() => toggleProduct(id)}
                       className="hover:text-destructive"
-                      aria-label="Remove"
+                      aria-label={locale === "ar" ? "حذف" : "Remove"}
                     >
                       <X className="h-3 w-3" />
                     </button>

@@ -49,10 +49,21 @@ export async function GET(req: NextRequest) {
 
   const url = req.nextUrl;
   const status = url.searchParams.get("status");
-  const industry = url.searchParams.get("industry");
-  const category = url.searchParams.get("category");
-  const location = url.searchParams.get("location");
-  const q = url.searchParams.get("q")?.trim();
+  // audit v12 MEDIUM (MED-7): cap free-text params to prevent DoS via
+  // arbitrarily large LIKE queries driving full-scan over up to 50 000 rows
+  // and an oversized in-memory Excel workbook.
+  const MAX_FREE_TEXT = 200;
+  const rawQ = url.searchParams.get("q")?.trim();
+  if (rawQ !== undefined && rawQ !== null && rawQ.length > MAX_FREE_TEXT) {
+    return NextResponse.json(
+      { error: "Query parameter too long (max 200 characters)" },
+      { status: 400 },
+    );
+  }
+  const industry = url.searchParams.get("industry")?.trim().slice(0, MAX_FREE_TEXT);
+  const category = url.searchParams.get("category")?.trim().slice(0, MAX_FREE_TEXT);
+  const location = url.searchParams.get("location")?.trim().slice(0, MAX_FREE_TEXT);
+  const q = rawQ;
   const assignedToId = url.searchParams.get("assignedToId");
 
   const where: Prisma.CrmColdLeadWhereInput = {

@@ -38,7 +38,7 @@ async function gate(session: Session, oppId: string) {
   if (!sUser) return null;
   const opp = await db.crmOpportunity.findFirst({
     where: { id: oppId, ...scopeOpportunityByRole(sUser), deletedAt: null },
-    select: { id: true, title: true, code: true },
+    select: { id: true, title: true, code: true, entityId: true },
   });
   return opp ? { sUser, opp } : null;
 }
@@ -121,7 +121,10 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     mentionIds.length === 0
       ? []
       : await db.crmUserProfile.findMany({
-          where: { id: { in: mentionIds }, active: true },
+          // audit v12 MEDIUM (MED-17) recheck: scope to the opportunity's
+          // entity so cross-entity profile ids in mentionIds are silently
+          // dropped and receive no notification, mention row, or chip.
+          where: { id: { in: mentionIds }, active: true, entityId: opp.entityId },
           select: { id: true, userId: true, fullName: true },
         });
 
@@ -141,12 +144,20 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
   // OpportunityComments.tsx so server-resolved preview names and
   // client-rendered chips agree on which `@<id>` substrings are
   // mention tokens.
-  const previewBody = parsed.data.body
-    .replace(/@([A-Za-z0-9_-]{8,})/g, (full, id) => {
-      const n = nameByProfileId.get(id);
-      return n ? `@${n}` : full;
-    })
-    .slice(0, 200);
+  // audit v12 LOW (LOW-4): use Unicode-aware truncation so surrogate pairs
+  // (e.g. emoji) are never split, and trim back to the last whitespace so a
+  // resolved @FullName mention chip is never left partially included.
+  const previewBodyRaw = parsed.data.body.replace(/@([A-Za-z0-9_-]{8,})/g, (full, id) => {
+    const n = nameByProfileId.get(id);
+    return n ? `@${n}` : full;
+  });
+  const previewBodyCapped = [...previewBodyRaw].slice(0, 200).join("");
+  const previewBody =
+    previewBodyCapped.length < [...previewBodyRaw].length &&
+    previewBodyCapped.length > 0 &&
+    !/\s$/.test(previewBodyCapped)
+      ? previewBodyCapped.replace(/\S+$/, "").trimEnd() || previewBodyCapped
+      : previewBodyCapped;
 
   const comment = await db.$transaction(async (tx) => {
     const created = await tx.crmOpportunityComment.create({
@@ -208,6 +219,15 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
       },
     });
   }
+
+  // audit v12 MEDIUM (MED-15): publish data.invalidate so the posting
+  // user's other open tabs re-fetch the comments list immediately
+  // instead of waiting for the 30s polling interval.
+  publish({
+    type: "data.invalidate",
+    userId: sUser.id,
+    payload: { queryKeys: [["comments", opp.id]] },
+  });
 
   return NextResponse.json({
     ok: true,

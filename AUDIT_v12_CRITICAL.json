@@ -1,0 +1,172 @@
+[
+  {
+    "rank": 1,
+    "severity": "CRITICAL",
+    "domain": "opportunities",
+    "file": "src/app/api/crm/opportunities/transfer/route.ts:37-127",
+    "summary": "Bulk transfer has no scope gate and audit fallback attributes the move to the TARGET rep when actorId is null (super_admin).",
+    "scenario": "Super_admin with crmProfileId=null POSTs opportunityIds across entities; findMany has no scope filter, every ownerId is rewritten, and CrmActivityLog actorId falls back to toRepId (the receiving rep) — cross-tenant ownership writes with corrupted audit attribution.",
+    "recommended_fix": "Apply scopeOpportunityByRole/per-row entity check inside the tx; replace actorId fallback with `actorId: null` and stamp actingAdminId from the real super_admin session id; record the original ownerId on each CrmActivityLog row.",
+    "regression_of_v11_fix": false
+  },
+  {
+    "rank": 2,
+    "severity": "CRITICAL",
+    "domain": "opportunities",
+    "file": "src/app/api/crm/opportunities/[id]/trigger-workflow/route.ts:66-86",
+    "summary": "v11 'scope check added' is a no-op for MANAGER because scopeOpportunityByRole returns {} for MANAGER — any manager can trigger workflows on any opp and cascade notes+attachments into a downstream run.",
+    "scenario": "MANAGER hits trigger-workflow with a foreign opp id; findFirst spreads {} scope so the row resolves, then 132-167 mirrors every CrmNote/CrmAttachment into TaskComment/TaskAttachment on a workflow run a downstream team can read.",
+    "recommended_fix": "Pin the trigger-workflow findFirst to a per-call entity/scope clause derived from the opp (not the role rbac map), or AND an `entityId: session.user.crmEntityId` filter for MANAGER unless explicitly cross-entity.",
+    "regression_of_v11_fix": true
+  },
+  {
+    "rank": 3,
+    "severity": "CRITICAL",
+    "domain": "pipeline",
+    "file": "src/app/api/crm/pipeline/route.ts:237-272",
+    "summary": "Drag-drop required-fields gate is a 6-case switch; the other 8 admin-configurable required keys silently bypass the gate.",
+    "scenario": "Admin marks primaryContactId+description required on NEW; rep drags opp NEW→CONTACTED with both empty; the switch matches no case, `missing` stays [], move succeeds.",
+    "recommended_fix": "Replace the switch with the generic `(opp as Record<string, unknown>)[field]` null/empty check used by actions.ts and bulk/route.ts; share one helper across all three surfaces.",
+    "regression_of_v11_fix": true
+  },
+  {
+    "rank": 4,
+    "severity": "CRITICAL",
+    "domain": "workflows",
+    "file": "src/app/(dashboard)/crm/admin/workflows/client.tsx:579-595 + actions.ts:812",
+    "summary": "v11 added stage/priority/estimatedValueEGP/etc. to ClauseBuilder, but fire payloads never include these fields; engine reads payload only — every opp-field condition silently never matches.",
+    "scenario": "Admin builds opp.stage.changed + priority=HOT rule; rep moves HOT opp; fireWorkflow payload omits priority; evalPredicate reads undefined; conditionOk=false; no run row, no notification, no error — lastFiredAt stays blank, admin assumes 'no events match yet.'",
+    "recommended_fix": "Enrich fireWorkflow callsites to spread the full opp/cold-lead row (stage, priority, estimatedValueEGP, weightedValueEGP, probabilityPct, ownerId, entityId) into the payload, OR have the engine fetch the entity by entityType+entityId before evalPredicate.",
+    "regression_of_v11_fix": true
+  },
+  {
+    "rank": 5,
+    "severity": "CRITICAL",
+    "domain": "alert-rules",
+    "file": "src/app/(dashboard)/crm/admin/alert-rules/client.tsx:73-92 vs src/app/api/cron/alert-rules/route.ts:54-90",
+    "summary": "UI exposes 'amount'/'ageDays'/'attempts' fields that don't exist on the entities cron loads; every rule using these reads undefined and never fires.",
+    "scenario": "Admin saves rule 'Value (EGP) > 50000' (key=amount); cron loads opps selecting estimatedValueEGP; readPath(payload,'amount')→undefined; gt returns false; rule silently dead.",
+    "recommended_fix": "Rename UI field keys to match Prisma column names (estimatedValueEGP, etc.), compute ageDays in loadEntities, drop 'attempts' or add a real column. Add a save-time validator that fails any rule whose field paths aren't resolvable for its scope.",
+    "regression_of_v11_fix": false
+  },
+  {
+    "rank": 6,
+    "severity": "CRITICAL",
+    "domain": "alert-rules",
+    "file": "src/lib/crm/workflows/engine.ts:150-158",
+    "summary": "Numeric operators require typeof==='number' on both sides, but Prisma Decimal columns are objects — every monetary clause silently evaluates false.",
+    "scenario": "Rule {field:'estimatedValueEGP', op:'gt', value:50000}; cron loads Decimal; typeof===object; gt false for every opp.",
+    "recommended_fix": "In loadEntities, coerce Decimal columns via Number(x) before passing into evalPredicate; or relax the type guard to accept Decimal/string-numeric via Number() with isFinite check.",
+    "regression_of_v11_fix": true
+  },
+  {
+    "rank": 7,
+    "severity": "CRITICAL",
+    "domain": "hr-bonuses",
+    "file": "src/app/api/hr/bonuses/[id]/route.ts:118-123,194-199",
+    "summary": "PATCH/DELETE status guard checks status==='approved' but bonus enum is pending/applied — guard never fires post-approval.",
+    "scenario": "Bonus moves to 'applied' via approve; PATCH/DELETE comparator string-mismatches and update/delete proceeds on an already-applied bonus.",
+    "recommended_fix": "Change comparison to `existing.status === 'applied'` (or `!== 'pending'`); add positive whitelist of permitted edits during pending and tests for every status value.",
+    "regression_of_v11_fix": true
+  },
+  {
+    "rank": 8,
+    "severity": "CRITICAL",
+    "domain": "hr-incidents",
+    "file": "src/app/api/hr/incidents/[id]/route.ts:120-159",
+    "summary": "Incident PATCH lets HR swap violation_rule / incident_date without recomputing actionTaken/deductionPct/deductionAmount/offenseNumber and without re-checking payroll-period lock.",
+    "scenario": "Create incident for late_attendance (verbal_warning,0%); PATCH violation_rule to theft rule — row says theft but penalty stays 0; or PATCH incident_date into a locked period, no re-check.",
+    "recommended_fix": "On PATCH, if violation_rule or incident_date change, re-derive offenseNumber/action/deduction via the same path used by POST, and re-run the payroll-period lock check; or refuse to PATCH these two fields and require delete+recreate.",
+    "regression_of_v11_fix": true
+  },
+  {
+    "rank": 9,
+    "severity": "CRITICAL",
+    "domain": "hr-payroll",
+    "file": "src/app/api/hr/payroll/calculate/route.ts:8-44",
+    "summary": "v11 canAccessCompany rollout missed payroll/calculate POST — accountant in Company A can recalc Company B.",
+    "scenario": "POST {company_id: companyB_id} with role=accountant; canManagePayroll passes globally; no company-scope guard; calculateCompanyPayroll runs on the wrong tenant.",
+    "recommended_fix": "Add `if (!canAccessCompany(authUser, company_id)) return 403` immediately after canManagePayroll.",
+    "regression_of_v11_fix": false
+  },
+  {
+    "rank": 10,
+    "severity": "CRITICAL",
+    "domain": "hr-payroll",
+    "file": "src/app/api/hr/payroll/salaries/[id]/recalculate/route.ts:7-89",
+    "summary": "Per-row salary recalc has no canAccessCompany — any accountant can rewrite any open salary cross-tenant.",
+    "scenario": "POST /salaries/<companyB_id>/recalculate; status='open' passes; calculateEmployeeSalary + update writes Company B figures.",
+    "recommended_fix": "Load salary including employee.companyId; `if (!canAccessCompany(authUser, salary.employee.companyId)) return 403`.",
+    "regression_of_v11_fix": false
+  },
+  {
+    "rank": 11,
+    "severity": "CRITICAL",
+    "domain": "hr-bonuses",
+    "file": "src/app/api/hr/bonuses/route.ts:71-92",
+    "summary": "GET scope filter overwritten by ?company= — spread+overwrite defeats the v11 in-clause scope.",
+    "scenario": "Accountant of Company A hits ?company=companyB_id; the `where.employee.companyId` `{in:[...]}` is replaced by the literal companyB_id.",
+    "recommended_fix": "Build where.employee as a merge: keep the `in` filter, and AND the optional ?company= filter only if the value is inside authUser.companies.",
+    "regression_of_v11_fix": true
+  },
+  {
+    "rank": 12,
+    "severity": "CRITICAL",
+    "domain": "meetings",
+    "file": "src/app/api/crm/meetings/[id]/route.ts:9-18,104-191",
+    "summary": "Meeting PATCH accepts arbitrary status and bypasses approve/deny/complete state machine — rep can self-APPROVE or jump to DONE.",
+    "scenario": "REP PATCHes {status:'APPROVED'} on own meeting; loadOrError allows scheduler; patchSchema accepts; update writes APPROVED with approvedById=null.",
+    "recommended_fix": "Drop status from patchSchema (or whitelist only 'CANCELLED'); funnel every transition through /approve, /deny, /complete endpoints that enforce role + state.",
+    "regression_of_v11_fix": true
+  },
+  {
+    "rank": 13,
+    "severity": "CRITICAL",
+    "domain": "attendance",
+    "file": "src/app/api/hr/attendance/logs/[id]/route.ts:46-87",
+    "summary": "Attendance log PATCH bypasses v11's cross-company gate, hour clamp, and payroll-lock check — all applied only to POST.",
+    "scenario": "PATCH a Company B log with hours_worked=999, overtime=999, date in a PAID period; isHROrAdmin passes; raw parseFloat writes.",
+    "recommended_fix": "Port the three POST guards verbatim into PATCH: canAccessCompany on the existing log's employee.companyId, period-lock check on data.date or existing.date, Math.min(24,Math.max(0,...)) clamp.",
+    "regression_of_v11_fix": true
+  },
+  {
+    "rank": 14,
+    "severity": "CRITICAL",
+    "domain": "attendance",
+    "file": "src/app/api/hr/attendance/checkout/route.ts:17-28",
+    "summary": "Overnight checkout still keys on today's midnight, so the night-shift row from yesterday is never found — v11 'fix' is dead code.",
+    "scenario": "Check-in 22:30 on D-1 → row date=D-1; check-out 06:15 on D → findUnique on date=D returns null → 400 'no check-in record.'",
+    "recommended_fix": "Either look up the most recent unclosed log for the employee (status='present' AND checkOutTime IS NULL) regardless of date, or fall back to yesterday's row when today is empty.",
+    "regression_of_v11_fix": true
+  },
+  {
+    "rank": 15,
+    "severity": "CRITICAL",
+    "domain": "admin-auth",
+    "file": "src/lib/crm/admin-gates.ts:25-31 + admin/users/[id]/* routes",
+    "summary": "Shared isPlatformAdmin still admits partners-admin — only impersonate POST was tightened, so partners-admin can reset super_admin password, grant themselves modules, etc.",
+    "scenario": "User with modules=['partners'], partnerId=null POSTs /api/admin/users/<superAdmin>/reset-password; isPlatformAdmin OR-branch passes; sets a new password; logs in as super_admin.",
+    "recommended_fix": "Tighten the shared helper to `hrRoles?.includes('super_admin')` only; remove every inline duplicate (admin/board/users/[id]/modules/reset-password/services-catalogue/workflows/sequential-workflows/etc.) and import the helper.",
+    "regression_of_v11_fix": true
+  },
+  {
+    "rank": 16,
+    "severity": "CRITICAL",
+    "domain": "cold-leads",
+    "file": "src/app/api/crm/cold-leads/[id]/convert/route.ts:88-186",
+    "summary": "Convert TOCTOU loser still orphans CrmCompany and CrmContact rows — only the opportunity is soft-archived.",
+    "scenario": "Two concurrent converts on lead L; both find no company → both create; both create contact; both create opp; loser's updateMany count=0; only opp is soft-deleted; orphan company+contact persist.",
+    "recommended_fix": "Wrap company find-or-create + contact create + createOpportunity inside the same $transaction; on count=0 race-loser branch, also delete the company (if it was just created by this tx) and the contact.",
+    "regression_of_v11_fix": false
+  },
+  {
+    "rank": 17,
+    "severity": "CRITICAL",
+    "domain": "partners",
+    "file": "src/app/api/partners/deals/[id]/route.ts:73-118",
+    "summary": "Re-WON commission upsert overwrites already-PAID commission with new amount but keeps status=PAID, destroying audit trail.",
+    "scenario": "Deal WON→LOST→WON (value 10x); existing commission row {amount:100, status:PAID} is upserted to {amount:1000, status:PAID} — no second row, no history of original $100 payout.",
+    "recommended_fix": "On WON re-entry, if commission exists with status APPROVED/PAID, leave it intact and create a new commission delta row (or refuse the rate/value change without admin override); always reset status to PENDING when amount changes.",
+    "regression_of_v11_fix": true
+  }
+]

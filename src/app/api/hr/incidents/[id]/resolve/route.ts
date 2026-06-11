@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server'
 import { db as prisma } from '@/lib/db'
 import { requireAuth } from '@/lib/hr/auth-utils'
-import { isHROrAdmin } from '@/lib/hr/permissions'
+import { isHROrAdmin, canAccessCompany } from '@/lib/hr/permissions'
 import { resolveIncidentSchema } from '@/lib/hr/validations'
 
 const ACTION_DISPLAY: Record<string, string> = {
@@ -91,9 +91,14 @@ export async function POST(
     }
     const data = parsed.data
 
-    const existing = await prisma.hrIncident.findUnique({ where: { id: pk } })
+    const existing = await prisma.hrIncident.findUnique({ where: { id: pk }, include: { employee: true } })
     if (!existing) {
       return NextResponse.json({ detail: 'Not found.' }, { status: 404 })
+    }
+
+    // audit v12 HIGH (HIGH-53) recheck — enforce company-scope gate before resolving
+    if (!canAccessCompany(authUser, existing.employee.companyId)) {
+      return NextResponse.json({ detail: 'Permission denied.' }, { status: 403 })
     }
 
     if (existing.status !== 'pending') {

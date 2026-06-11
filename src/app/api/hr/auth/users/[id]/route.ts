@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server'
 import { db as prisma } from '@/lib/db'
-import { requireAuth } from '@/lib/hr/auth-utils'
+import { requireAuth, type AuthUser } from '@/lib/hr/auth-utils'
 import { isSuperAdmin } from '@/lib/hr/permissions'
 import { serializeUser } from '@/lib/hr/serializers'
 import { createAuditLog, getClientIp } from '@/lib/hr/audit'
@@ -122,6 +122,9 @@ export async function PATCH(
 
     const userData = await serializeUser(pk)
 
+    // audit v12 MEDIUM (MED-52): AuthUser carries no impersonation field today;
+    // actingAdminId will remain undefined until the HR JWT is extended to carry
+    // an actingAsUserId claim (see auth-utils.ts AuthUser interface).
     await createAuditLog({
       userId: authUser.id,
       action: 'update',
@@ -129,6 +132,7 @@ export async function PATCH(
       entityId: pk,
       details: `Updated user #${pk}`,
       ipAddress: getClientIp(request),
+      actingAdminId: (authUser as AuthUser & { actingAsUserId?: string }).actingAsUserId,
     })
 
     return NextResponse.json(userData)
@@ -167,6 +171,7 @@ export async function DELETE(
     await prisma.hrUserProfile.deleteMany({ where: { userId: pk } })
     await prisma.user.delete({ where: { id: pk } })
 
+    // audit v12 MEDIUM (MED-52): pass actingAdminId when impersonation context exists.
     await createAuditLog({
       userId: authUser.id,
       action: 'delete',
@@ -174,6 +179,7 @@ export async function DELETE(
       entityId: pk,
       details: `Deleted user #${pk}`,
       ipAddress: getClientIp(request),
+      actingAdminId: (authUser as AuthUser & { actingAsUserId?: string }).actingAsUserId,
     })
 
     return NextResponse.json({ detail: 'User deleted successfully.' }, { status: 200 })

@@ -6,6 +6,8 @@ import { db } from "@/lib/db";
 import { CrmRole } from "@/generated/prisma";
 import { uniqueViolationMessage } from "@/lib/prisma-errors";
 import { describeZodError, describeError } from "@/lib/zod-errors";
+// audit v12 MEDIUM (MED-54): use canonical isPlatformAdmin instead of local copy
+import { isPlatformAdmin } from "@/lib/crm/admin-gates";
 
 /**
  * POST /api/admin/users/[id]/modules
@@ -27,13 +29,6 @@ import { describeZodError, describeError } from "@/lib/zod-errors";
  * are flipped to true and the corresponding profile is created in one
  * transaction so partial-grant states aren't possible.
  */
-function isPlatformAdmin(session: Session | null) {
-  if (!session?.user) return false;
-  return (
-    !!session.user.hrRoles?.includes("super_admin") ||
-    (!!session.user.modules?.includes("partners") && !session.user.partnerId)
-  );
-}
 
 const hrBlock = z.object({
   employeeId: z.string().trim().min(1).max(40),

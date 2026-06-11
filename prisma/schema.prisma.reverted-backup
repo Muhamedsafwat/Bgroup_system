@@ -1,0 +1,4039 @@
+generator client {
+  provider = "prisma-client-js"
+  output   = "../src/generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+// ============================================================================
+// SHARED: NextAuth Models
+// ============================================================================
+
+model Account {
+  id                String  @id @default(cuid())
+  userId            String
+  type              String
+  provider          String
+  providerAccountId String
+  refresh_token     String? @db.Text
+  access_token      String? @db.Text
+  expires_at        Int?
+  token_type        String?
+  scope             String?
+  id_token          String? @db.Text
+  session_state     String?
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([provider, providerAccountId])
+  @@index([userId])
+  @@map("accounts")
+}
+
+model Session {
+  id           String   @id @default(cuid())
+  sessionToken String   @unique
+  userId       String
+  expires      DateTime
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@map("sessions")
+}
+
+model VerificationToken {
+  identifier String
+  token      String   @unique
+  expires    DateTime
+
+  @@unique([identifier, token])
+  @@map("verification_tokens")
+}
+
+// ============================================================================
+// SHARED: Unified User
+// ============================================================================
+
+model User {
+  id            String    @id @default(cuid())
+  email         String    @unique
+  emailVerified DateTime?
+  name          String?
+  image         String?
+  password      String?
+
+  // Module access flags
+  hrAccess       Boolean @default(false)
+  crmAccess      Boolean @default(false)
+  partnersAccess Boolean @default(false)
+
+  // NextAuth relations
+  accounts Account[]
+  sessions Session[]
+
+  // Module profile links
+  hrProfile      HrUserProfile?
+  hrEmployee     HrEmployee?
+  crmProfile     CrmUserProfile?
+  partnerProfile PartnerProfile?
+
+  // Cross-cutting
+  savedViews     SavedView[]
+  mfaCredentials UserMfaCredential[]
+  recoveryCodes  UserRecoveryCode[]
+  mfaEnabled     Boolean             @default(false)
+  /// Forces the user to change their password the next time they sign in.
+  /// Set to true when an admin creates an account or resets a password —
+  /// the initial password is temporary and the user must replace it before
+  /// they can do anything else. Cleared by /api/account/change-password
+  /// the moment the user picks a new one.
+  mustChangePassword Boolean        @default(false)
+  onboardedAt    DateTime?
+  bookingPage    BookingPage?
+  assignedTasks  Task[]              @relation("TaskAssignee")
+  createdTasks   Task[]              @relation("TaskCreator")
+  taskComments   TaskComment[]       @relation("TaskCommentAuthor")
+  taskAttachments TaskAttachment[]   @relation("TaskAttachmentUploader")
+  taskWatching   TaskWatcher[]       @relation("TaskWatcher")
+  taskTimeEntries TaskTimeEntry[]    @relation("TaskTimeEntry")
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@map("users")
+}
+
+// ============================================================================
+// CROSS-CUTTING — MFA / 2FA (E7)
+// ============================================================================
+
+enum MfaCredentialKind {
+  TOTP
+  WEBAUTHN
+}
+
+model UserMfaCredential {
+  id         String            @id @default(cuid())
+  userId     String
+  user       User              @relation(fields: [userId], references: [id], onDelete: Cascade)
+  kind       MfaCredentialKind
+  /// For TOTP: base32-encoded secret. For WebAuthn (future): the credential ID.
+  secret     String
+  label      String            @default("")
+  metadata   Json?
+  verified   Boolean           @default(false)
+  lastUsedAt DateTime?
+  createdAt  DateTime          @default(now())
+
+  @@index([userId])
+  @@map("user_mfa_credentials")
+}
+
+model UserRecoveryCode {
+  id        String    @id @default(cuid())
+  userId    String
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  /// bcrypt hash of the recovery code; never stored in plaintext.
+  codeHash  String
+  used      Boolean   @default(false)
+  usedAt    DateTime?
+  createdAt DateTime  @default(now())
+
+  @@index([userId])
+  @@map("user_recovery_codes")
+}
+
+// ============================================================================
+// CROSS-CUTTING — Workflow engine (E3)
+// ============================================================================
+
+enum WorkflowTriggerKind {
+  ENTITY_CREATED
+  ENTITY_UPDATED
+  FIELD_CHANGED
+  TIME_BASED
+  WEBHOOK
+  MANUAL
+}
+
+enum WorkflowRunStatus {
+  PENDING
+  RUNNING
+  SUCCEEDED
+  FAILED
+  CANCELLED
+}
+
+model Workflow {
+  id          String              @id @default(cuid())
+  /// Owning module — used to scope visibility in the admin builder.
+  module      String
+  name        String
+  description String              @default("")
+  isActive    Boolean             @default(true)
+  /// Type of trigger.
+  triggerKind WorkflowTriggerKind
+  /// Trigger config: { entity?: string, field?: string, fromValue?, toValue?, cron?: string, ... }
+  triggerConfig Json
+  /// Sequence of actions to execute. Each step is { kind: string, config: object, branchOnError?: "continue" | "stop" }.
+  steps       Json
+  createdById String?
+  createdAt   DateTime            @default(now())
+  updatedAt   DateTime            @updatedAt
+
+  runs WorkflowRun[]
+
+  @@index([module])
+  @@index([triggerKind, isActive])
+  @@map("workflows")
+}
+
+model WorkflowRun {
+  id         String            @id @default(cuid())
+  workflowId String
+  workflow   Workflow          @relation(fields: [workflowId], references: [id], onDelete: Cascade)
+  status     WorkflowRunStatus @default(PENDING)
+  /// Trigger payload that started this run (the changed entity, etc.).
+  input      Json
+  /// Aggregated step results.
+  output     Json?
+  error      String?
+  startedAt  DateTime          @default(now())
+  finishedAt DateTime?
+
+  @@index([workflowId])
+  @@index([status])
+  @@map("workflow_runs")
+}
+
+// ============================================================================
+// CROSS-CUTTING — Email integration (E1)
+// ============================================================================
+
+enum EmailProvider {
+  GMAIL
+  MICROSOFT_GRAPH
+  RESEND
+}
+
+enum EmailDirection {
+  INBOUND
+  OUTBOUND
+}
+
+/// Stored OAuth tokens for a user's connected mail account.
+model EmailAccount {
+  id           String        @id @default(cuid())
+  userId       String        @unique
+  provider     EmailProvider
+  email        String
+  /// Encrypted in production (TODO: KMS); plaintext for dev.
+  accessToken  String
+  refreshToken String?
+  expiresAt    DateTime?
+  lastSyncAt   DateTime?
+  createdAt    DateTime      @default(now())
+  updatedAt    DateTime      @updatedAt
+
+  threads CrmEmailThread[]
+
+  @@map("email_accounts")
+}
+
+model CrmEmailThread {
+  id             String         @id @default(cuid())
+  accountId      String
+  account        EmailAccount   @relation(fields: [accountId], references: [id], onDelete: Cascade)
+  /// Provider-side conversation/thread id.
+  externalId     String
+  subject        String
+  /// Linked CRM entities — one thread can attach to multiple opportunities/contacts.
+  opportunityIds String[]
+  contactIds     String[]
+  participants   String[]
+  lastMessageAt  DateTime
+  createdAt      DateTime       @default(now())
+
+  messages CrmEmailMessage[]
+
+  @@unique([accountId, externalId])
+  @@index([accountId])
+  @@map("crm_email_threads")
+}
+
+model CrmEmailMessage {
+  id         String         @id @default(cuid())
+  threadId   String
+  thread     CrmEmailThread @relation(fields: [threadId], references: [id], onDelete: Cascade)
+  externalId String
+  direction  EmailDirection
+  fromEmail  String
+  toEmails   String[]
+  ccEmails   String[]
+  bodyText   String         @default("")
+  bodyHtml   String         @default("")
+  sentAt     DateTime
+  createdAt  DateTime       @default(now())
+
+  @@unique([threadId, externalId])
+  @@index([threadId])
+  @@map("crm_email_messages")
+}
+
+model EmailTemplate {
+  id          String   @id @default(cuid())
+  /// "crm" or future modules.
+  scope       String
+  name        String
+  subject     String
+  bodyHtml    String
+  /// Variables the template expects (e.g. ["contact.firstName", "deal.value"])
+  variables   String[]
+  createdById String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@index([scope])
+  @@map("email_templates")
+}
+
+// ============================================================================
+// CROSS-CUTTING — Calendar integration (E2)
+// ============================================================================
+
+enum CalendarProvider {
+  GOOGLE
+  MICROSOFT_GRAPH
+}
+
+model CalendarAccount {
+  id           String           @id @default(cuid())
+  userId       String           @unique
+  provider     CalendarProvider
+  email        String
+  accessToken  String
+  refreshToken String?
+  expiresAt    DateTime?
+  lastSyncAt   DateTime?
+  createdAt    DateTime         @default(now())
+  updatedAt    DateTime         @updatedAt
+
+  events CalendarEvent[]
+
+  @@map("calendar_accounts")
+}
+
+model CalendarEvent {
+  id            String          @id @default(cuid())
+  accountId     String
+  account       CalendarAccount @relation(fields: [accountId], references: [id], onDelete: Cascade)
+  externalId    String
+  title         String
+  startAt       DateTime
+  endAt         DateTime
+  attendees     String[]
+  location      String?
+  /// Optional links to CRM entities the event was attached to.
+  opportunityId String?
+  contactId     String?
+  createdAt     DateTime        @default(now())
+  updatedAt     DateTime        @updatedAt
+
+  @@unique([accountId, externalId])
+  @@index([accountId])
+  @@index([startAt])
+  @@map("calendar_events")
+}
+
+/// Public booking page handle, e.g. "ibrahim" → /book/ibrahim
+model BookingPage {
+  id          String   @id @default(cuid())
+  userId      String   @unique
+  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  handle      String   @unique
+  title       String
+  description String   @default("")
+  /// Default meeting length in minutes.
+  durationMin Int      @default(30)
+  /// Buffer time (minutes) before/after each meeting.
+  bufferMin   Int      @default(0)
+  isActive    Boolean  @default(true)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@map("booking_pages")
+}
+
+// ============================================================================
+// CROSS-CUTTING — Reports & analytics (E8)
+// ============================================================================
+
+model SavedReport {
+  id          String   @id @default(cuid())
+  ownerId     String
+  /// "hr", "crm", "partners", "global".
+  module      String
+  name        String
+  description String   @default("")
+  /// Definition: { source: string, filters: object, groupBy: string[], metric: string, chart: "bar"|"line"|"pie"|"table" }
+  definition  Json
+  isShared    Boolean  @default(false)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  schedules ReportSchedule[]
+
+  @@index([ownerId, module])
+  @@map("saved_reports")
+}
+
+model ReportSchedule {
+  id           String      @id @default(cuid())
+  reportId     String
+  report       SavedReport @relation(fields: [reportId], references: [id], onDelete: Cascade)
+  /// Cron expression in UTC (e.g. "0 8 * * 1" — Monday 08:00).
+  cron         String
+  /// Comma-separated email recipients.
+  recipients   String[]
+  isActive     Boolean     @default(true)
+  lastRunAt    DateTime?
+  nextRunAt    DateTime?
+  createdAt    DateTime    @default(now())
+
+  @@index([reportId])
+  @@index([nextRunAt, isActive])
+  @@map("report_schedules")
+}
+
+// ============================================================================
+// CROSS-CUTTING — Saved table views (D3)
+// ============================================================================
+
+model SavedView {
+  id        String   @id @default(cuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  /// e.g. "crm:opportunities", "hr:employees", "partners:deals"
+  scope     String
+  name      String
+  /// JSON-serialized filter object — shape is owned by each consuming page.
+  filters   Json
+  /// JSON-serialized sort: { field: string; direction: "asc" | "desc" }
+  sort      Json?
+  /// Optional column visibility overrides.
+  columns   Json?
+  isShared  Boolean  @default(false)
+  isDefault Boolean  @default(false)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([userId, scope])
+  @@map("saved_views")
+}
+
+// ============================================================================
+// CROSS-CUTTING — Tasks (unified to-dos across HR / CRM / Partners)
+// ============================================================================
+
+enum TaskStatus {
+  TODO
+  IN_PROGRESS
+  DONE
+  CANCELLED
+}
+
+enum TaskPriority {
+  LOW
+  MEDIUM
+  HIGH
+  URGENT
+}
+
+enum TaskType {
+  GENERAL
+  CALL
+  EMAIL
+  MEETING
+  FOLLOW_UP
+  ADMIN
+  ONBOARDING
+  REVIEW
+  APPROVAL
+}
+
+/// Polymorphic entity reference. `entityType` names the source domain;
+/// `entityId` is the row id in that domain. Kept as strings (not FKs) so a
+/// Task can attach to anything in CRM / HR / Partners without fanning the
+/// schema. Resolution is performed at read-time by the API.
+enum TaskEntityType {
+  CRM_OPPORTUNITY
+  CRM_COMPANY
+  CRM_CONTACT
+  CRM_CALL
+  HR_EMPLOYEE
+  HR_LEAVE_REQUEST
+  HR_OVERTIME_REQUEST
+  HR_INCIDENT
+  HR_REVIEW
+  HR_GOAL
+  PARTNER_LEAD
+  PARTNER_CLIENT
+  PARTNER_DEAL
+  PARTNER_REGISTRATION
+}
+
+model Task {
+  id          String       @id @default(cuid())
+  /// Module the task belongs to — drives sidebar scoping and permission checks.
+  module      String
+
+  title       String
+  description String       @default("")
+  type        TaskType     @default(GENERAL)
+  status      TaskStatus   @default(TODO)
+  priority    TaskPriority @default(MEDIUM)
+
+  assigneeId  String
+  assignee    User         @relation("TaskAssignee", fields: [assigneeId], references: [id], onDelete: Cascade)
+
+  createdById String
+  createdBy   User         @relation("TaskCreator", fields: [createdById], references: [id], onDelete: Cascade)
+
+  /// Optional polymorphic link — what entity this task relates to.
+  entityType  TaskEntityType?
+  entityId    String?
+
+  dueAt       DateTime?
+  remindAt    DateTime?
+
+  completedAt   DateTime?
+  completedById String?
+
+  /// Optional parent task (sub-tasks / checklist items).
+  parentId String?
+  parent   Task?    @relation("TaskSubtasks", fields: [parentId], references: [id], onDelete: Cascade)
+  children Task[]   @relation("TaskSubtasks")
+
+  /// Recurrence rule. Shape: { kind: "after_complete", intervalDays: number, until?: ISO }
+  /// — when the task is marked DONE, a fresh instance is spawned `intervalDays`
+  /// after completion. `until` (ISO date string) caps the recurrence.
+  recurrence Json?
+  /// When this task was spawned by a recurring template, points back to the
+  /// original template task. Cleared on the template itself.
+  recurrenceTemplateId String?
+
+  /// Optional workflow run that spawned this task.
+  workflowRunId String?
+
+  comments     TaskComment[]
+  watchers     TaskWatcher[]
+  timeEntries  TaskTimeEntry[]
+  attachments  TaskAttachment[]
+  dependsOn    TaskDependency[] @relation("TaskDependent")
+  blocksOthers TaskDependency[] @relation("TaskBlocker")
+  sequentialRunStep SequentialWorkflowRunStep?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([assigneeId, status, dueAt])
+  @@index([createdById])
+  @@index([entityType, entityId])
+  @@index([module, status])
+  @@index([parentId])
+  @@index([recurrenceTemplateId])
+  @@map("tasks")
+}
+
+model OnboardingTemplate {
+  id          String                    @id @default(cuid())
+  name        String                    @unique
+  description String                    @default("")
+  /// Target role/department this template fits — free text for now.
+  scope       String                    @default("general")
+  isActive    Boolean                   @default(true)
+  /// If true, used when no explicit templateId is passed.
+  isDefault   Boolean                   @default(false)
+  items       OnboardingTemplateItem[]
+  createdById String?
+  createdAt   DateTime                  @default(now())
+  updatedAt   DateTime                  @updatedAt
+
+  @@map("onboarding_templates")
+}
+
+model OnboardingTemplateItem {
+  id          String             @id @default(cuid())
+  templateId  String
+  template    OnboardingTemplate @relation(fields: [templateId], references: [id], onDelete: Cascade)
+  /// Display order within the template.
+  position    Int                @default(0)
+  title       String
+  description String             @default("")
+  /// TaskType enum value — kept as String so the schema doesn't depend on the
+  /// enum import order; validated at API time.
+  taskType    String             @default("GENERAL")
+  priority    String             @default("MEDIUM")
+  dueInDays   Int                @default(0)
+
+  @@index([templateId, position])
+  @@map("onboarding_template_items")
+}
+
+model TaskWatcher {
+  id        String   @id @default(cuid())
+  taskId    String
+  task      Task     @relation(fields: [taskId], references: [id], onDelete: Cascade)
+  userId    String
+  user      User     @relation("TaskWatcher", fields: [userId], references: [id], onDelete: Cascade)
+  createdAt DateTime @default(now())
+
+  @@unique([taskId, userId])
+  @@index([userId])
+  @@map("task_watchers")
+}
+
+/// Per-task time log. `endedAt` null = a running timer for this user.
+/// `durationMinutes` is filled when the entry is stopped (immutable thereafter).
+model TaskTimeEntry {
+  id              String    @id @default(cuid())
+  taskId          String
+  task            Task      @relation(fields: [taskId], references: [id], onDelete: Cascade)
+  userId          String
+  user            User      @relation("TaskTimeEntry", fields: [userId], references: [id], onDelete: Cascade)
+  startedAt       DateTime
+  endedAt         DateTime?
+  durationMinutes Int?
+  note            String    @default("")
+  createdAt       DateTime  @default(now())
+
+  @@index([taskId, userId])
+  @@index([userId, endedAt])
+  @@map("task_time_entries")
+}
+
+/// task `blockedById` must complete before `taskId` can move forward. Cycle
+/// detection enforced at API write time.
+// ============================================================================
+// SEQUENTIAL WORKFLOWS — n8n-style step-by-step automation
+// ============================================================================
+//
+// A `SequentialWorkflow` is an admin-defined ordered sequence of steps. Each
+// step assigns a task to a specific user (or role) with a budgeted time. When
+// the assignee marks the task DONE, the next step's task is auto-spawned for
+// the next assignee. SLAs evaluate timeliness on completion:
+//   - over budget          -> auto HR incident
+//   - under 50% of budget  -> auto HR bonus
+//
+// A run is the active instance of a workflow definition. Each step in a run
+// produces exactly one Task (linked via Task.sequentialRunStepId).
+
+enum SequentialRunStatus {
+  RUNNING
+  COMPLETED
+  CANCELLED
+}
+
+enum SequentialStepSlaResult {
+  PENDING
+  ON_TIME
+  LATE
+  EARLY_BONUS
+}
+
+model SequentialWorkflow {
+  id          String   @id @default(cuid())
+  name        String   @unique
+  description String   @default("")
+  /// Module this workflow belongs to — drives visibility + default task module.
+  module      String   @default("general")
+  isActive    Boolean  @default(true)
+  /// Reusable templates (default) can be triggered any number of times. CUSTOM
+  /// one-shot workflows execute exactly once and aren't surfaced in the
+  /// template picker after that run completes. Step timing for CUSTOM is given
+  /// as absolute `deadlineAt` per step, not relative `budgetHours`.
+  kind        SequentialWorkflowKind @default(TEMPLATE)
+  /// CUSTOM workflows store the user who owns the run; once consumed, the
+  /// workflow is auto-archived.
+  consumedAt  DateTime?
+  createdById String
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  steps SequentialWorkflowStep[]
+  runs  SequentialWorkflowRun[]
+
+  @@map("sequential_workflows")
+}
+
+enum SequentialWorkflowKind {
+  /// Reusable, triggered any number of times. Step duration = budgetHours.
+  TEMPLATE
+  /// One-shot. Step duration = absolute deadlineAt. Archived after the run.
+  CUSTOM
+}
+
+model SequentialWorkflowStep {
+  id           String             @id @default(cuid())
+  workflowId   String
+  workflow     SequentialWorkflow @relation(fields: [workflowId], references: [id], onDelete: Cascade)
+  /// 0-based ordinal — step ordering. Re-emitted by the builder on save.
+  position     Int
+  name         String
+  taskTitle    String
+  taskDescription String          @default("")
+  /// Whom the spawned task is assigned to. Either a literal userId, or one
+  /// of the special roles "creator" / "trigger_user" resolved at run time.
+  assigneeUserId String?
+  /// Optional fallback role for assignment (e.g. role-based routing). Free
+  /// text matched against the user's flat set of roles.
+  assigneeRole   String?
+  /// Hours of budget for TEMPLATE workflows. SLA evaluation uses this on
+  /// task completion. Ignored for CUSTOM workflows (which use deadlineAt).
+  budgetHours    Float              @default(8)
+  /// Absolute deadline for CUSTOM workflows ("the task must be done by
+  /// Friday 23:59"). Null for TEMPLATE. Resolved into the spawned task's
+  /// dueAt at run time.
+  deadlineAt     DateTime?
+  /// If true, breaching the budget/deadline creates an HR incident.
+  slaIncidentOnLate Boolean         @default(true)
+  /// If true, finishing under 50% creates an HR bonus record.
+  slaBonusOnEarly   Boolean         @default(true)
+  /// Optional task type override. Falls back to GENERAL.
+  taskType       String             @default("GENERAL")
+  taskPriority   String             @default("MEDIUM")
+
+  runSteps SequentialWorkflowRunStep[]
+
+  @@unique([workflowId, position])
+  @@index([workflowId])
+  @@map("sequential_workflow_steps")
+}
+
+model SequentialWorkflowRun {
+  id            String              @id @default(cuid())
+  workflowId    String
+  workflow      SequentialWorkflow  @relation(fields: [workflowId], references: [id], onDelete: Cascade)
+  triggeredById String
+  /// Optional context payload — typically the entity that triggered the run
+  /// (e.g. lead, deal, employee). Stored as { entityType, entityId, ... }.
+  context       Json?
+  status        SequentialRunStatus @default(RUNNING)
+  currentStepIndex Int              @default(0)
+  startedAt     DateTime            @default(now())
+  completedAt   DateTime?
+
+  steps SequentialWorkflowRunStep[]
+
+  @@index([workflowId])
+  @@index([status])
+  @@map("sequential_workflow_runs")
+}
+
+model SequentialWorkflowRunStep {
+  id        String                  @id @default(cuid())
+  runId     String
+  run       SequentialWorkflowRun   @relation(fields: [runId], references: [id], onDelete: Cascade)
+  stepId    String
+  step      SequentialWorkflowStep  @relation(fields: [stepId], references: [id], onDelete: Cascade)
+  position  Int
+  /// The Task that materializes this step.
+  taskId    String                  @unique
+  task      Task                    @relation(fields: [taskId], references: [id], onDelete: Cascade)
+  startedAt DateTime?
+  completedAt DateTime?
+  /// Actual duration in minutes once the step completes.
+  durationMinutes Int?
+  slaResult SequentialStepSlaResult @default(PENDING)
+  createdAt DateTime                @default(now())
+
+  @@index([runId, position])
+  @@map("sequential_workflow_run_steps")
+}
+
+model TaskDependency {
+  id          String   @id @default(cuid())
+  taskId      String
+  task        Task     @relation("TaskDependent", fields: [taskId], references: [id], onDelete: Cascade)
+  blockedById String
+  blockedBy   Task     @relation("TaskBlocker", fields: [blockedById], references: [id], onDelete: Cascade)
+  createdAt   DateTime @default(now())
+
+  @@unique([taskId, blockedById])
+  @@index([taskId])
+  @@index([blockedById])
+  @@map("task_dependencies")
+}
+
+model TaskComment {
+  id        String   @id @default(cuid())
+  taskId    String
+  task      Task     @relation(fields: [taskId], references: [id], onDelete: Cascade)
+  authorId  String
+  author    User     @relation("TaskCommentAuthor", fields: [authorId], references: [id], onDelete: Cascade)
+  body      String
+  /// Optional flag for system-generated comments (delegations, recurrence spawns, etc.).
+  isSystem  Boolean  @default(false)
+  createdAt DateTime @default(now())
+
+  @@index([taskId])
+  @@index([authorId])
+  @@map("task_comments")
+}
+
+/// File attached to a task. Anyone with task access (creator, assignee,
+/// watcher, platform admin) can attach. Attachments persist through workflow
+/// steps so downstream assignees see the upstream artifacts.
+model TaskAttachment {
+  id          String   @id @default(cuid())
+  taskId      String
+  task        Task     @relation(fields: [taskId], references: [id], onDelete: Cascade)
+  uploadedById String
+  uploadedBy  User     @relation("TaskAttachmentUploader", fields: [uploadedById], references: [id], onDelete: Cascade)
+  /// Display name as shown in the UI; not necessarily the on-disk name.
+  filename    String
+  /// MIME type (e.g. application/pdf). Kept generic; we don't restrict by type.
+  mimeType    String
+  /// Bytes. Used for display + a soft cap enforced at the API.
+  sizeBytes   Int
+  /// Storage URL or relative path; resolution depends on the storage backend.
+  /// For the current in-repo MVP, a relative path under /public/uploads/tasks/.
+  url         String
+  createdAt   DateTime @default(now())
+
+  @@index([taskId])
+  @@index([uploadedById])
+  @@map("task_attachments")
+}
+
+// ============================================================================
+// Q3 — HR Performance management (S1)
+// ============================================================================
+
+enum HrGoalStatus {
+  ACTIVE
+  ACHIEVED
+  ABANDONED
+}
+
+model HrGoal {
+  id          String       @id @default(cuid())
+  employeeId  String
+  title       String
+  description String       @default("")
+  /// 0-100; UI may render as a progress bar.
+  progressPct Int          @default(0)
+  status      HrGoalStatus @default(ACTIVE)
+  dueDate     DateTime?
+  createdAt   DateTime     @default(now())
+  updatedAt   DateTime     @updatedAt
+
+  @@index([employeeId, status])
+  @@map("hr_goals")
+}
+
+enum HrReviewKind {
+  SELF
+  MANAGER
+  PEER
+  THREE_SIXTY
+}
+
+model HrReviewCycle {
+  id        String     @id @default(cuid())
+  name      String
+  startDate DateTime
+  endDate   DateTime
+  isActive  Boolean    @default(true)
+  reviews   HrReview[]
+  createdAt DateTime   @default(now())
+
+  @@map("hr_review_cycles")
+}
+
+model HrReview {
+  id          String        @id @default(cuid())
+  cycleId     String
+  cycle       HrReviewCycle @relation(fields: [cycleId], references: [id], onDelete: Cascade)
+  subjectId   String // employee being reviewed
+  reviewerId  String? // null for SELF (subject is reviewer)
+  kind        HrReviewKind
+  /// Free-form responses keyed by question id.
+  responses   Json          @default("{}")
+  rating      Int?
+  submittedAt DateTime?
+  createdAt   DateTime      @default(now())
+
+  @@index([cycleId])
+  @@index([subjectId])
+  @@map("hr_reviews")
+}
+
+model HrFeedback {
+  id          String   @id @default(cuid())
+  fromUserId  String
+  toEmployeeId String
+  /// "kudos" or "constructive"
+  kind        String
+  message     String
+  visibility  String   @default("private") // "private" | "manager" | "team"
+  createdAt   DateTime @default(now())
+
+  @@index([toEmployeeId])
+  @@map("hr_feedback")
+}
+
+model HrSurvey {
+  id          String              @id @default(cuid())
+  title       String
+  description String              @default("")
+  /// JSON array of question objects.
+  questions   Json
+  isAnonymous Boolean             @default(true)
+  isActive    Boolean             @default(true)
+  responses   HrSurveyResponse[]
+  createdAt   DateTime            @default(now())
+
+  @@map("hr_surveys")
+}
+
+model HrSurveyResponse {
+  id        String   @id @default(cuid())
+  surveyId  String
+  survey    HrSurvey @relation(fields: [surveyId], references: [id], onDelete: Cascade)
+  /// userId or null when survey is anonymous (we still write the row to count responses).
+  userId    String?
+  answers   Json
+  createdAt DateTime @default(now())
+
+  @@index([surveyId])
+  @@map("hr_survey_responses")
+}
+
+// ============================================================================
+// Q3 — HR Recruitment / ATS (S2)
+// ============================================================================
+
+enum JobStatus {
+  DRAFT
+  OPEN
+  CLOSED
+}
+
+enum CandidateStage {
+  APPLIED
+  SCREEN
+  INTERVIEW
+  OFFER
+  HIRED
+  REJECTED
+}
+
+model Job {
+  id           String           @id @default(cuid())
+  slug         String           @unique
+  title        String
+  description  String
+  companyId    String
+  departmentId String?
+  status       JobStatus        @default(DRAFT)
+  applications JobApplication[]
+  createdAt    DateTime         @default(now())
+  updatedAt    DateTime         @updatedAt
+
+  @@index([status])
+  @@map("jobs")
+}
+
+model Candidate {
+  id           String           @id @default(cuid())
+  fullName     String
+  email        String           @unique
+  phone        String?
+  resumeUrl    String?
+  applications JobApplication[]
+  interviews   Interview[]
+  createdAt    DateTime         @default(now())
+
+  @@map("candidates")
+}
+
+model JobApplication {
+  id          String         @id @default(cuid())
+  jobId       String
+  job         Job            @relation(fields: [jobId], references: [id], onDelete: Cascade)
+  candidateId String
+  candidate   Candidate      @relation(fields: [candidateId], references: [id], onDelete: Cascade)
+  stage       CandidateStage @default(APPLIED)
+  notes       String         @default("")
+  /// Set when stage = HIRED to link to the resulting employee record.
+  employeeId  String?
+  createdAt   DateTime       @default(now())
+  updatedAt   DateTime       @updatedAt
+  scorecards  Scorecard[]
+
+  @@unique([jobId, candidateId])
+  @@index([jobId, stage])
+  @@map("job_applications")
+}
+
+model Interview {
+  id            String    @id @default(cuid())
+  candidateId   String
+  candidate     Candidate @relation(fields: [candidateId], references: [id], onDelete: Cascade)
+  applicationId String
+  scheduledAt   DateTime
+  durationMin   Int       @default(45)
+  /// Email of the interviewer (will reference users via email).
+  interviewerEmail String
+  meetingUrl    String?
+  notes         String    @default("")
+  createdAt     DateTime  @default(now())
+
+  @@index([candidateId])
+  @@map("interviews")
+}
+
+model Scorecard {
+  id            String         @id @default(cuid())
+  applicationId String
+  application   JobApplication @relation(fields: [applicationId], references: [id], onDelete: Cascade)
+  reviewerEmail String
+  /// Free-form scoring object.
+  scores        Json
+  recommendation String // "strong_yes" | "yes" | "no" | "strong_no"
+  notes         String         @default("")
+  createdAt     DateTime       @default(now())
+
+  @@index([applicationId])
+  @@map("scorecards")
+}
+
+// ============================================================================
+// Q3 — HR Expenses (S4)
+// ============================================================================
+
+enum HrExpenseStatus {
+  DRAFT
+  SUBMITTED
+  APPROVED
+  REJECTED
+  REIMBURSED
+}
+
+model HrExpenseCategory {
+  id        String    @id @default(cuid())
+  name      String    @unique
+  /// Optional GL code for accounting export.
+  glCode    String?
+  expenses  HrExpense[]
+  createdAt DateTime  @default(now())
+
+  @@map("hr_expense_categories")
+}
+
+model HrExpense {
+  id          String            @id @default(cuid())
+  employeeId  String
+  categoryId  String?
+  category    HrExpenseCategory? @relation(fields: [categoryId], references: [id])
+  amount      Decimal           @db.Decimal(12, 2)
+  currency    String            @default("EGP")
+  date        DateTime
+  description String            @default("")
+  receiptUrl  String?
+  /// OCR-extracted JSON for reviewer reference.
+  ocrPayload  Json?
+  status      HrExpenseStatus   @default(DRAFT)
+  approverId  String?
+  rejectionReason String?
+  reimbursementId String?       @unique
+  reimbursement HrReimbursement? @relation(fields: [reimbursementId], references: [id])
+  createdAt   DateTime          @default(now())
+  updatedAt   DateTime          @updatedAt
+
+  @@index([employeeId, status])
+  @@map("hr_expenses")
+}
+
+model HrReimbursement {
+  id          String   @id @default(cuid())
+  employeeId  String
+  totalAmount Decimal  @db.Decimal(12, 2)
+  /// Optional payroll period id this was settled in.
+  payrollPeriodId String?
+  paidAt      DateTime?
+  expense     HrExpense?
+  createdAt   DateTime @default(now())
+
+  @@index([employeeId])
+  @@map("hr_reimbursements")
+}
+
+// ============================================================================
+// Q3 — Document templates + e-signature (S5)
+// ============================================================================
+
+enum DocumentInstanceStatus {
+  DRAFT
+  SENT
+  SIGNED
+  DECLINED
+  EXPIRED
+}
+
+model DocumentTemplate {
+  id          String              @id @default(cuid())
+  scope       String // "hr" | "partners" | "global"
+  name        String
+  description String              @default("")
+  /// Mustache-style template body. {{variable}} placeholders.
+  body        String
+  /// Variables consumed by the template, e.g. ["employee.fullName", "contract.startDate"].
+  variables   String[]
+  instances   DocumentInstance[]
+  createdAt   DateTime            @default(now())
+  updatedAt   DateTime            @updatedAt
+
+  @@index([scope])
+  @@map("document_templates")
+}
+
+model DocumentInstance {
+  id           String                 @id @default(cuid())
+  templateId   String
+  template     DocumentTemplate       @relation(fields: [templateId], references: [id])
+  /// Rendered body with placeholders filled.
+  rendered     String
+  /// Resolved variable map.
+  variables    Json
+  /// Optional link to the signed PDF in storage.
+  signedPdfUrl String?
+  /// External provider's envelope id (DocuSign / Dropbox Sign).
+  externalId   String?
+  status       DocumentInstanceStatus @default(DRAFT)
+  /// What entity this instance is attached to, e.g. "HrEmployee:cmod...".
+  attachedTo   String?
+  expiresAt    DateTime?
+  createdAt    DateTime               @default(now())
+  updatedAt    DateTime               @updatedAt
+
+  @@index([templateId])
+  @@index([status])
+  @@map("document_instances")
+}
+
+// ============================================================================
+// Q3 — Partner tiers (S6)
+// ============================================================================
+
+model PartnerTier {
+  id              String   @id @default(cuid())
+  name            String   @unique
+  /// Rolling 90-day commission $ to qualify.
+  minRevenue90d   Decimal  @default(0) @db.Decimal(14, 2)
+  commissionRate  Float
+  /// Free-form perks list rendered to partners.
+  perks           Json     @default("[]")
+  rank            Int      @default(0)
+  createdAt       DateTime @default(now())
+
+  @@map("partner_tiers")
+}
+
+// ============================================================================
+// Q3 — Deal registration (S7)
+// ============================================================================
+
+enum DealRegistrationStatus {
+  PENDING
+  APPROVED
+  REJECTED
+  EXPIRED
+  CONVERTED
+}
+
+model PartnerDealRegistration {
+  id              String                 @id @default(cuid())
+  partnerId       String
+  prospectName    String
+  prospectDomain  String
+  /// Hash for fast conflict lookup (lowercased domain → sha256).
+  domainHash      String
+  status          DealRegistrationStatus @default(PENDING)
+  expiresAt       DateTime?
+  /// If a deal was created from this registration.
+  dealId          String?
+  /// If we detected a conflict (existing deal / customer / other registration).
+  conflictWith    String?
+  rejectionReason String?
+  createdAt       DateTime               @default(now())
+  updatedAt       DateTime               @updatedAt
+
+  @@unique([partnerId, prospectDomain])
+  @@index([domainHash])
+  @@index([status])
+  @@map("partner_deal_registrations")
+}
+
+// ============================================================================
+// Q3 — MDF requests (S8)
+// ============================================================================
+
+enum MdfStatus {
+  DRAFT
+  SUBMITTED
+  APPROVED
+  REJECTED
+  CLOSED
+}
+
+model PartnerMdfRequest {
+  id          String    @id @default(cuid())
+  partnerId   String
+  campaign    String
+  description String    @default("")
+  amount      Decimal   @db.Decimal(12, 2)
+  status      MdfStatus @default(DRAFT)
+  approverId  String?
+  rejectionReason String?
+  /// Required after campaign closes.
+  roiReport   String?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  @@index([partnerId, status])
+  @@map("partner_mdf_requests")
+}
+
+// ============================================================================
+// Q3 — CRM quotes & proposals (S9)
+// ============================================================================
+
+enum QuoteStatus {
+  DRAFT
+  SENT
+  ACCEPTED
+  EXPIRED
+  REJECTED
+}
+
+model Quote {
+  id              String      @id @default(cuid())
+  number          String      @unique
+  opportunityId   String?
+  currency        String      @default("EGP")
+  taxRatePct      Decimal     @default(0) @db.Decimal(5, 2)
+  discountPct     Decimal     @default(0) @db.Decimal(5, 2)
+  status          QuoteStatus @default(DRAFT)
+  validUntil      DateTime?
+  acceptedAt      DateTime?
+  signedPdfUrl    String?
+  externalSigningId String?
+  lines           QuoteLine[]
+  createdAt       DateTime    @default(now())
+  updatedAt       DateTime    @updatedAt
+
+  @@index([opportunityId])
+  @@index([status])
+  @@map("quotes")
+}
+
+model QuoteLine {
+  id          String  @id @default(cuid())
+  quoteId     String
+  quote       Quote   @relation(fields: [quoteId], references: [id], onDelete: Cascade)
+  productId   String?
+  description String
+  qty         Decimal @default(1) @db.Decimal(10, 2)
+  unitPrice   Decimal @db.Decimal(12, 2)
+
+  @@index([quoteId])
+  @@map("quote_lines")
+}
+
+model Proposal {
+  id            String   @id @default(cuid())
+  quoteId       String?  @unique
+  opportunityId String?
+  templateBody  String
+  variables     Json
+  pdfUrl        String?
+  createdAt     DateTime @default(now())
+
+  @@map("proposals")
+}
+
+// ============================================================================
+// Q3 — Public REST API + webhooks (S10)
+// ============================================================================
+
+model ApiKey {
+  id          String   @id @default(cuid())
+  ownerId     String
+  /// SHA-256 of the plaintext key. Never stored as plaintext.
+  hash        String   @unique
+  /// Display prefix shown to the user, e.g. "sk_live_abc12345…".
+  prefix      String
+  name        String
+  /// Allowlist of scopes, e.g. ["read:employees", "write:contacts"].
+  scopes      String[]
+  /// Per-minute request cap; 0 means use default.
+  rateLimit   Int      @default(0)
+  lastUsedAt  DateTime?
+  isActive    Boolean  @default(true)
+  createdAt   DateTime @default(now())
+
+  @@index([ownerId])
+  @@map("api_keys")
+}
+
+model WebhookEndpoint {
+  id          String              @id @default(cuid())
+  ownerId     String
+  url         String
+  /// Event types to subscribe to, e.g. ["deal.won", "employee.hired"].
+  events      String[]
+  /// HMAC secret for signing the delivery body.
+  secret      String
+  isActive    Boolean             @default(true)
+  failureCount Int                @default(0)
+  lastDeliveryAt DateTime?
+  createdAt   DateTime            @default(now())
+  deliveries  WebhookDelivery[]
+
+  @@index([ownerId])
+  @@map("webhook_endpoints")
+}
+
+enum WebhookDeliveryStatus {
+  PENDING
+  SUCCEEDED
+  FAILED
+}
+
+model WebhookDelivery {
+  id         String                @id @default(cuid())
+  endpointId String
+  endpoint   WebhookEndpoint       @relation(fields: [endpointId], references: [id], onDelete: Cascade)
+  event      String
+  payload    Json
+  status     WebhookDeliveryStatus @default(PENDING)
+  attempt    Int                   @default(0)
+  responseStatus Int?
+  responseBody   String?
+  createdAt  DateTime              @default(now())
+  deliveredAt DateTime?
+
+  @@index([endpointId])
+  @@index([status, createdAt])
+  @@map("webhook_deliveries")
+}
+
+// ============================================================================
+// Q4 — CRM cadences (G1)
+// ============================================================================
+
+enum CadenceStepKind {
+  EMAIL
+  CALL_TASK
+  LINKEDIN_TASK
+  WAIT
+}
+
+enum CadenceEnrollmentStatus {
+  ACTIVE
+  PAUSED
+  COMPLETED
+  CANCELLED
+}
+
+model Cadence {
+  id          String        @id @default(cuid())
+  name        String
+  description String        @default("")
+  isActive    Boolean       @default(true)
+  steps       CadenceStep[]
+  enrollments CadenceEnrollment[]
+  createdAt   DateTime      @default(now())
+  updatedAt   DateTime      @updatedAt
+
+  @@map("cadences")
+}
+
+model CadenceStep {
+  id            String          @id @default(cuid())
+  cadenceId     String
+  cadence       Cadence         @relation(fields: [cadenceId], references: [id], onDelete: Cascade)
+  /// 1-indexed position in the cadence.
+  position      Int
+  kind          CadenceStepKind
+  /// Days from enrollment that this step fires.
+  dayOffset     Int
+  /// For email steps: template id.
+  emailTemplateId String?
+  /// For task steps: title shown on the task.
+  taskTitle     String?
+
+  @@index([cadenceId])
+  @@map("cadence_steps")
+}
+
+model CadenceEnrollment {
+  id          String                  @id @default(cuid())
+  cadenceId   String
+  cadence     Cadence                 @relation(fields: [cadenceId], references: [id], onDelete: Cascade)
+  contactId   String
+  ownerId     String
+  status      CadenceEnrollmentStatus @default(ACTIVE)
+  /// 0-indexed step about to fire next.
+  nextStep    Int                     @default(0)
+  enrolledAt  DateTime                @default(now())
+  pausedAt    DateTime?
+  completedAt DateTime?
+
+  @@index([contactId])
+  @@index([status, nextStep])
+  @@map("cadence_enrollments")
+}
+
+// ============================================================================
+// Q4 — Custom objects (G2)
+// ============================================================================
+
+model CustomObject {
+  id          String   @id @default(cuid())
+  slug        String   @unique
+  name        String
+  description String   @default("")
+  /// Field schema: [{ name, type: "text"|"number"|"date"|"boolean"|"select"|"reference", options?, required? }]
+  fields      Json
+  /// Optional permission map: { read: ["role:CEO"], write: ["role:ADMIN"] }
+  permissions Json     @default("{}")
+  records     CustomRecord[]
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@map("custom_objects")
+}
+
+model CustomRecord {
+  id        String       @id @default(cuid())
+  objectId  String
+  object    CustomObject @relation(fields: [objectId], references: [id], onDelete: Cascade)
+  /// Field values keyed by field name.
+  data      Json
+  /// Optional reference map: { fieldName: ["recordId1", "recordId2"] }.
+  refs      Json         @default("{}")
+  createdAt DateTime     @default(now())
+  updatedAt DateTime     @updatedAt
+
+  @@index([objectId])
+  @@map("custom_records")
+}
+
+// ============================================================================
+// Q4 — White-label partner branding (G3)
+// ============================================================================
+
+model PartnerBranding {
+  id            String   @id @default(cuid())
+  partnerId     String   @unique
+  /// Optional custom domain override, e.g. "partners.acme.com".
+  customDomain  String?  @unique
+  /// Preferred subdomain on the platform's wildcard domain.
+  subdomain     String?  @unique
+  logoUrl       String?
+  primaryColor  String?
+  supportEmail  String?
+  customCtaText String?
+  updatedAt     DateTime @updatedAt
+
+  @@map("partner_branding")
+}
+
+// ============================================================================
+// Q4 — Co-sell account mapping (G4)
+// ============================================================================
+
+model PartnerAccountList {
+  id        String   @id @default(cuid())
+  partnerId String
+  /// Lowercased domain.
+  domain    String
+  /// SHA-256 of domain for matching without exposing partner intel.
+  domainHash String
+  addedAt   DateTime @default(now())
+
+  @@unique([partnerId, domain])
+  @@index([domainHash])
+  @@map("partner_account_lists")
+}
+
+model CoSellOpportunity {
+  id            String   @id @default(cuid())
+  opportunityId String
+  partnerId     String
+  /// Lifecycle marker; clients can extend.
+  stage         String   @default("matched")
+  notes         String   @default("")
+  createdAt     DateTime @default(now())
+
+  @@unique([opportunityId, partnerId])
+  @@index([opportunityId])
+  @@map("co_sell_opportunities")
+}
+
+// ============================================================================
+// Q4 — Partner payouts (G5)
+// ============================================================================
+
+enum PayoutStatus {
+  SCHEDULED
+  PROCESSING
+  PAID
+  FAILED
+}
+
+model PartnerPayout {
+  id          String         @id @default(cuid())
+  partnerId   String
+  partner     PartnerProfile @relation(fields: [partnerId], references: [id], onDelete: Cascade)
+  /// Sum of commissions in the period.
+  amount      Decimal        @db.Decimal(14, 2)
+  currency    String         @default("USD")
+  /// Stripe Connect payout id (or other provider).
+  externalId  String?
+  status      PayoutStatus   @default(SCHEDULED)
+  scheduledFor DateTime
+  paidAt      DateTime?
+  failureReason String?
+  createdAt   DateTime       @default(now())
+
+  @@index([partnerId, status])
+  @@map("partner_payouts")
+}
+
+model PartnerTaxForm {
+  id        String   @id @default(cuid())
+  partnerId String   @unique
+  /// "1099-NEC" | "W-8BEN" | etc.
+  formType  String
+  fileUrl   String
+  /// US tax year covered.
+  taxYear   Int
+  uploadedAt DateTime @default(now())
+
+  @@map("partner_tax_forms")
+}
+
+// ============================================================================
+// Q4 — Notification preferences (G6)
+// ============================================================================
+
+enum NotificationChannel {
+  IN_APP
+  EMAIL
+  PUSH
+  WHATSAPP
+}
+
+model NotificationPreference {
+  id        String              @id @default(cuid())
+  userId    String
+  /// Event type, e.g. "contract.approved", "deal.won".
+  eventType String
+  channel   NotificationChannel
+  enabled   Boolean             @default(true)
+
+  @@unique([userId, eventType, channel])
+  @@index([userId])
+  @@map("notification_preferences")
+}
+
+// ============================================================================
+// HR MODULE — User & Identity
+// ============================================================================
+
+model HrUserProfile {
+  id          String    @id @default(cuid())
+  userId      String    @unique
+  user        User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  // Legacy HR fields
+  isSuperuser Boolean   @default(false)
+  firstName   String    @default("")
+  lastName    String    @default("")
+  isStaff     Boolean   @default(false)
+  dateJoined  DateTime  @default(now())
+  username    String    @unique
+  phone       String    @default("")
+  avatar      String?
+  isActive    Boolean   @default(true)
+
+  // Relations
+  companies          HrUserCompany[]
+  roles              HrUserRole[]
+  employee           HrEmployee?
+  attendanceLogs     HrAttendanceLog[]    @relation("HrAttendanceLogCreatedBy")
+  leaveApprovals     HrLeaveRequest[]     @relation("HrLeaveApprovedBy")
+  submittedBonuses   HrBonus[]            @relation("HrBonusSubmittedBy")
+  approvedBonuses    HrBonus[]            @relation("HrBonusApprovedBy")
+  submittedIncidents HrIncident[]         @relation("HrIncidentSubmittedBy")
+  approvedIncidents  HrIncident[]         @relation("HrIncidentApprovedBy")
+  approvedOvertime   HrOvertimeRequest[]  @relation("HrOvertimeApprovedBy")
+  lockedSalaries     HrMonthlySalary[]    @relation("HrSalaryLockedBy")
+  paidPayrolls       HrPayrollPeriod[]    @relation("HrPayrollPaidBy")
+  lockedPayrolls     HrPayrollPeriod[]    @relation("HrPayrollLockedBy")
+  notifications      HrNotification[]
+  auditLogs          HrAuditLog[]
+  documents          HrEmployeeDocument[] @relation("HrDocumentUploadedBy")
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@map("hr_user_profiles")
+}
+
+model HrBlacklistedToken {
+  id            String   @id @default(cuid())
+  tokenId       String   @unique
+  blacklistedAt DateTime @default(now())
+
+  token HrOutstandingToken @relation(fields: [tokenId], references: [id])
+
+  @@map("hr_blacklisted_tokens")
+}
+
+model HrOutstandingToken {
+  id        String   @id @default(cuid())
+  jti       String   @unique
+  token     String
+  userId    String
+  expiresAt DateTime
+  createdAt DateTime @default(now())
+
+  blacklisted HrBlacklistedToken?
+
+  @@map("hr_outstanding_tokens")
+}
+
+model HrRole {
+  id   String @id @default(cuid())
+  name String @unique
+
+  users HrUserRole[]
+
+  @@map("hr_roles")
+}
+
+model HrUserRole {
+  id     String @id @default(cuid())
+  userId String
+  roleId String
+
+  role HrRole        @relation(fields: [roleId], references: [id])
+  user HrUserProfile @relation(fields: [userId], references: [userId])
+
+  @@unique([userId, roleId])
+  @@index([roleId])
+  @@index([userId])
+  @@map("hr_user_roles")
+}
+
+model HrUserCompany {
+  id        String @id @default(cuid())
+  userId    String
+  companyId String
+
+  company HrCompany     @relation(fields: [companyId], references: [id])
+  user    HrUserProfile @relation(fields: [userId], references: [userId])
+
+  @@unique([userId, companyId])
+  @@index([companyId])
+  @@index([userId])
+  @@map("hr_user_companies")
+}
+
+// ============================================================================
+// HR MODULE — Company & Department
+// ============================================================================
+
+model HrCompany {
+  id        String   @id @default(cuid())
+  nameEn    String
+  nameAr    String
+  logo      String?
+  industry  String   @default("")
+  address   String   @default("")
+  phone     String   @default("")
+  email     String   @default("")
+  taxId     String   @default("")
+  isActive  Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  users          HrUserCompany[]
+  departments    HrDepartment[]
+  employees      HrEmployee[]
+  payrollPeriods HrPayrollPeriod[]
+
+  @@map("hr_companies")
+}
+
+model HrDepartment {
+  id           String   @id @default(cuid())
+  nameEn       String
+  nameAr       String
+  isActive     Boolean  @default(true)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+  companyId    String
+  headOfDeptId String?
+
+  headOfDept HrEmployee?  @relation("HrDepartmentHead", fields: [headOfDeptId], references: [id])
+  company    HrCompany    @relation(fields: [companyId], references: [id])
+  employees  HrEmployee[] @relation("HrEmployeeDepartment")
+
+  @@unique([companyId, nameEn])
+  @@index([headOfDeptId])
+  @@index([companyId])
+  @@map("hr_departments")
+}
+
+// ============================================================================
+// HR MODULE — Employee
+// ============================================================================
+
+model HrEmployee {
+  id                    String    @id @default(cuid())
+  employeeId            String    @unique
+  fullNameEn            String
+  fullNameAr            String
+  nationalId            String    @unique
+  dateOfBirth           DateTime?
+  gender                String
+  personalEmail         String    @default("")
+  phone                 String    @default("")
+  address               String    @default("")
+  emergencyContactName  String    @default("")
+  emergencyContactPhone String    @default("")
+  photo                 String?
+  positionEn            String    @default("")
+  positionAr            String    @default("")
+  level                 String    @default("")
+  employmentType        String    @default("")
+  workModel             String    @default("")
+  contractStart         DateTime?
+  contractEnd           DateTime?
+  probationEnd          DateTime?
+  status                String    @default("active")
+  baseSalary            Decimal   @default(0) @db.Decimal(14, 2)
+  currency              String    @default("SAR")
+  bankName              String    @default("")
+  bankAccount           String    @default("")
+  iban                  String    @default("")
+  createdAt             DateTime  @default(now())
+  updatedAt             DateTime  @updatedAt
+  companyId             String
+  departmentId          String?
+  directManagerId       String?
+  shiftId               String?
+  hrUserProfileId       String?   @unique
+  userId                String?   @unique
+
+  // Relations
+  user             User?              @relation(fields: [userId], references: [id])
+  hrUserProfile    HrUserProfile?     @relation(fields: [hrUserProfileId], references: [id])
+  shift            HrShift?           @relation(fields: [shiftId], references: [id])
+  directManager    HrEmployee?        @relation("HrEmployeeManager", fields: [directManagerId], references: [id])
+  subordinates     HrEmployee[]       @relation("HrEmployeeManager")
+  department       HrDepartment?      @relation("HrEmployeeDepartment", fields: [departmentId], references: [id])
+  company          HrCompany          @relation(fields: [companyId], references: [id])
+  headOfDepartments HrDepartment[]    @relation("HrDepartmentHead")
+  documents        HrEmployeeDocument[]
+  attendanceLogs   HrAttendanceLog[]
+  leaveRequests    HrLeaveRequest[]
+  bonuses          HrBonus[]
+  incidents        HrIncident[]
+  overtimeRequests HrOvertimeRequest[]
+  monthlySalaries  HrMonthlySalary[]
+  crmProfile       CrmUserProfile?    @relation("CrmProfileToHrEmployee")
+
+  /// Soft-delete marker — see CrmOpportunity for rationale. Active queries
+  /// must filter `deletedAt: null`; admins can restore until the retention
+  /// window expires.
+  deletedAt        DateTime?
+  deletedById      String?
+
+  @@index([shiftId])
+  @@index([directManagerId])
+  @@index([departmentId])
+  @@index([companyId])
+  @@index([deletedAt])
+  @@map("hr_employees")
+}
+
+model HrEmployeeDocument {
+  id                 String   @id @default(cuid())
+  documentType       String
+  file               String
+  filename           String
+  fileSize           Int
+  uploadedByEmployee Boolean  @default(false)
+  uploadDate         DateTime @default(now())
+  createdAt          DateTime @default(now())
+  employeeId         String
+  uploadedById       String?
+
+  uploadedBy HrUserProfile? @relation("HrDocumentUploadedBy", fields: [uploadedById], references: [userId])
+  employee   HrEmployee     @relation(fields: [employeeId], references: [id])
+
+  @@index([uploadedById])
+  @@index([employeeId])
+  @@map("hr_employee_documents")
+}
+
+// ============================================================================
+// HR MODULE — Attendance
+// ============================================================================
+
+model HrShift {
+  id                 String   @id @default(cuid())
+  name               String
+  startTime          String
+  endTime            String
+  gracePeriodMinutes Int      @default(0)
+  dailyWorkHours     Decimal  @default(8) @db.Decimal(5, 2)
+  weeklyOffDay       Int      @default(5)
+  isDefault          Boolean  @default(false)
+  createdAt          DateTime @default(now())
+  updatedAt          DateTime @updatedAt
+
+  employees HrEmployee[]
+
+  @@map("hr_shifts")
+}
+
+model HrAttendanceLog {
+  id            String   @id @default(cuid())
+  date          DateTime
+  checkIn       String?
+  checkOut      String?
+  status        String
+  hoursWorked   Decimal  @default(0) @db.Decimal(5, 2)
+  overtimeHours Decimal  @default(0) @db.Decimal(5, 2)
+  isManual      Boolean  @default(false)
+  manualReason  String   @default("")
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+  createdById   String?
+  employeeId    String
+
+  employee  HrEmployee     @relation(fields: [employeeId], references: [id])
+  createdBy HrUserProfile? @relation("HrAttendanceLogCreatedBy", fields: [createdById], references: [userId])
+
+  @@unique([employeeId, date])
+  @@index([employeeId])
+  @@index([createdById])
+  @@map("hr_attendance_logs")
+}
+
+model HrLeaveType {
+  id               String   @id @default(cuid())
+  nameEn           String
+  nameAr           String
+  annualDays       Int      @default(0)
+  isPaid           Boolean  @default(true)
+  carryOverAllowed Boolean  @default(false)
+  maxCarryOverDays Int      @default(0)
+  createdAt        DateTime @default(now())
+
+  leaveRequests HrLeaveRequest[]
+
+  @@map("hr_leave_types")
+}
+
+model HrLeaveRequest {
+  id           String    @id @default(cuid())
+  startDate    DateTime
+  endDate      DateTime
+  daysCount    Int
+  reason       String    @default("")
+  status       String    @default("pending")
+  approvedAt   DateTime?
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+  approvedById String?
+  employeeId   String
+  leaveTypeId  String
+
+  leaveType  HrLeaveType    @relation(fields: [leaveTypeId], references: [id])
+  employee   HrEmployee     @relation(fields: [employeeId], references: [id])
+  approvedBy HrUserProfile? @relation("HrLeaveApprovedBy", fields: [approvedById], references: [userId])
+
+  @@index([leaveTypeId])
+  @@index([employeeId])
+  @@index([approvedById])
+  @@map("hr_leave_requests")
+}
+
+model HrAttendanceAutoRule {
+  id                   String   @id @default(cuid())
+  code                 String   @unique
+  name                 String
+  conditionDescription String   @default("")
+  thresholdValue       Int      @default(0)
+  timeWindowMonths     Int      @default(0)
+  action               String   @default("")
+  isActive             Boolean  @default(true)
+  createdAt            DateTime @default(now())
+
+  @@map("hr_attendance_auto_rules")
+}
+
+// ============================================================================
+// HR MODULE — Overtime
+// ============================================================================
+
+model HrOvertimePolicy {
+  id                  String   @id @default(cuid())
+  typeCode            String   @unique
+  nameEn              String
+  nameAr              String
+  rateMultiplier      Decimal  @default(1.5) @db.Decimal(5, 2)
+  minHours            Decimal  @default(0) @db.Decimal(5, 2)
+  maxHoursPerDay      Decimal  @default(4) @db.Decimal(5, 2)
+  maxHoursPerMonth    Decimal  @default(40) @db.Decimal(5, 2)
+  requiresPreApproval Boolean  @default(true)
+  approvalAuthority   String   @default("")
+  createdAt           DateTime @default(now())
+  updatedAt           DateTime @updatedAt
+
+  overtimeRequests HrOvertimeRequest[]
+
+  @@map("hr_overtime_policies")
+}
+
+model HrOvertimeRequest {
+  id               String    @id @default(cuid())
+  date             DateTime
+  hoursRequested   Decimal   @db.Decimal(5, 2)
+  reason           String    @default("")
+  evidence         String?
+  status           String    @default("pending")
+  approvedAt       DateTime?
+  denialReason     String    @default("")
+  calculatedAmount Decimal   @default(0) @db.Decimal(14, 2)
+  createdAt        DateTime  @default(now())
+  updatedAt        DateTime  @updatedAt
+  approvedById     String?
+  employeeId       String
+  overtimeTypeId   String
+
+  overtimePolicy HrOvertimePolicy @relation(fields: [overtimeTypeId], references: [id])
+  employee       HrEmployee       @relation(fields: [employeeId], references: [id])
+  approvedBy     HrUserProfile?   @relation("HrOvertimeApprovedBy", fields: [approvedById], references: [userId])
+
+  @@index([overtimeTypeId])
+  @@index([employeeId])
+  @@index([approvedById])
+  @@map("hr_overtime_requests")
+}
+
+// ============================================================================
+// HR MODULE — Incidents
+// ============================================================================
+
+model HrViolationCategory {
+  id                String   @id @default(cuid())
+  code              String   @unique
+  nameEn            String
+  nameAr            String
+  resetPeriodMonths Int      @default(12)
+  createdAt         DateTime @default(now())
+
+  violationRules HrViolationRule[]
+
+  @@map("hr_violation_categories")
+}
+
+model HrViolationRule {
+  id                   String   @id @default(cuid())
+  code                 String   @unique
+  nameEn               String
+  nameAr               String
+  offense1Action       String   @default("")
+  offense1DeductionPct Decimal  @default(0) @db.Decimal(5, 2)
+  offense2Action       String   @default("")
+  offense2DeductionPct Decimal  @default(0) @db.Decimal(5, 2)
+  offense3Action       String   @default("")
+  offense3DeductionPct Decimal  @default(0) @db.Decimal(5, 2)
+  offense4Action       String   @default("")
+  offense4DeductionPct Decimal  @default(0) @db.Decimal(5, 2)
+  offense5Action       String   @default("")
+  offense5DeductionPct Decimal  @default(0) @db.Decimal(5, 2)
+  createdAt            DateTime @default(now())
+  updatedAt            DateTime @updatedAt
+  categoryId           String
+
+  incidents HrIncident[]
+  category  HrViolationCategory @relation(fields: [categoryId], references: [id])
+
+  @@index([categoryId])
+  @@map("hr_violation_rules")
+}
+
+model HrIncident {
+  id              String    @id @default(cuid())
+  incidentDate    DateTime
+  offenseNumber   Int
+  actionTaken     String    @default("")
+  deductionPct    Decimal   @default(0) @db.Decimal(5, 2)
+  deductionAmount Decimal   @default(0) @db.Decimal(14, 2)
+  status          String    @default("pending")
+  comments        String    @default("")
+  evidence        String?
+  dismissedReason String    @default("")
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+  approvedById    String?
+  employeeId      String
+  submittedById   String
+  violationRuleId String
+
+  violationRule HrViolationRule @relation(fields: [violationRuleId], references: [id])
+  submittedBy   HrUserProfile   @relation("HrIncidentSubmittedBy", fields: [submittedById], references: [userId])
+  employee      HrEmployee      @relation(fields: [employeeId], references: [id])
+  approvedBy    HrUserProfile?  @relation("HrIncidentApprovedBy", fields: [approvedById], references: [userId])
+
+  @@index([violationRuleId])
+  @@index([submittedById])
+  @@index([employeeId])
+  @@index([approvedById])
+  @@map("hr_incidents")
+}
+
+// ============================================================================
+// HR MODULE — Bonuses
+// ============================================================================
+
+model HrBonusCategory {
+  id        String   @id @default(cuid())
+  code      String   @unique
+  nameEn    String
+  nameAr    String
+  createdAt DateTime @default(now())
+
+  bonusRules HrBonusRule[]
+
+  @@map("hr_bonus_categories")
+}
+
+model HrBonusRule {
+  id                String   @id @default(cuid())
+  code              String   @unique
+  nameEn            String
+  nameAr            String
+  valueType         String   @default("")
+  value             Decimal  @default(0) @db.Decimal(14, 2)
+  frequency         String   @default("")
+  maxPerMonth       Int      @default(0)
+  approvalAuthority String   @default("")
+  triggerCondition  String   @default("")
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+  categoryId        String
+
+  bonuses  HrBonus[]
+  category HrBonusCategory @relation(fields: [categoryId], references: [id])
+
+  @@index([categoryId])
+  @@map("hr_bonus_rules")
+}
+
+model HrBonus {
+  id            String    @id @default(cuid())
+  bonusDate     DateTime
+  bonusAmount   Decimal   @db.Decimal(14, 2)
+  comments      String    @default("")
+  evidence      String?
+  status        String    @default("pending")
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+  approvedById  String?
+  employeeId    String
+  submittedById String
+  bonusRuleId   String
+
+  bonusRule   HrBonusRule    @relation(fields: [bonusRuleId], references: [id])
+  submittedBy HrUserProfile  @relation("HrBonusSubmittedBy", fields: [submittedById], references: [userId])
+  employee    HrEmployee     @relation(fields: [employeeId], references: [id])
+  approvedBy  HrUserProfile? @relation("HrBonusApprovedBy", fields: [approvedById], references: [userId])
+
+  @@index([bonusRuleId])
+  @@index([submittedById])
+  @@index([employeeId])
+  @@index([approvedById])
+  @@map("hr_bonuses")
+}
+
+// ============================================================================
+// HR MODULE — Payroll
+// ============================================================================
+
+model HrPayrollPeriod {
+  id          String    @id @default(cuid())
+  month       Int
+  year        Int
+  status      String    @default("draft")
+  lockedAt    DateTime?
+  finalizedAt DateTime?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+  companyId   String
+  lockedById  String?
+  paidAt      DateTime?
+  paidById    String?
+
+  paidBy   HrUserProfile? @relation("HrPayrollPaidBy", fields: [paidById], references: [userId])
+  lockedBy HrUserProfile? @relation("HrPayrollLockedBy", fields: [lockedById], references: [userId])
+  company  HrCompany      @relation(fields: [companyId], references: [id])
+
+  @@unique([companyId, month, year])
+  @@index([paidById])
+  @@index([lockedById])
+  @@index([companyId])
+  @@map("hr_payroll_periods")
+}
+
+model HrMonthlySalary {
+  id              String    @id @default(cuid())
+  month           Int
+  year            Int
+  baseSalary      Decimal   @db.Decimal(14, 2)
+  overtimeAmount  Decimal   @default(0) @db.Decimal(14, 2)
+  totalBonuses    Decimal   @default(0) @db.Decimal(14, 2)
+  totalDeductions Decimal   @default(0) @db.Decimal(14, 2)
+  netSalary       Decimal   @db.Decimal(14, 2)
+  workDays        Int       @default(0)
+  absentDays      Int       @default(0)
+  lateCount       Int       @default(0)
+  overtimeHours   Decimal   @default(0) @db.Decimal(5, 2)
+  notes           String    @default("")
+  status          String    @default("draft")
+  lockedAt        DateTime?
+  finalizedAt     DateTime?
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+  employeeId      String
+  lockedById      String?
+
+  lockedBy HrUserProfile? @relation("HrSalaryLockedBy", fields: [lockedById], references: [userId])
+  employee HrEmployee     @relation(fields: [employeeId], references: [id])
+
+  @@unique([employeeId, month, year])
+  @@index([lockedById])
+  @@index([employeeId])
+  @@map("hr_monthly_salaries")
+}
+
+// ============================================================================
+// HR MODULE — Notifications, Settings, Audit
+// ============================================================================
+
+model HrNotification {
+  id                String   @id @default(cuid())
+  notificationType  String
+  title             String
+  message           String
+  isRead            Boolean  @default(false)
+  relatedObjectType String   @default("")
+  relatedObjectId   String?
+  createdAt         DateTime @default(now())
+  userId            String
+
+  user HrUserProfile @relation(fields: [userId], references: [userId])
+
+  @@index([userId])
+  @@map("hr_notifications")
+}
+
+model HrAppSetting {
+  id          String   @id @default(cuid())
+  key         String   @unique
+  value       String
+  description String   @default("")
+  category    String   @default("")
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@map("hr_app_settings")
+}
+
+model HrAuditLog {
+  id              String   @id @default(cuid())
+  action          String
+  entityType      String
+  entityId        String
+  fieldName       String   @default("")
+  oldValue        String   @default("")
+  newValue        String   @default("")
+  timestamp       DateTime @default(now())
+  ipAddress       String?
+  userId          String?
+  /// auth User.id of the admin when the action was performed under
+  /// impersonation. userId is the target's HR profile linkage; this
+  /// column reveals the admin behind the action. Null on regular
+  /// self-acted rows.
+  actingAdminId   String?
+
+  user HrUserProfile? @relation(fields: [userId], references: [userId])
+
+  @@index([userId])
+  @@index([entityType, entityId])
+  @@map("hr_audit_logs")
+}
+
+// ============================================================================
+// CRM MODULE — Enums
+// ============================================================================
+
+/**
+ * CRM role taxonomy (consolidated per the latest spec):
+ *   - ADMIN       — platform-level owner of CRM (used to be CEO + ADMIN +
+ *                   FINANCE; all collapsed into one "admin" identity).
+ *   - MANAGER     — sales manager. Responsible for a SUBSET of reps (not the
+ *                   whole team). Manager-rep assignment is via
+ *                   CrmUserProfile.managerId — set from CRM settings or by
+ *                   placing the user on the org chart.
+ *   - ASSISTANT   — coordinates technical meetings: checks with the tech
+ *                   team, approves/denies, unblocks the rep to confirm
+ *                   with the client. Replaces the legacy TECH_DIRECTOR.
+ *   - REP         — sales rep.
+ *   - ACCOUNT_MGR — post-sale account manager.
+ */
+enum CrmRole {
+  REP
+  MANAGER
+  ASSISTANT
+  ACCOUNT_MGR
+  ADMIN
+}
+
+/// Cold-lead lifecycle. Imported rows start as `NEW` and get parked in a
+/// disposition bucket after a rep contacts them. The bucket determines what
+/// the manager can do next (push back to a rep, schedule a recycle after
+/// the waiting period, archive permanently, etc).
+enum CrmColdLeadStatus {
+  /// Imported and not yet routed (in the big directory, unassigned).
+  NEW
+  /// Currently assigned to a rep; sits in their call list until they touch it.
+  ASSIGNED
+  /// Rep called and got no answer — recyclable. Manager can push back to a rep.
+  NO_ANSWER
+  /// Rep talked to the prospect; not the right time. Resurfaces after the
+  /// waiting period (default ~30 days) via the recycle job / manager push.
+  WAITING_LIST
+  /// Rep talked to the prospect; explicit no-go. Manager can delete or keep
+  /// for future "tried, didn't work" reference.
+  NOT_INTERESTED
+  /// Rep converted the lead into a real CrmOpportunity. Stops appearing in
+  /// the dialer queue.
+  CONVERTED
+  /// Manager archived. Out of every bucket.
+  ARCHIVED
+}
+
+/// One row per imported lead. Imports come from Excel/CSV uploads handled by
+/// `/api/crm/cold-leads/import` — the parser writes each row here and links
+/// it to a `CrmColdLeadImport` batch so a bad upload can be undone in one
+/// click. Personal data (phone, email) is stored verbatim — admins should
+/// treat the directory as PII and gate via the platform-admin checks.
+model CrmColdLead {
+  id          String            @id @default(cuid())
+  name        String
+  companyName String?
+  phone       String?
+  email       String?
+  /// Optional fields surfaced by the admin's customizable Excel template:
+  /// website (https://...), contactPerson (a primary contact's name when
+  /// it differs from `name`), contactPosition (their title — "CEO",
+  /// "Procurement Manager", etc), socialMedia (LinkedIn / Facebook /
+  /// Instagram URL or handle — single field so reps can paste whatever
+  /// they found without picking a platform). All free text and optional.
+  website         String?
+  contactPerson   String?
+  contactPosition String?
+  socialMedia     String?
+  industry    String?
+  category    String?
+  location    String?
+  source      String?
+  notes       String?
+
+  status      CrmColdLeadStatus @default(NEW)
+
+  assignedToId String?
+  assignedTo   CrmUserProfile?  @relation("CrmColdLeadAssignee", fields: [assignedToId], references: [id])
+  assignedAt   DateTime?
+
+  lastDispositionAt DateTime?
+  /// When the lead was last pushed to a rep — used by the daily recycle to
+  /// know when a WAITING_LIST row is ready to be re-distributed.
+  /// 30 days is the default cooldown for WAITING_LIST; NO_ANSWER goes back
+  /// to the pool immediately on the next "redistribute" sweep.
+  recycleEligibleAt DateTime?
+
+  /// FK to the actual CrmOpportunity if the rep converted. Lets the manager
+  /// jump from "Converted" bucket to the live deal for follow-up.
+  convertedOpportunityId String? @unique
+  convertedOpportunity   CrmOpportunity? @relation("CrmColdLeadConverted", fields: [convertedOpportunityId], references: [id])
+
+  importBatchId String?
+  importBatch   CrmColdLeadImport? @relation(fields: [importBatchId], references: [id], onDelete: SetNull)
+
+  dispositions CrmColdLeadDisposition[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([status])
+  @@index([assignedToId])
+  @@index([industry])
+  @@index([category])
+  @@index([location])
+  @@index([importBatchId])
+  @@index([recycleEligibleAt])
+  @@map("crm_cold_leads")
+}
+
+/// One row per Excel/CSV upload. Stores the raw filename and counters so the
+/// admin can see "X rows imported, Y kept, Z were duplicate" and bulk-undo
+/// the import via the batch id.
+model CrmColdLeadImport {
+  id            String   @id @default(cuid())
+  importedById  String
+  importedBy    CrmUserProfile @relation("CrmColdLeadImporter", fields: [importedById], references: [id])
+  fileName      String
+  rowCount      Int      @default(0)
+  duplicateCount Int     @default(0)
+  notes         String?
+  createdAt     DateTime @default(now())
+
+  leads CrmColdLead[]
+
+  @@index([importedById])
+  @@index([createdAt])
+  @@map("crm_cold_lead_imports")
+}
+
+/// Audit trail of every time a rep touches a cold lead. The `disposition`
+/// is the bucket the rep dropped the lead into; `notes` carry any text the
+/// rep wrote (objection, call back date the prospect asked for, etc).
+/// Tier-1 #14 — SLA policy per cold-lead status. Admin defines:
+///   targetMinutes — first response / next action SLA from `assignedAt`
+///                   (NEW: 5 / ASSIGNED: 1440 / NO_ANSWER: 720)
+///   reminderPct   — % elapsed at which to remind the rep (50 = halfway)
+///   breachAction  — what to do when SLA breached:
+///                     "notify-manager" (default)
+///                     "reassign-unassigned" — flip to assignedToId=null
+///                     "no-op" (just log)
+/// One row per status; a status with no policy row = no SLA enforced.
+model CrmLeadSlaPolicy {
+  id            String            @id @default(cuid())
+  status        CrmColdLeadStatus @unique
+  targetMinutes Int
+  reminderPct   Int               @default(50)
+  breachAction  String            @default("notify-manager")
+  active        Boolean           @default(true)
+  createdAt     DateTime          @default(now())
+  updatedAt     DateTime          @updatedAt
+
+  @@map("crm_lead_sla_policies")
+}
+
+model CrmColdLeadDisposition {
+  id           String            @id @default(cuid())
+  coldLeadId   String
+  coldLead     CrmColdLead       @relation(fields: [coldLeadId], references: [id], onDelete: Cascade)
+  repId        String
+  rep          CrmUserProfile    @relation("CrmColdLeadDispositioner", fields: [repId], references: [id])
+  /// CrmUserProfile.id of the admin behind the action when the
+  /// disposition was written under impersonation.
+  actingAdminId String?
+  disposition  CrmColdLeadStatus
+  notes        String?
+  dispositionedAt DateTime @default(now())
+
+  @@index([coldLeadId])
+  @@index([repId, dispositionedAt])
+  @@map("crm_cold_lead_dispositions")
+}
+
+// CrmOpportunityStage was previously a Prisma enum. It's now a free-text
+// String column so admins can add new stages from /crm/admin/stage-config
+// (e.g. "PILOT", "POC", "RFP") without a schema migration. The seeded
+// stages (NEW / CONTACTED / DISCOVERY / QUALIFIED / TECH_MEETING /
+// PROPOSAL_SENT / NEGOTIATION / VERBAL_YES / WON / LOST / POSTPONED) are
+// what every install starts with; everything past those lives in
+// CrmStageConfig as the authoritative directory.
+
+enum CrmPriority {
+  HOT
+  WARM
+  COLD
+}
+
+enum CrmDealType {
+  ONE_TIME
+  MONTHLY
+  ANNUAL
+  SAAS
+  MIXED
+  RETAINER
+}
+
+enum CrmCurrency {
+  EGP
+  USD
+  SAR
+  AED
+  QAR
+}
+
+enum CrmNextActionType {
+  FOLLOW_UP
+  CALL_LATER
+  REOFFER_REPRICE
+  PROPOSAL_REQUIRED
+  WHATSAPP_MESSAGE
+  SCHEDULE_MEETING
+  SEND_CONTRACT
+  COLLECT_PAYMENT
+  INTERNAL_REVIEW
+  CEO_APPROVAL
+}
+
+enum CrmCallType {
+  INITIAL_OUTREACH
+  FOLLOW_UP
+  DISCOVERY
+  TECHNICAL
+  PROPOSAL_WALKTHRU
+  NEGOTIATION
+  CLOSING
+  CHECK_IN
+  SUPPORT
+}
+
+enum CrmCallOutcome {
+  POSITIVE
+  NEUTRAL
+  NEGATIVE
+  NO_ANSWER
+  VOICEMAIL
+  WRONG_NUMBER
+  MEETING_BOOKED
+  PROPOSAL_REQUEST
+  WON
+  LOST
+  RESCHEDULE
+  NOT_INTERESTED
+}
+
+enum CrmClientCategory {
+  A_PLUS @map("A+")
+  A
+  B_PLUS @map("B+")
+  B
+  C_PLUS @map("C+")
+  C
+}
+
+enum CrmAttachmentKind {
+  PROPOSAL
+  CONTRACT
+  BRIEF
+  EMAIL
+  OTHER
+}
+
+// ============================================================================
+// CRM MODULE — User Profile
+// ============================================================================
+
+model CrmUserProfile {
+  id               String       @id @default(cuid())
+  userId           String       @unique
+  user             User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  fullName         String       @default("")
+  fullNameAr       String?
+  phone            String?
+  avatarUrl        String?
+  role             CrmRole      @default(REP)
+  entityId         String?
+  entity           CrmEntity?   @relation(fields: [entityId], references: [id])
+  monthlyTargetEGP Decimal?     @db.Decimal(12, 2)
+  active           Boolean      @default(true)
+
+  /// Legacy single-FK "primary manager" — the rep's first or main reporting
+  /// line. Visibility queries now OR this with the many-to-many `managedBy`
+  /// relation below, so any manager in either set sees the rep's pipeline.
+  /// Admin-curated via the team-members picker; the first ticked manager
+  /// becomes the primary, additional ones go in the join table.
+  managerId        String?
+  manager          CrmUserProfile? @relation("CrmManagerReports", fields: [managerId], references: [id])
+  reports          CrmUserProfile[] @relation("CrmManagerReports")
+
+  /// Many-to-many team membership: a rep can be on multiple managers' teams
+  /// at once (e.g. a senior AE shared between a regional VP and a product
+  /// specialist). The admin "Team members" picker syncs this — adding a
+  /// tick inserts a row, unticking deletes it. Visibility for the pipeline
+  /// + cold leads + dashboards ORs this against `managerId` so legacy data
+  /// keeps working until everything has been migrated to the join table.
+  managedBy        CrmTeamMembership[] @relation("CrmTeamMembershipRep")
+  manages          CrmTeamMembership[] @relation("CrmTeamMembershipManager")
+
+  /// Optional explicit link to the user's HR employee record. When set,
+  /// commission liability rolls into payroll automatically and the
+  /// org-chart-derived team-lead authority on the HR side picks up the rep
+  /// without relying on email-coincidence matching. Set by the unified
+  /// user-creation form when both HR + CRM modules are selected.
+  hrEmployeeId     String?     @unique
+  hrEmployee       HrEmployee? @relation("CrmProfileToHrEmployee", fields: [hrEmployeeId], references: [id])
+
+  // CRM relations
+  ownedOpportunities    CrmOpportunity[] @relation("CrmOpportunityOwner")
+  deliveryOpportunities CrmOpportunity[] @relation("CrmDeliveryOwner")
+  techSupportOpps       CrmOpportunity[] @relation("CrmTechSupport")
+  assignedCompanies     CrmCompany[]
+  calls                 CrmCall[]
+  meetings              CrmMeeting[]     @relation("CrmMeetingScheduler")
+  approvedMeetings      CrmMeeting[]     @relation("CrmMeetingApprover")
+  dailyReports          CrmDailyReport[] @relation("CrmDailyReportRep")
+  assignedColdLeads     CrmColdLead[]    @relation("CrmColdLeadAssignee")
+  coldLeadImports       CrmColdLeadImport[] @relation("CrmColdLeadImporter")
+  coldLeadDispositions  CrmColdLeadDisposition[] @relation("CrmColdLeadDispositioner")
+  activityLogs          CrmActivityLog[]
+  notes                 CrmNote[]
+  savedViews            CrmSavedView[]   @relation("CrmSavedViewOwner")
+  quotas                CrmQuota[]       @relation("CrmQuotaRep")
+  capacity              CrmRepCapacity?  @relation("CrmRepCapacity")
+  forecastSubmissions   CrmForecastSubmission[] @relation("CrmForecastManager")
+  dashboards            CrmDashboard[]   @relation("CrmDashboardOwner")
+  authoredComments      CrmOpportunityComment[]          @relation("CrmCommentAuthor")
+  commentMentions       CrmOpportunityCommentMention[]   @relation("CrmCommentMentions")
+  actingAdminComments   CrmOpportunityComment[]          @relation("CrmCommentActingAdmin")
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([entityId])
+  @@index([role])
+  @@map("crm_user_profiles")
+}
+
+/// Many-to-many manager↔rep join. One row per (manager, rep) pair — admins
+/// add entries via the team-members picker. A rep can be on multiple
+/// managers' teams. Both relations cascade-delete so dropping a user
+/// doesn't leave dangling rows. Distinct from `CrmUserProfile.managerId`
+/// (which is the single "primary" reporting line kept for back-compat);
+/// visibility queries OR both.
+model CrmTeamMembership {
+  id        String         @id @default(cuid())
+  managerId String
+  manager   CrmUserProfile @relation("CrmTeamMembershipManager", fields: [managerId], references: [id], onDelete: Cascade)
+  repId     String
+  rep       CrmUserProfile @relation("CrmTeamMembershipRep", fields: [repId], references: [id], onDelete: Cascade)
+  createdAt DateTime       @default(now())
+
+  @@unique([managerId, repId])
+  @@index([repId])
+  @@map("crm_team_memberships")
+}
+
+// ============================================================================
+// CRM MODULE — Entity (B Group subsidiaries)
+// ============================================================================
+
+model CrmEntity {
+  id     String  @id @default(cuid())
+  code   String  @unique
+  nameEn String
+  nameAr String
+  color  String
+  active Boolean @default(true)
+
+  users         CrmUserProfile[]
+  opportunities CrmOpportunity[]
+  products      CrmProduct[]
+  lossReasons   CrmLossReason[]
+  stageConfigs  CrmStageConfig[]
+  leadSources   CrmLeadSource[]
+
+  @@map("crm_entities")
+}
+
+// ============================================================================
+// CRM MODULE — Companies & Contacts
+// ============================================================================
+
+model CrmCompany {
+  id           String           @id @default(cuid())
+  nameEn       String
+  nameAr       String?
+  brandName    String?
+  industry     String?
+  website      String?
+  phone        String?
+  address      String?
+  country      String           @default("EG")
+  city         String?
+  category     CrmClientCategory?
+  notes        String?
+  assignedToId String?
+  assignedTo   CrmUserProfile?  @relation(fields: [assignedToId], references: [id])
+  createdAt    DateTime         @default(now())
+  updatedAt    DateTime         @updatedAt
+
+  contacts      CrmContact[]
+  opportunities CrmOpportunity[]
+  calls         CrmCall[]
+  meetings      CrmMeeting[]
+
+  @@index([assignedToId])
+  @@index([country])
+  @@index([category])
+  @@map("crm_companies")
+}
+
+model CrmContact {
+  id        String   @id @default(cuid())
+  companyId String
+  company   CrmCompany @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  fullName  String
+  role      String?
+  email     String?
+  phone     String?
+  whatsapp  String?
+  isPrimary Boolean  @default(false)
+  linkedIn  String?
+  notes     String?
+  createdAt DateTime @default(now())
+
+  opportunities CrmOpportunity[] @relation("CrmPrimaryContact")
+
+  @@index([companyId])
+  @@index([email])
+  @@map("crm_contacts")
+}
+
+// ============================================================================
+// CRM MODULE — Opportunities
+// ============================================================================
+
+model CrmOpportunity {
+  id               String              @id @default(cuid())
+  code             String              @unique
+  /// Customer company name as free text. The "company" on a sales opp is
+  /// the prospect's company — we don't manage a directory of prospects.
+  /// Reps type the name when they create the opp; managers can search /
+  /// group by it later. Kept alongside the legacy `companyId` for now so
+  /// historical rows continue to render through the existing relation.
+  customerCompanyName String?
+  /// Free-text contact info captured directly on the opp. Reps almost
+  /// always know "the person they're talking to" before they know which
+  /// CrmContact record (if any) they'd attach. Storing it here keeps the
+  /// rep moving — managers can normalise into the curated CrmContact
+  /// directory later if they want to.
+  customerContactName  String?
+  customerContactPhone String?
+  customerContactEmail String?
+  companyId        String?
+  company          CrmCompany?         @relation(fields: [companyId], references: [id])
+  primaryContactId String?
+  primaryContact   CrmContact?         @relation("CrmPrimaryContact", fields: [primaryContactId], references: [id])
+  ownerId          String
+  owner            CrmUserProfile      @relation("CrmOpportunityOwner", fields: [ownerId], references: [id])
+  entityId         String
+  entity           CrmEntity           @relation(fields: [entityId], references: [id])
+
+  title            String
+  /// Stage is a free-text code, not a Prisma enum, so admins can add new
+  /// stages from /crm/admin/stage-config without a schema migration. The
+  /// `CrmStageConfig` table is the source of truth for which stages exist,
+  /// their probabilities, and their display order. The canonical seed gives
+  /// you NEW / CONTACTED / DISCOVERY / QUALIFIED / TECH_MEETING /
+  /// PROPOSAL_SENT / NEGOTIATION / VERBAL_YES / WON / LOST / POSTPONED but
+  /// nothing stops the admin from adding "PILOT" or renaming any of these.
+  stage            String              @default("NEW")
+  priority         CrmPriority         @default(COLD)
+  leadSource       String?
+  dealType         CrmDealType         @default(ONE_TIME)
+
+  // Financial
+  estimatedValue    Decimal  @db.Decimal(14, 2)
+  currency          CrmCurrency @default(EGP)
+  estimatedValueEGP Decimal  @db.Decimal(14, 2)
+  probabilityPct    Int
+  weightedValueEGP  Decimal  @db.Decimal(14, 2)
+
+  // Product linkage
+  products CrmOpportunityProduct[]
+  /// Repeatable contact roster — one opp can have any number of contacts
+  /// (decision maker, technical lead, procurement, etc.). The legacy
+  /// `customerContact*` columns above still hold the single "headline"
+  /// contact for backwards-compat with rows created before the join
+  /// existed; new contacts always go here. Cascade-deletes with the opp.
+  contacts CrmOpportunityContact[]
+  /// Tier-1 #11 — MEDDPICC qualification snapshot (1:1). Created
+  /// lazily on first save from the opp detail page.
+  meddpicc CrmOpportunityMeddpicc?
+  /// Tier-1 #23 — mutual action plan (1:1).
+  closePlan CrmClosePlan?
+  /// Tier-1 #27 — competitors many-to-many.
+  competitors CrmOpportunityCompetitor[]
+  /// In-opp discussion thread (1:N) — see CrmOpportunityComment.
+  comments    CrmOpportunityComment[]
+  /// Tier-2 #31 — which pipeline this opp belongs to. Null = default.
+  pipelineId String?
+  pipeline   CrmPipeline? @relation(fields: [pipelineId], references: [id], onDelete: SetNull)
+  /// Tier-2 #37 — custom-field values keyed by CrmCustomFieldDef.slug.
+  /// Shape: `{ "industry_tier": "A", "expected_arr": 50000 }`. Values
+  /// are validated server-side against the field's `definition` JSON
+  /// at write time.
+  customValuesJson Json?
+  /// Tier-1 #28 — manager's per-opp forecast-category override on top
+  /// of the stage default. Lets a manager pin a deal to Commit even
+  /// though its stage maps to BestCase, for example.
+  forecastCategoryOverride String?
+  /// Tier-2 #40 — slippage history (one row per expectedCloseDate change).
+  closeDateHistory CrmCloseDateHistory[]
+
+  // Timeline
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
+  dateContacted     DateTime?
+  dateDiscovery     DateTime?
+  dateProposalSent  DateTime?
+  expectedCloseDate DateTime?
+  dateClosed        DateTime?
+  deliveryStartDate DateTime?
+
+  // People
+  techSupportId   String?
+  techSupport     CrmUserProfile? @relation("CrmTechSupport", fields: [techSupportId], references: [id])
+  deliveryOwnerId String?
+  deliveryOwner   CrmUserProfile? @relation("CrmDeliveryOwner", fields: [deliveryOwnerId], references: [id])
+
+  // Next step discipline
+  nextAction     CrmNextActionType?
+  nextActionText String?
+  nextActionDate DateTime?
+
+  // Close / Loss
+  lossReasonId     String?
+  lossReason       CrmLossReason? @relation(fields: [lossReasonId], references: [id])
+  lostToCompetitor String?
+
+  // Documents
+  proposalUrl String?
+  contractUrl String?
+
+  // Cold-lead → opportunity link, set when a rep converts an imported lead.
+  convertedFromColdLead CrmColdLead? @relation("CrmColdLeadConverted")
+
+  // Notes & Context
+  description      String?
+  techRequirements String?
+
+  // External sync
+  notionPageId String? @unique
+
+  // Audit
+  stageChanges CrmStageHistory[]
+  calls        CrmCall[]
+  meetings     CrmMeeting[]
+  notes        CrmNote[]
+  activityLogs CrmActivityLog[]
+  attachments  CrmAttachment[]
+
+  /// Soft-delete marker. When non-null, the opportunity is hidden from every
+  /// list but its audit trail (CrmStageHistory, CrmActivityLog, CrmAttachment)
+  /// is preserved. Restorable by an admin until it's purged after the
+  /// retention window. Every findMany query must filter `deletedAt: null`.
+  deletedAt   DateTime?
+  deletedById String?
+
+  @@index([companyId])
+  @@index([ownerId])
+  @@index([entityId])
+  @@index([stage])
+  @@index([priority])
+  @@index([expectedCloseDate])
+  @@index([nextActionDate])
+  @@index([deletedAt])
+  @@map("crm_opportunities")
+}
+
+model CrmOpportunityProduct {
+  id            String         @id @default(cuid())
+  opportunityId String
+  opportunity   CrmOpportunity @relation(fields: [opportunityId], references: [id], onDelete: Cascade)
+  productId     String
+  product       CrmProduct     @relation(fields: [productId], references: [id])
+  quantity      Decimal        @default(1) @db.Decimal(10, 2)
+  unitPriceEGP  Decimal        @db.Decimal(14, 2)
+  discountPct   Decimal        @default(0) @db.Decimal(5, 2)
+
+  @@unique([opportunityId, productId])
+  @@map("crm_opportunity_products")
+}
+
+/// Tier-1 #11 — MEDDPICC qualification snapshot for one opportunity.
+/// One-to-one with CrmOpportunity. Each of the 8 letters gets a 0-3
+/// score (none / weak / decent / strong) so we can roll up a deal-
+/// health number, plus a free-text "notes" field per letter for the
+/// rep to capture context ("Champion: Hala in procurement, met 3x").
+/// Stored normalised (not as JSON on the opp) so historical snapshots
+/// can be exported, audit trails work via Prisma's standard log
+/// patterns, and per-field reporting (which letters are weakest in
+/// our funnel?) is just a normal aggregate. `null` score means
+/// "not assessed yet" so we don't conflate "explicitly bad" with
+/// "haven't asked yet".
+model CrmOpportunityMeddpicc {
+  id            String         @id @default(cuid())
+  opportunityId String         @unique
+  opportunity   CrmOpportunity @relation(fields: [opportunityId], references: [id], onDelete: Cascade)
+  metricsScore           Int?
+  metricsNotes           String?
+  economicBuyerScore     Int?
+  economicBuyerNotes     String?
+  decisionCriteriaScore  Int?
+  decisionCriteriaNotes  String?
+  decisionProcessScore   Int?
+  decisionProcessNotes   String?
+  paperProcessScore      Int?
+  paperProcessNotes      String?
+  identifyPainScore      Int?
+  identifyPainNotes      String?
+  championScore          Int?
+  championNotes          String?
+  competitionScore       Int?
+  competitionNotes       String?
+  updatedAt     DateTime       @updatedAt
+  createdAt     DateTime       @default(now())
+
+  @@map("crm_opportunity_meddpicc")
+}
+
+/// One row per contact person on an opportunity. Free-text (not FK'd to
+/// CrmContact) because reps capture contacts inline during the deal — the
+/// curated CrmContact directory is admin-managed and only covers companies
+/// we explicitly maintain. The CRM Contacts page surfaces both: directory
+/// rows AND these opp-level rows, deduped by phone/email at the read
+/// site. `role` is free text ("Decision maker", "Technical lead", etc.).
+/// Cascade-deletes when the parent opp is hard-deleted.
+model CrmOpportunityContact {
+  id            String         @id @default(cuid())
+  opportunityId String
+  opportunity   CrmOpportunity @relation(fields: [opportunityId], references: [id], onDelete: Cascade)
+  name          String
+  role          String?
+  phone         String?
+  email         String?
+  whatsapp      String?
+  isPrimary     Boolean        @default(false)
+  notes         String?
+  /// Tier-1 #12 — stakeholder role + influence + sentiment. `roleType`
+  /// is one of: Champion / EconomicBuyer / DecisionMaker / Influencer
+  /// / Blocker / EndUser / Coach (free text so admins can extend).
+  /// `influence` 1-5 (low to high). `sentiment` "For" / "Neutral" /
+  /// "Against". All nullable so existing contact rows stay valid.
+  roleType   String?
+  influence  Int?
+  sentiment  String?
+  createdAt     DateTime       @default(now())
+  updatedAt     DateTime       @updatedAt
+
+  @@index([opportunityId])
+  @@index([email])
+  @@index([phone])
+  @@map("crm_opportunity_contacts")
+}
+
+/// Tier-1 #15 + #17 — per-rep capacity + routing weight.
+/// `maxOpenLeads` caps how many ASSIGNED + NO_ANSWER cold leads a rep
+/// can hold; routing skips reps over the cap. `routingWeight` is the
+/// round-robin weight (1 = default, 2 = senior gets twice as many,
+/// 0.5 = ramping new hire gets half). Implemented as a separate
+/// table rather than columns on CrmUserProfile so the schema doesn't
+/// bloat for the 95% of installs that don't need either knob.
+model CrmRepCapacity {
+  id            String         @id @default(cuid())
+  repId         String         @unique
+  rep           CrmUserProfile @relation("CrmRepCapacity", fields: [repId], references: [id], onDelete: Cascade)
+  maxOpenLeads  Int?
+  routingWeight Float          @default(1.0)
+  skillTags     String[]       @default([])
+  pausedUntil   DateTime?
+  createdAt     DateTime       @default(now())
+  updatedAt     DateTime       @updatedAt
+
+  @@map("crm_rep_capacities")
+}
+
+/// Tier-1 #16 — per-status recycle policy. When a lead stays in a
+/// "stuck" status (NO_ANSWER, WAITING_LIST, NOT_INTERESTED) past the
+/// cooldown OR has been recycled `maxAttempts` times, the recycle
+/// job moves it to ARCHIVED — or back to the unassigned pool, per
+/// `recycleTarget`.
+model CrmLeadRecyclePolicy {
+  id            String            @id @default(cuid())
+  status        CrmColdLeadStatus @unique
+  cooldownDays  Int
+  maxAttempts   Int               @default(3)
+  recycleTarget String            @default("unassigned-pool") // "unassigned-pool" | "archive" | "original-rep"
+  active        Boolean           @default(true)
+  createdAt     DateTime          @default(now())
+  updatedAt     DateTime          @updatedAt
+
+  @@map("crm_lead_recycle_policies")
+}
+
+/// Tier-1 #23 — mutual action plan (close plan). One per opp, with
+/// repeatable items. Public `shareToken` lets the buyer view a
+/// read-only version without a CRM login.
+model CrmClosePlan {
+  id            String              @id @default(cuid())
+  opportunityId String              @unique
+  opportunity   CrmOpportunity      @relation(fields: [opportunityId], references: [id], onDelete: Cascade)
+  title         String              @default("Mutual Action Plan")
+  shareToken    String?             @unique
+  items         CrmClosePlanItem[]
+  createdAt     DateTime            @default(now())
+  updatedAt     DateTime            @updatedAt
+
+  @@map("crm_close_plans")
+}
+
+model CrmClosePlanItem {
+  id           String        @id @default(cuid())
+  planId       String
+  plan         CrmClosePlan  @relation(fields: [planId], references: [id], onDelete: Cascade)
+  title        String
+  ownerSide    String        @default("us") // "us" | "them"
+  dueDate      DateTime?
+  status       String        @default("open") // open | done | blocked
+  orderIndex   Int           @default(0)
+  notes        String?
+  createdAt    DateTime      @default(now())
+  updatedAt    DateTime      @updatedAt
+
+  @@index([planId])
+  @@map("crm_close_plan_items")
+}
+
+/// Tier-1 #24 — admin-attached playbook content per stage. Rich
+/// markdown / HTML the rep sees inline on the opp sidebar when the
+/// opp is in that stage.
+model CrmStagePlaybook {
+  id        String   @id @default(cuid())
+  stage     String   @unique
+  bodyMd    String
+  active    Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@map("crm_stage_playbooks")
+}
+
+/// Tier-1 #25 — activity quotas per stage (calls / meetings within N
+/// days before the opp is allowed to leave the stage). Admin-defined,
+/// validated in `changeStage` alongside required-fields gating.
+model CrmStageActivityQuota {
+  id           String  @id @default(cuid())
+  stage        String
+  activityType String  // "call" | "meeting" | "email"
+  minCount     Int
+  windowDays   Int     @default(30)
+  active       Boolean @default(true)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  @@unique([stage, activityType])
+  @@map("crm_stage_activity_quotas")
+}
+
+/// Tier-1 #27 — admin-curated competitor list + per-opp many-to-many.
+model CrmCompetitor {
+  id        String                      @id @default(cuid())
+  name      String                      @unique
+  active    Boolean                     @default(true)
+  notes     String?
+  createdAt DateTime                    @default(now())
+  opps      CrmOpportunityCompetitor[]
+
+  @@map("crm_competitors")
+}
+
+model CrmOpportunityCompetitor {
+  id            String         @id @default(cuid())
+  opportunityId String
+  opportunity   CrmOpportunity @relation(fields: [opportunityId], references: [id], onDelete: Cascade)
+  competitorId  String
+  competitor    CrmCompetitor  @relation(fields: [competitorId], references: [id], onDelete: Cascade)
+  wasPrimary    Boolean        @default(false)
+  createdAt     DateTime       @default(now())
+
+  @@unique([opportunityId, competitorId])
+  @@index([opportunityId])
+  @@map("crm_opportunity_competitors")
+}
+
+/// In-opp discussion thread. Reps and managers leave comments on a
+/// specific opportunity, optionally @-mentioning each other. Each
+/// mention writes a CrmNotification row so the mentioned user sees
+/// "X mentioned you on <opp>" in the bell.
+///
+/// The body is plain text with `@<crmProfileId>` tokens for mentions
+/// (so renames don't break old comments — we resolve to the live
+/// profile at render time). The client renders these as linked chips.
+model CrmOpportunityComment {
+  id            String                          @id @default(cuid())
+  opportunityId String
+  opportunity   CrmOpportunity                  @relation(fields: [opportunityId], references: [id], onDelete: Cascade)
+  authorId      String
+  author        CrmUserProfile                  @relation("CrmCommentAuthor", fields: [authorId], references: [id])
+  /// Tier-1 #30 — when the row was written under impersonation, this
+  /// carries the admin's CrmUserProfile.id. authorId still records
+  /// the target (so REP-scope queries / mention authorship still see
+  /// the user the impersonator acted as), and audit-log surfaces can
+  /// reveal the admin behind the action via this field.
+  actingAdminId String?
+  actingAdmin   CrmUserProfile?                 @relation("CrmCommentActingAdmin", fields: [actingAdminId], references: [id])
+  body          String
+  mentions      CrmOpportunityCommentMention[]
+  /// Edited comments stamp `editedAt`; deletes are soft (deletedAt)
+  /// so the audit trail stays intact.
+  editedAt      DateTime?
+  deletedAt     DateTime?
+  createdAt     DateTime                        @default(now())
+  updatedAt     DateTime                        @updatedAt
+
+  @@index([opportunityId, createdAt])
+  @@index([authorId])
+  @@map("crm_opportunity_comments")
+}
+
+model CrmOpportunityCommentMention {
+  id              String                @id @default(cuid())
+  commentId       String
+  comment         CrmOpportunityComment @relation(fields: [commentId], references: [id], onDelete: Cascade)
+  /// CrmUserProfile id of the mentioned user. We mention by CRM
+  /// profile (not User.id) because the dropdown picker only knows
+  /// CRM users — every mention is in the CRM scope.
+  mentionedUserId String
+  mentioned       CrmUserProfile        @relation("CrmCommentMentions", fields: [mentionedUserId], references: [id])
+  createdAt       DateTime              @default(now())
+
+  @@unique([commentId, mentionedUserId])
+  @@index([mentionedUserId])
+  @@map("crm_opportunity_comment_mentions")
+}
+
+/// CRM-side notification bucket. Mirrors HrNotification +
+/// PartnerNotification so the unified /api/notifications endpoint
+/// fans out to all three modules. Today's only producer is comment
+/// mentions on opps; future producers (workflow notify-in-app,
+/// alert-rule fan-out, lead-SLA reminders) will append rows here
+/// rather than reusing CrmActivityLog (which is a hard audit log,
+/// not user-targeted).
+model CrmNotification {
+  id        String   @id @default(cuid())
+  /// Auth User id (NOT crmProfile id) — keeps it consistent with
+  /// HrNotification + PartnerNotification so the unified read
+  /// endpoint can dispatch by `session.user.id`.
+  userId    String
+  type      String   /// e.g. "mention", "comment_reply", future kinds
+  title     String
+  message   String
+  isRead    Boolean  @default(false)
+  /// Where the bell click should navigate (e.g. "/crm/opportunities/<id>").
+  href      String?
+  /// Arbitrary blob — `{ opportunityId, commentId, mentionedById }`
+  /// for mentions.
+  metadata  Json?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([userId, isRead])
+  @@index([userId, createdAt])
+  @@map("crm_notifications")
+}
+
+/// Tier-1 #28 — manager forecast submission overlay. One row per
+/// (manager, period, category) — the manager's judgement on what
+/// they'll actually deliver, alongside the system roll-up.
+model CrmForecastSubmission {
+  id              String         @id @default(cuid())
+  managerId       String
+  manager         CrmUserProfile @relation("CrmForecastManager", fields: [managerId], references: [id], onDelete: Cascade)
+  periodKey       String         // YYYY-MM for monthly, YYYY-Q1 for quarterly
+  commitEGP       Decimal        @db.Decimal(14, 2)
+  bestCaseEGP     Decimal        @db.Decimal(14, 2)
+  notes           String?
+  submittedAt     DateTime       @default(now())
+
+  @@unique([managerId, periodKey])
+  @@index([periodKey])
+  @@map("crm_forecast_submissions")
+}
+
+model CrmStageHistory {
+  id            String               @id @default(cuid())
+  opportunityId String
+  opportunity   CrmOpportunity       @relation(fields: [opportunityId], references: [id], onDelete: Cascade)
+  /// Matches CrmOpportunity.stage — String, not enum, so the audit trail
+  /// can record transitions involving admin-added stages.
+  fromStage     String?
+  toStage       String
+  changedAt     DateTime             @default(now())
+  changedById   String
+  /// CrmUserProfile.id of the admin behind the action when the
+  /// stage change happened under impersonation. changedById still
+  /// records the target (so visibility / authorship is consistent
+  /// with the rest of the audit trail), and this column reveals
+  /// who actually initiated.
+  actingAdminId String?
+  durationDays  Int?
+
+  @@index([opportunityId])
+  @@map("crm_stage_histories")
+}
+
+// ============================================================================
+// CRM MODULE — Call Log
+// ============================================================================
+
+model CrmCall {
+  id            String          @id @default(cuid())
+  code          String          @unique
+  opportunityId String?
+  opportunity   CrmOpportunity? @relation(fields: [opportunityId], references: [id])
+  companyId     String?
+  company       CrmCompany?     @relation(fields: [companyId], references: [id])
+  contactId     String?
+  contactName   String?
+  callerId      String
+  caller        CrmUserProfile  @relation(fields: [callerId], references: [id])
+  /// CrmUserProfile.id of the admin behind the action when the call
+  /// was logged under impersonation. callerId is the target; this
+  /// column reveals the admin behind the action.
+  actingAdminId String?
+
+  callType       CrmCallType
+  outcome        CrmCallOutcome
+  durationMins   Int            @default(0)
+  callAt         DateTime       @default(now())
+  nextActionText String?
+  nextActionDate DateTime?
+  notes          String?
+
+  @@index([callerId, callAt])
+  @@index([opportunityId])
+  @@index([companyId])
+  @@index([contactId])
+  @@map("crm_calls")
+}
+
+// ============================================================================
+// CRM MODULE — Daily reports (replaces ad-hoc call logging)
+// ============================================================================
+
+model CrmDailyReport {
+  id              String         @id @default(cuid())
+  repId           String
+  rep             CrmUserProfile @relation("CrmDailyReportRep", fields: [repId], references: [id])
+  /// Calendar day this report covers (UTC midnight).
+  reportDate      DateTime
+  callsCount      Int            @default(0)
+  meetingsBooked  Int            @default(0)
+  meetingsHeld    Int            @default(0)
+  newLeads        Int            @default(0)
+  notes           String         @default("")
+  createdAt       DateTime       @default(now())
+  updatedAt       DateTime       @updatedAt
+
+  @@unique([repId, reportDate])
+  @@index([reportDate])
+  @@map("crm_daily_reports")
+}
+
+// ============================================================================
+// CRM MODULE — Technical Meeting Booking
+// ============================================================================
+
+enum CrmMeetingType {
+  DEMO
+  OFFICE_VISIT
+  FOLLOWUP
+  PROPOSAL
+  ONBOARDING
+}
+
+enum CrmMeetingStatus {
+  /// The sales rep has booked the slot but the meeting is not yet approved.
+  /// Lives in the assistant's queue until they confirm with the tech team.
+  PENDING_APPROVAL
+  /// Legacy alias for PENDING_APPROVAL — kept for existing data; new rows
+  /// should use PENDING_APPROVAL going forward.
+  WAITING
+  /// Assistant has approved the booking; sales rep can now confirm with client.
+  APPROVED
+  /// Assistant has denied the booking (tech team unavailable, conflict, etc.).
+  DENIED
+  /// Final state — meeting confirmed with client and held.
+  CONFIRMED
+  DONE
+  CANCELLED
+}
+
+model CrmMeeting {
+  id              String           @id @default(cuid())
+  code            String           @unique
+  /// Optional linked opportunity / company.
+  opportunityId   String?
+  opportunity     CrmOpportunity?  @relation(fields: [opportunityId], references: [id])
+  companyId       String?
+  company         CrmCompany?      @relation(fields: [companyId], references: [id])
+  contactName     String?
+  contactPhone    String?
+  /// Sales rep who booked the meeting (and whose slot is "occupied" by it).
+  scheduledById   String
+  scheduledBy     CrmUserProfile   @relation("CrmMeetingScheduler", fields: [scheduledById], references: [id])
+  /// CrmUserProfile.id of the admin when the meeting was booked
+  /// under impersonation. scheduledById is the target; this column
+  /// reveals the admin behind the action.
+  actingAdminId   String?
+
+  startAt         DateTime
+  endAt           DateTime
+  durationMinutes Int
+  meetingType     CrmMeetingType   @default(DEMO)
+  customerNeed    String?
+  notes           String?
+  status          CrmMeetingStatus @default(PENDING_APPROVAL)
+
+  /// Assistant approval workflow — a booked meeting starts PENDING_APPROVAL.
+  /// The assistant checks with the tech team and approves/denies. Sales reps
+  /// can't confirm with the client until approvedAt is set.
+  approvedById    String?
+  approvedBy      CrmUserProfile?  @relation("CrmMeetingApprover", fields: [approvedById], references: [id])
+  approvedAt      DateTime?
+  /// On denial, the assistant leaves a reason so the rep knows what to fix
+  /// (tech-team conflict, no engineer with X skill, room booked, etc.).
+  deniedReason    String?
+  deniedAt        DateTime?
+
+  createdAt       DateTime         @default(now())
+  updatedAt       DateTime         @updatedAt
+
+  @@index([scheduledById, startAt])
+  @@index([startAt])
+  @@index([status])
+  @@index([approvedById])
+  @@map("crm_meetings")
+}
+
+// ============================================================================
+// CRM MODULE — Products
+// ============================================================================
+
+model CrmProduct {
+  id            String      @id @default(cuid())
+  code          String      @unique
+  entityId      String
+  entity        CrmEntity   @relation(fields: [entityId], references: [id])
+  category      String
+  nameEn        String
+  nameAr        String
+  description   String?
+  descriptionAr String?
+  basePrice     Decimal     @db.Decimal(14, 2)
+  currency      CrmCurrency
+  dealType      CrmDealType
+  active        Boolean     @default(true)
+
+  opportunities CrmOpportunityProduct[]
+
+  @@index([entityId, category])
+  @@index([active])
+  @@map("crm_products")
+}
+
+// ============================================================================
+// CRM MODULE — Notes & Activity
+// ============================================================================
+
+model CrmNote {
+  id            String          @id @default(cuid())
+  opportunityId String?
+  opportunity   CrmOpportunity? @relation(fields: [opportunityId], references: [id], onDelete: Cascade)
+  companyId     String?
+  authorId      String
+  author        CrmUserProfile  @relation(fields: [authorId], references: [id])
+  /// Admin's CrmUserProfile.id when the note was written under
+  /// impersonation (authorId is the impersonation target).
+  actingAdminId String?
+  content       String          @db.Text
+  createdAt     DateTime        @default(now())
+
+  @@index([opportunityId])
+  @@index([companyId])
+  @@map("crm_notes")
+}
+
+model CrmActivityLog {
+  id            String          @id @default(cuid())
+  opportunityId String?
+  opportunity   CrmOpportunity? @relation(fields: [opportunityId], references: [id], onDelete: Cascade)
+  actorId       String
+  actor         CrmUserProfile  @relation(fields: [actorId], references: [id])
+  /// Admin's CrmUserProfile.id when the action was performed under
+  /// impersonation. actorId is the impersonation target; this is the
+  /// admin behind the action. Null on regular self-acted rows.
+  actingAdminId String?
+  action        String
+  metadata      Json?
+  createdAt     DateTime        @default(now())
+
+  @@index([opportunityId, createdAt])
+  @@index([actorId, createdAt])
+  @@map("crm_activity_logs")
+}
+
+model CrmAttachment {
+  id            String            @id @default(cuid())
+  opportunityId String
+  opportunity   CrmOpportunity    @relation(fields: [opportunityId], references: [id], onDelete: Cascade)
+  filename      String
+  url           String
+  sizeBytes     Int
+  mimeType      String
+  kind          CrmAttachmentKind
+  uploadedById  String
+  createdAt     DateTime          @default(now())
+
+  @@map("crm_attachments")
+}
+
+// ============================================================================
+// CRM MODULE — Configuration Tables
+// ============================================================================
+
+model CrmStageConfig {
+  id             String              @id @default(cuid())
+  entityId       String?
+  entity         CrmEntity?          @relation(fields: [entityId], references: [id])
+  /// Free-text stage code (NEW / CONTACTED / PILOT / whatever the admin adds).
+  stage          String
+  /// Soft-delete flag: admins can hide a stage from the pipeline without
+  /// dropping the underlying enum value (which would break historical data).
+  /// Stages with isActive=false don't appear in the dropdown / kanban.
+  isActive       Boolean             @default(true)
+  /// Optional override of the enum's default label, per locale. Lets the
+  /// admin rename "TECH_MEETING" to "Discovery call", etc., without code
+  /// changes. Null falls back to the static stage-labels translation file.
+  customLabelEn  String?
+  customLabelAr  String?
+  probabilityPct Int
+  slaHours       Int?
+  displayOrder   Int
+  /// Tier-0 item 2 — stage semantics. `stageType` lets reports stop
+  /// hard-coding `stage === "WON"`, and `forecastCategory` powers a
+  /// Salesforce-style commit/best-case roll-up on top of the existing
+  /// weighted pipeline. Both default to "open"/"pipeline" so existing
+  /// rows behave the same as today until an admin re-categorises them.
+  stageType        String?  @default("open")   // open | won | lost | abandoned
+  forecastCategory String?  @default("pipeline") // pipeline | bestCase | commit | closed | omitted
+  /// Tier-0 item 3 — stalled-deal detection. Computed against
+  /// CrmStageHistory entries: if `now - lastChangedAt > maxDays` the
+  /// opp shows a "stalled X days" badge on the kanban card and a
+  /// "stuck deals" widget on the group dashboard.
+  targetDays Int?
+  maxDays    Int?
+  /// Tier-0 item 1 — required-fields gating. JSON list of opportunity
+  /// field paths that must be non-null before an opp can EXIT this
+  /// stage (drag-drop or stage change). Shape: `["estimatedValue",
+  /// "nextActionDate", "primaryContactId"]`. Empty/null = no gate
+  /// (current behaviour). Enforced server-side in `changeStage`.
+  requiredFieldsJson Json?
+  /// Tier-2 #31 — which pipeline this stage belongs to. Null = legacy
+  /// default pipeline (rows created before the migration).
+  pipelineId String?
+  pipeline   CrmPipeline? @relation(fields: [pipelineId], references: [id], onDelete: SetNull)
+
+  @@unique([entityId, stage])
+  @@map("crm_stage_configs")
+}
+
+/// Tier-1 #30 — admin "act as" / impersonation. One active session
+/// per admin (unique on adminUserId). The auth JWT callback looks
+/// for a row keyed by the actually-signed-in user; if present, the
+/// downstream session reports the TARGET user but tags `actingAs`
+/// with the admin's id so the banner can render "Return to admin".
+///
+/// Audit trail: start/stop both write CrmImpersonationAudit rows.
+model CrmImpersonationSession {
+  id           String   @id @default(cuid())
+  adminUserId  String   @unique
+  targetUserId String
+  startedAt    DateTime @default(now())
+  reason       String?
+
+  @@map("crm_impersonation_sessions")
+}
+
+model CrmImpersonationAudit {
+  id           String   @id @default(cuid())
+  adminUserId  String
+  targetUserId String
+  event        String
+  reason       String?
+  ipAddress    String?
+  at           DateTime @default(now())
+
+  @@index([adminUserId])
+  @@index([targetUserId])
+  @@map("crm_impersonation_audits")
+}
+
+/// Tier-2 #34 — configurable lead status state machine. Replaces the
+/// hardcoded transitions enforced today in the disposition endpoint.
+/// One row per allowed (from, to) pair. Empty table = anything goes
+/// (back-compat for installs that haven't configured it).
+model CrmLeadStatusTransition {
+  id              String            @id @default(cuid())
+  fromStatus      CrmColdLeadStatus
+  toStatus        CrmColdLeadStatus
+  requiresReason  Boolean           @default(false)
+  allowedRoles    String[]          @default([])
+  active          Boolean           @default(true)
+  createdAt       DateTime          @default(now())
+
+  @@unique([fromStatus, toStatus])
+  @@map("crm_lead_status_transitions")
+}
+
+/// Tier-2 #36 — workflow / automation engine. Admin builds:
+///   trigger    event description (e.g. "opp.stage.changed",
+///              "lead.assignedAt.elapsed", "schedule.cron")
+///   condition  JSON predicate evaluated against the trigger payload
+///   action     JSON describing what to do (create task, set field,
+///              POST webhook, send email, reassign, etc.)
+///
+/// `suppressionWindowMinutes` prevents re-firing on the same entity
+/// within the window (default 1440 = 24h) so alert fatigue stays in
+/// check. `lastFiredAt` is the runtime bookkeeping.
+model CrmWorkflow {
+  id                      String   @id @default(cuid())
+  name                    String
+  description             String?
+  triggerKind             String
+  triggerConfig           Json?
+  conditionJson           Json?
+  actionJson              Json
+  suppressionWindowMinutes Int     @default(1440)
+  isActive                Boolean  @default(true)
+  lastFiredAt             DateTime?
+  createdAt               DateTime @default(now())
+  updatedAt               DateTime @updatedAt
+  runs                    CrmWorkflowRun[]
+
+  @@index([triggerKind])
+  @@map("crm_workflows")
+}
+
+model CrmWorkflowRun {
+  id          String      @id @default(cuid())
+  workflowId  String
+  workflow    CrmWorkflow @relation(fields: [workflowId], references: [id], onDelete: Cascade)
+  status      String      // queued | running | success | failed | suppressed
+  entityType  String?
+  entityId    String?
+  payloadJson Json?
+  resultJson  Json?
+  error       String?
+  firedAt     DateTime    @default(now())
+  finishedAt  DateTime?
+
+  @@index([workflowId, firedAt])
+  @@index([entityId])
+  @@map("crm_workflow_runs")
+}
+
+/// Tier-2 #38 — saved dashboard layouts. Each dashboard is a list of
+/// widget configs (the renderer maps `kind` → React component). One
+/// row per (owner, name). Sharing model mirrors CrmSavedView.
+model CrmDashboard {
+  id        String         @id @default(cuid())
+  ownerId   String
+  owner     CrmUserProfile @relation("CrmDashboardOwner", fields: [ownerId], references: [id], onDelete: Cascade)
+  name      String
+  layoutJson Json          // array of { kind, params, x, y, w, h }
+  isShared  Boolean        @default(false)
+  createdAt DateTime       @default(now())
+  updatedAt DateTime       @updatedAt
+
+  @@index([ownerId])
+  @@map("crm_dashboards")
+}
+
+/// Tier-2 #39 — alert rules engine. Each rule is a saved query +
+/// notification config. The nightly evaluator scans against
+/// `predicateJson` and notifies matching opps once per `suppressionDays`.
+model CrmAlertRule {
+  id              String   @id @default(cuid())
+  name            String
+  scope           String   // "opportunity" | "coldLead"
+  predicateJson   Json     // structured filter: { field, op, value }[]
+  channels        String[] @default(["in-app"])
+  suppressionDays Int      @default(1)
+  isActive        Boolean  @default(true)
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  @@map("crm_alert_rules")
+}
+
+/// Tier-2 #40 — slippage tracking. Every change to
+/// `expectedCloseDate` writes a row here so admins can run "deals
+/// slipped > 30 days cumulative" reports.
+model CrmCloseDateHistory {
+  id            String         @id @default(cuid())
+  opportunityId String
+  opportunity   CrmOpportunity @relation(fields: [opportunityId], references: [id], onDelete: Cascade)
+  oldDate       DateTime?
+  newDate       DateTime?
+  changedAt     DateTime       @default(now())
+  changedById   String
+
+  @@index([opportunityId])
+  @@map("crm_close_date_history")
+}
+
+/// Tier-2 #43 — rejected rows from CSV / Excel imports. Each row is
+/// a single rejected lead with the original row data + the reason it
+/// was blocked. Admin re-reviews from this queue and bulk re-imports
+/// the cleaned set.
+model CrmColdLeadImportReject {
+  id            String   @id @default(cuid())
+  importBatchId String?
+  rowNumber     Int
+  rawJson       Json
+  reason        String
+  createdAt     DateTime @default(now())
+
+  @@index([importBatchId])
+  @@map("crm_cold_lead_import_rejects")
+}
+
+/// Tier-2 #31 — multiple named pipelines. Each pipeline has its own
+/// stages (CrmStageConfig.pipelineId references this), probabilities,
+/// rotting thresholds, required-field gates. The default pipeline
+/// holds existing rows when `pipelineId` is null on either side so
+/// upgrades don't break anything.
+///
+///   kind = "new-business" | "renewal" | "expansion" | custom
+///
+/// `defaultForKind` lets one row per kind be the auto-target for new
+/// opps of that kind (e.g. "auto-create renewal opp in this pipeline
+/// when X closes WON").
+model CrmPipeline {
+  id              String   @id @default(cuid())
+  name            String   @unique
+  kind            String   @default("new-business")
+  defaultForKind  Boolean  @default(false)
+  isActive        Boolean  @default(true)
+  displayOrder    Int      @default(0)
+  description     String?
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  stageConfigs CrmStageConfig[]
+  opportunities CrmOpportunity[]
+
+  @@map("crm_pipelines")
+}
+
+/// Tier-2 #37 — custom-fields meta-schema. Admin defines a typed
+/// field per object (opportunity / contact / lead / company). The
+/// `definition` JSON carries field-type-specific config (picklist
+/// options, min/max for numbers, regex for text, etc.).
+///
+///   objectType  "opportunity" | "contact" | "coldLead" | "company"
+///   kind        "text" | "number" | "picklist" | "date" | "boolean" | "lookup"
+///   slug        snake_case identifier, unique per object
+///
+/// Values are stored on the corresponding entity via the matching
+/// `customValuesJson` column (added in this migration to Opportunity,
+/// Contact, Cold Lead, Company). One JSON column avoids N joins
+/// per row read at the cost of slightly weaker queryability —
+/// acceptable for an admin-defined schema where most queries are
+/// against the core (non-custom) columns.
+model CrmCustomFieldDef {
+  id          String  @id @default(cuid())
+  objectType  String
+  slug        String
+  label       String
+  kind        String
+  required    Boolean @default(false)
+  definition  Json?
+  displayOrder Int    @default(0)
+  active      Boolean @default(true)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@unique([objectType, slug])
+  @@index([objectType])
+  @@map("crm_custom_field_defs")
+}
+
+/// Tier-1 #18 — per-rep, per-period quota with ramping support. Replaces
+/// the simple `monthlyTargetEGP` for orgs that want quarterly/annual
+/// targets, ramped numbers for new hires, or split quotas (new business
+/// vs. expansion). The legacy column stays as the default fallback for
+/// reps without explicit quota rows.
+///
+///   period          "monthly" | "quarterly" | "annual"
+///   periodStart     first day of the period (UTC midnight) — keys the row
+///   amountEGP       the quota in EGP for the entire period
+///   splitKind       optional: "new-business" / "expansion" / "all" (default)
+///                   so the same rep can have multiple parallel quotas.
+///   notes           free text for HR ("ramped 75% — month 2 of onboarding")
+///
+/// Unique on (repId, period, periodStart, splitKind) so re-setting a
+/// quota replaces in place rather than stacking.
+model CrmQuota {
+  id          String         @id @default(cuid())
+  repId       String
+  rep         CrmUserProfile @relation("CrmQuotaRep", fields: [repId], references: [id], onDelete: Cascade)
+  period      String
+  periodStart DateTime
+  amountEGP   Decimal        @db.Decimal(14, 2)
+  splitKind   String         @default("all")
+  notes       String?
+  createdAt   DateTime       @default(now())
+  updatedAt   DateTime       @updatedAt
+
+  @@unique([repId, period, periodStart, splitKind])
+  @@index([repId])
+  @@index([periodStart])
+  @@map("crm_quotas")
+}
+
+/// Tier-0 item 6 — saved smart views. Admin-curated, URL-shareable
+/// filtered views on opportunities / cold-leads / contacts / calls.
+/// `scope` is `"<module>:<resource>"` (e.g. "crm:opportunities") so the
+/// same table serves every list page. `filtersJson` is the encoded
+/// query-string parameters the list page already accepts (q, status,
+/// owner, batchId, etc.) — applied client-side when a view is loaded.
+/// `isShared = true` makes the view visible to every CRM user;
+/// otherwise it's the creator's personal view. No team-level sharing
+/// yet — kept simple for the first cut.
+model CrmSavedView {
+  id          String         @id @default(cuid())
+  ownerId     String
+  owner       CrmUserProfile @relation("CrmSavedViewOwner", fields: [ownerId], references: [id], onDelete: Cascade)
+  scope       String
+  name        String
+  filtersJson Json
+  isShared    Boolean        @default(false)
+  createdAt   DateTime       @default(now())
+  updatedAt   DateTime       @updatedAt
+
+  @@index([scope])
+  @@index([ownerId])
+  @@map("crm_saved_views")
+}
+
+/**
+ * Customer-need taxonomy for meeting bookings & opportunity tagging.
+ * The meeting form's "What does the customer need?" dropdown used to be a
+ * hardcoded list (`["B-Clinics", "B-Optical", ...]`); admins now manage it
+ * here so they can add/remove offerings without code changes.
+ */
+model CrmCustomerNeed {
+  id        String   @id @default(cuid())
+  labelEn   String
+  labelAr   String   @default("")
+  /// Optional grouping (e.g. "Healthcare" / "Tech"). Display-only.
+  category  String   @default("")
+  /// Inactive needs are hidden from the picker but preserved for historical
+  /// rows that already reference them by label string.
+  active    Boolean  @default(true)
+  /// Lower = shown earlier in the dropdown.
+  sortOrder Int      @default(0)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([labelEn])
+  @@map("crm_customer_needs")
+}
+
+/**
+ * Per-meeting-type display config. The underlying `CrmMeetingType` enum
+ * doesn't change, but admins can rename labels (per locale), hide types
+ * they don't run, and reorder them.
+ */
+model CrmMeetingTypeConfig {
+  id        String   @id @default(cuid())
+  /// Matches a CrmMeetingType enum value: DEMO / OFFICE_VISIT / FOLLOWUP /
+  /// PROPOSAL / ONBOARDING. Stored as String so adding a new enum doesn't
+  /// require a migration.
+  code      String   @unique
+  labelEn   String
+  labelAr   String   @default("")
+  active    Boolean  @default(true)
+  sortOrder Int      @default(0)
+
+  @@map("crm_meeting_type_configs")
+}
+
+model CrmLossReason {
+  id       String     @id @default(cuid())
+  code     String
+  labelEn  String
+  labelAr  String
+  entityId String?
+  entity   CrmEntity? @relation(fields: [entityId], references: [id])
+  active   Boolean    @default(true)
+
+  opportunities CrmOpportunity[]
+
+  @@unique([entityId, code])
+  @@map("crm_loss_reasons")
+}
+
+model CrmLeadSource {
+  id       String     @id @default(cuid())
+  code     String
+  labelEn  String
+  labelAr  String
+  entityId String?
+  entity   CrmEntity? @relation(fields: [entityId], references: [id])
+  active   Boolean    @default(true)
+
+  @@unique([entityId, code])
+  @@map("crm_lead_sources")
+}
+
+model CrmFxRate {
+  id        String      @id @default(cuid())
+  currency  CrmCurrency @unique
+  toEGP     Decimal     @db.Decimal(12, 4)
+  updatedAt DateTime    @updatedAt
+
+  @@map("crm_fx_rates")
+}
+
+model CrmSystemConfig {
+  key   String @id
+  value String
+
+  @@map("crm_system_configs")
+}
+
+// ============================================================================
+// PARTNERS MODULE — Enums
+// ============================================================================
+
+enum PartnerLeadStatus {
+  NEW
+  CONTACTED
+  QUALIFIED
+  LOST
+}
+
+enum PartnerDealStatus {
+  PENDING
+  WON
+  LOST
+}
+
+enum PartnerContractStatus {
+  REQUESTED
+  APPROVED
+  REJECTED
+}
+
+enum PartnerInvoiceStatus {
+  REQUESTED
+  APPROVED
+  REJECTED
+}
+
+enum PartnerCommissionStatus {
+  PENDING
+  APPROVED
+  PAID
+}
+
+enum PartnerNotificationType {
+  CONTRACT_APPROVED
+  CONTRACT_REJECTED
+  INVOICE_APPROVED
+  INVOICE_REJECTED
+  COMMISSION_APPROVED
+  COMMISSION_PAID
+  DEAL_WON
+  GENERAL
+}
+
+// ============================================================================
+// PARTNERS MODULE — Profile
+// ============================================================================
+
+model PartnerProfile {
+  id             String   @id @default(cuid())
+  userId         String   @unique
+  user           User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  companyName    String
+  contactPhone   String?
+  commissionRate Float    @default(10)
+  isActive       Boolean  @default(true)
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  leads       PartnerLead[]
+  clients     PartnerClient[]
+  deals       PartnerDeal[]
+  contracts   PartnerContract[]
+  invoices    PartnerInvoice[]
+  commissions PartnerCommission[]
+  payouts     PartnerPayout[]
+
+  @@map("partner_profiles")
+}
+
+// ============================================================================
+// PARTNERS MODULE — Leads & Clients
+// ============================================================================
+
+model PartnerLead {
+  id                  String            @id @default(cuid())
+  partnerId           String
+  partner             PartnerProfile    @relation(fields: [partnerId], references: [id])
+  name                String
+  email               String?
+  phone               String?
+  company             String?
+  status              PartnerLeadStatus @default(NEW)
+  notes               String?
+  convertedToClientId String?           @unique
+  convertedToClient   PartnerClient?    @relation("PartnerLeadConversion", fields: [convertedToClientId], references: [id])
+  createdAt           DateTime          @default(now())
+  updatedAt           DateTime          @updatedAt
+  /// Soft-delete marker. Hides the lead from default queries; preserves
+  /// the audit trail of who-owned-it-when. Restorable.
+  deletedAt           DateTime?
+  deletedById         String?
+
+  @@index([partnerId])
+  @@index([status])
+  @@index([partnerId, status])
+  @@index([deletedAt])
+  @@map("partner_leads")
+}
+
+model PartnerClient {
+  id        String         @id @default(cuid())
+  partnerId String
+  partner   PartnerProfile @relation(fields: [partnerId], references: [id])
+  name      String
+  email     String?
+  phone     String?
+  company   String?
+  createdAt DateTime       @default(now())
+  updatedAt DateTime       @updatedAt
+  /// Soft-delete marker — same semantics as PartnerLead.
+  deletedAt DateTime?
+  deletedById String?
+
+  convertedFromLead PartnerLead? @relation("PartnerLeadConversion")
+  deals             PartnerDeal[]
+
+  @@index([partnerId])
+  @@index([deletedAt])
+  @@map("partner_clients")
+}
+
+// ============================================================================
+// PARTNERS MODULE — Services & Deals
+// ============================================================================
+
+model PartnerService {
+  id          String   @id @default(cuid())
+  name        String
+  description String?
+  basePrice   Float
+  isActive    Boolean  @default(true)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  deals PartnerDeal[]
+
+  @@map("partner_services")
+}
+
+model PartnerDeal {
+  id        String            @id @default(cuid())
+  partnerId String
+  partner   PartnerProfile    @relation(fields: [partnerId], references: [id])
+  clientId  String
+  client    PartnerClient     @relation(fields: [clientId], references: [id])
+  serviceId String
+  service   PartnerService    @relation(fields: [serviceId], references: [id])
+  value     Float
+  status    PartnerDealStatus @default(PENDING)
+  notes     String?
+  wonAt     DateTime?
+  createdAt DateTime          @default(now())
+  updatedAt DateTime          @updatedAt
+
+  contracts  PartnerContract[]
+  invoices   PartnerInvoice[]
+  commission PartnerCommission?
+
+  /// Soft-delete marker. Hides the deal from default lists; commission +
+  /// contracts + invoices stay intact for audit + finance reconciliation.
+  deletedAt DateTime?
+  deletedById String?
+
+  @@index([partnerId])
+  @@index([clientId])
+  @@index([serviceId])
+  @@index([status])
+  @@index([partnerId, status])
+  @@index([deletedAt])
+  @@map("partner_deals")
+}
+
+// ============================================================================
+// PARTNERS MODULE — Contracts & Invoices
+// ============================================================================
+
+model PartnerContract {
+  id              String                @id @default(cuid())
+  partnerId       String
+  partner         PartnerProfile        @relation(fields: [partnerId], references: [id])
+  dealId          String
+  deal            PartnerDeal           @relation(fields: [dealId], references: [id])
+  status          PartnerContractStatus @default(REQUESTED)
+  rejectionReason String?
+  pdfUrl          String?
+  requestedAt     DateTime              @default(now())
+  reviewedAt      DateTime?
+  reviewedBy      String?
+  createdAt       DateTime              @default(now())
+  updatedAt       DateTime              @updatedAt
+
+  @@index([partnerId])
+  @@index([dealId])
+  @@index([status])
+  @@map("partner_contracts")
+}
+
+model PartnerInvoice {
+  id              String               @id @default(cuid())
+  partnerId       String
+  partner         PartnerProfile       @relation(fields: [partnerId], references: [id])
+  dealId          String
+  deal            PartnerDeal          @relation(fields: [dealId], references: [id])
+  status          PartnerInvoiceStatus @default(REQUESTED)
+  amount          Float
+  rejectionReason String?
+  pdfUrl          String?
+  requestedAt     DateTime             @default(now())
+  reviewedAt      DateTime?
+  reviewedBy      String?
+  createdAt       DateTime             @default(now())
+  updatedAt       DateTime             @updatedAt
+
+  @@index([partnerId])
+  @@index([dealId])
+  @@index([status])
+  @@map("partner_invoices")
+}
+
+// ============================================================================
+// PARTNERS MODULE — Commissions
+// ============================================================================
+
+model PartnerCommission {
+  id         String                  @id @default(cuid())
+  partnerId  String
+  partner    PartnerProfile          @relation(fields: [partnerId], references: [id])
+  dealId     String                  @unique
+  deal       PartnerDeal             @relation(fields: [dealId], references: [id])
+  amount     Float
+  rate       Float
+  status     PartnerCommissionStatus @default(PENDING)
+  approvedAt DateTime?
+  paidAt     DateTime?
+  createdAt  DateTime                @default(now())
+  updatedAt  DateTime                @updatedAt
+
+  @@index([partnerId])
+  @@index([dealId])
+  @@index([status])
+  @@index([partnerId, status])
+  @@map("partner_commissions")
+}
+
+// ============================================================================
+// PARTNERS MODULE — Notifications & Audit
+// ============================================================================
+
+model PartnerNotification {
+  id        String                  @id @default(cuid())
+  userId    String
+  type      PartnerNotificationType @default(GENERAL)
+  title     String
+  message   String
+  isRead    Boolean                 @default(false)
+  metadata  Json?
+  createdAt DateTime                @default(now())
+  updatedAt DateTime                @updatedAt
+
+  @@index([userId])
+  @@index([userId, isRead])
+  @@map("partner_notifications")
+}
+
+model PartnerAuditLog {
+  id            String   @id @default(cuid())
+  userId        String
+  action        String
+  entity        String
+  entityId      String
+  oldData       Json?
+  newData       Json?
+  ipAddress     String?
+  /// auth User.id of the admin when the action was performed under
+  /// impersonation. userId is the target; this column reveals the
+  /// admin behind the action. Null on regular self-acted rows.
+  actingAdminId String?
+  createdAt     DateTime @default(now())
+
+  @@index([userId])
+  @@index([entity, entityId])
+  @@index([createdAt])
+  @@map("partner_audit_logs")
+}

@@ -422,7 +422,7 @@ export function Sidebar() {
   return (
     <aside
       className={cn(
-        "flex flex-col border-r bg-sidebar text-sidebar-foreground h-screen sticky top-0 transition-all duration-200",
+        "flex flex-col border-e bg-sidebar text-sidebar-foreground h-screen sticky top-0 transition-all duration-200", // audit v12 MEDIUM (MED-70): use logical border-e instead of border-r for RTL support
         collapsed ? "w-16" : "w-64"
       )}
     >
@@ -478,9 +478,9 @@ export function Sidebar() {
                     )}
                     title={collapsed ? item.label : undefined}
                   >
-                    {/* Active indicator stripe on the left */}
+                    {/* Active indicator stripe — audit v12 MEDIUM (MED-70): logical -start-2 for RTL */}
                     {active && !collapsed && (
-                      <span className="absolute -left-2 top-1/2 -translate-y-1/2 h-5 w-1 rounded-full bg-primary-gradient" aria-hidden />
+                      <span className="absolute -start-2 top-1/2 -translate-y-1/2 h-5 w-1 rounded-full bg-primary-gradient" aria-hidden />
                     )}
                     <Icon className={cn("h-5 w-5 shrink-0", active ? "text-primary-foreground" : "text-current opacity-80")} />
                     {!collapsed && <span>{item.label}</span>}

@@ -58,8 +58,26 @@ export async function createAuditLog(entry: AuditLogEntry) {
       })
     }
   } catch (error) {
-    console.error('Audit log error:', error)
-    // Don't throw — audit logging failure should never block the operation
+    // audit v12 MEDIUM (MED-52) followup: Fail-open — audit failure must never
+    // block a user operation, but the error must be surfaced beyond stdout so
+    // silent DB failures (connection loss, schema mismatch, constraint
+    // violation) are visible in monitoring.
+    //
+    // Strategy here: route the failure through the project-wide reportAuditFailure
+    // hook. The hook auto-detects Sentry (window/global Sentry, @sentry/node) when
+    // available and falls back to console.error. Wiring an SDK later (Sentry,
+    // Datadog, Bugsnag) is then a one-line change in `src/lib/observability`.
+    try {
+      const { reportAuditFailure } = await import('@/lib/observability/audit-failure')
+      reportAuditFailure(error, {
+        userId: entry.userId,
+        entityType: entry.entityType,
+        action: entry.action,
+      })
+    } catch {
+      // last-resort fallback — never let an audit catch crash a user op.
+      console.error('[AUDIT FAILURE] hrAuditLog write failed — audit record was NOT persisted:', error)
+    }
   }
 }
 

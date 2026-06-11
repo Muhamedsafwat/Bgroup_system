@@ -2,6 +2,9 @@ import { NextRequest, NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
 import { db } from "@/lib/db";
 import { scopeColdLeadsByRole } from "@/lib/crm/cold-leads";
+// audit v12 MEDIUM (MED-9): import project-wide helper so super_admin is covered
+import { isManagerOrAdmin } from "@/lib/crm/admin-gates";
+import type { Session } from "next-auth";
 import type { SessionUser } from "@/types";
 import type { Prisma, CrmColdLeadStatus } from "@/generated/prisma";
 
@@ -34,23 +37,37 @@ const VALID_STATUSES = new Set<CrmColdLeadStatus>([
  */
 export async function GET(req: NextRequest) {
   const session = await auth();
-  if (!session?.user?.id || !session.user.crmProfileId) {
+  // audit v12 MEDIUM (MED-9): allow platform super_admins who have no CRM profile row
+  if (!session?.user?.id || (!session.user.crmProfileId && !session.user.hrRoles?.includes("super_admin"))) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
+  // audit v12 MEDIUM (MED-9): super_admin may have no crmProfileId/crmRole;
+  // give them ADMIN scope so scopeColdLeadsByRole returns an unrestricted filter.
+  const isSuperAdmin = session.user.hrRoles?.includes("super_admin") ?? false;
   const sessionUser: SessionUser = {
-    id: session.user.crmProfileId,
+    id: session.user.crmProfileId ?? session.user.id,
     email: session.user.email!,
     fullName: session.user.name!,
-    role: session.user.crmRole!,
+    role: isSuperAdmin ? "ADMIN" : session.user.crmRole!,
     entityId: session.user.crmEntityId ?? null,
   };
 
   const url = req.nextUrl;
   const status = url.searchParams.get("status");
-  const industry = url.searchParams.get("industry");
-  const category = url.searchParams.get("category");
-  const location = url.searchParams.get("location");
-  const q = url.searchParams.get("q")?.trim();
+  // audit v12 MEDIUM (MED-62) ultra: cap free-text params to prevent DoS via
+  // arbitrarily long LIKE queries driving full-scan over the cold-leads table.
+  const MAX_FREE_TEXT = 200;
+  const rawQ = url.searchParams.get("q")?.trim();
+  if (rawQ && rawQ.length > MAX_FREE_TEXT) {
+    return NextResponse.json(
+      { error: "Query parameter too long (max 200 characters)" },
+      { status: 400 },
+    );
+  }
+  const q = rawQ;
+  const industry = url.searchParams.get("industry")?.trim().slice(0, MAX_FREE_TEXT);
+  const category = url.searchParams.get("category")?.trim().slice(0, MAX_FREE_TEXT);
+  const location = url.searchParams.get("location")?.trim().slice(0, MAX_FREE_TEXT);
   const assignedToId = url.searchParams.get("assignedToId");
   const page = Math.max(1, Number(url.searchParams.get("page") ?? 1));
   // Folder-drilldown: `?batchId=<id>` narrows the list to one upload's
@@ -76,7 +93,8 @@ export async function GET(req: NextRequest) {
       { email: { contains: q, mode: "insensitive" } },
     ];
   }
-  if (assignedToId && (sessionUser.role === "ADMIN" || sessionUser.role === "MANAGER")) {
+  // audit v12 MEDIUM (MED-9): use project-wide helper so super_admin gets full visibility
+  if (assignedToId && isManagerOrAdmin(session as Session)) {
     where.assignedToId = assignedToId === "unassigned" ? null : assignedToId;
   }
   if (batchId) {

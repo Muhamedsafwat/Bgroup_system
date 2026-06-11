@@ -177,11 +177,19 @@ export function WorkflowsClient() {
   const triggerDef = TRIGGERS.find((t) => t.value === triggerKind) ?? TRIGGERS[0];
   const setFieldDef = SET_FIELD_OPTIONS.find((f) => f.value === actionField);
 
+  // audit v12 MEDIUM (MED-67): handle non-OK responses and network errors in load()
   async function load() {
     setLoading(true);
     try {
       const res = await fetch("/api/crm/admin/workflows");
-      if (res.ok) setItems((await res.json()).workflows ?? []);
+      if (res.ok) {
+        setItems((await res.json()).workflows ?? []);
+      } else {
+        const data = await res.json().catch(() => ({}));
+        toast.error((data as { error?: string }).error ?? "Failed to load workflows");
+      }
+    } catch {
+      toast.error("Network error — could not load workflows");
     } finally {
       setLoading(false);
     }
@@ -297,6 +305,9 @@ export function WorkflowsClient() {
       toast.success(editing ? "Workflow updated" : "Workflow created");
       setOpen(false);
       load();
+    } catch {
+      // audit v12 MEDIUM (MED-67): surface network-level fetch failures in save()
+      toast.error("Network error — could not save workflow");
     } finally {
       setBusy(false);
     }

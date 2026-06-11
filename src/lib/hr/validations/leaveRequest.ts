@@ -15,7 +15,7 @@ export const updateLeaveRequestSchema = z.object({
   end_date: z.string().optional(),
   days_count: z.number().optional(),
   reason: z.string().optional(),
-  status: z.string().optional(),
+  // audit v12 HIGH (HIGH-58) ultra: status removed — PATCH no longer accepts it
 })
 
 // Leave types
