@@ -128,10 +128,28 @@ export async function getOpportunities(filters?: {
     where.ownerId = session.id;
   }
   if (filters?.search) {
+    // User-feature (2026-06-18): one search box matches ANY of —
+    // the opp code/title, the company name (curated or free-text, EN+AR),
+    // the key person's NAME, or the key person's PHONE. "Key person" can
+    // live in three places: the legacy free-text customerContact* columns,
+    // the curated primaryContact relation, or the CrmOpportunityContact
+    // roster — so we search all three. Typing a phone number, a company,
+    // or a person's name all surface the opportunity.
+    const term = filters.search.trim();
+    const ci = { contains: term, mode: "insensitive" as const };
     where.OR = [
-      { code: { contains: filters.search, mode: "insensitive" } },
-      { title: { contains: filters.search, mode: "insensitive" } },
-      { company: { nameEn: { contains: filters.search, mode: "insensitive" } } },
+      { code: ci },
+      { title: ci },
+      { customerCompanyName: ci },
+      { customerContactName: ci },
+      { customerContactPhone: ci },
+      { company: { nameEn: ci } },
+      { company: { nameAr: ci } },
+      { primaryContact: { fullName: ci } },
+      { primaryContact: { phone: ci } },
+      // Roster contacts (decision maker, technical lead, etc.)
+      { contacts: { some: { name: ci } } },
+      { contacts: { some: { phone: ci } } },
     ];
   }
 
@@ -299,7 +317,9 @@ export async function createOpportunity(input: CreateOpportunityInput) {
   // The legacy `companyId` FK is left null on new rows; existing rows keep
   // their relation. If the caller did pass a companyId (admin tooling or
   // the cold-lead conversion flow) we still honour it.
-  const customerCompanyName = parsed.customerCompanyName.trim();
+  // user-feature 2026-06-18: company name is optional now (the company
+  // step was removed from the form). null when not provided.
+  const customerCompanyName = parsed.customerCompanyName?.trim() || null;
   let companyId: string | undefined = parsed.companyId || undefined;
   if (companyId) {
     const company = await db.crmCompany.findUnique({
@@ -332,29 +352,24 @@ export async function createOpportunity(input: CreateOpportunityInput) {
   const titleCandidate = (parsed.title ?? "").trim();
   const title = titleCandidate || customerCompanyName || code;
 
-  // Opportunity titles are globally unique (case-insensitive,
-  // soft-deleted rows excluded). Enforced by a partial unique
-  // index on LOWER(title) WHERE deletedAt IS NULL — see
-  // prisma/sql/add-opportunity-title-unique.sql. We pre-check
-  // here so reps get a clean message instead of a Prisma P2002
-  // surfacing as a 500. The DB index is the authoritative gate
-  // for the race window.
-  //
-  // Use $queryRaw with LOWER(title) = LOWER($1) so the lookup
-  // actually USES the functional partial unique index — Prisma's
-  // `{ equals, mode: 'insensitive' }` translates to ILIKE, which
-  // the planner can't match against `LOWER(title)` and falls back
-  // to a seq scan on large tenants.
+  // Opportunity titles are unique PER OWNER (case-insensitive,
+  // soft-deleted rows excluded). bugfix 2026-06-19: this used to be
+  // GLOBAL, which blocked a rep from creating an opp whenever ANY other
+  // rep had already used the name. Enforced by a partial unique index on
+  // ("ownerId", LOWER(title)) WHERE deletedAt IS NULL — see
+  // prisma/sql/add-opportunity-title-unique.sql. We pre-check here so the
+  // rep gets a clean message instead of a Prisma P2002 surfacing as a 500.
   const dupeTitle = await db.$queryRaw<{ id: string; code: string }[]>`
     SELECT id, code
     FROM crm_opportunities
     WHERE LOWER(title) = LOWER(${title})
+      AND "ownerId" = ${resolvedOwnerId}
       AND "deletedAt" IS NULL
     LIMIT 1
   `;
   if (dupeTitle.length > 0) {
     throw new Error(
-      `An opportunity named "${title}" already exists (${dupeTitle[0].code}). Pick a different name.`,
+      `You already have an opportunity named "${title}" (${dupeTitle[0].code}). Pick a different name.`,
     );
   }
 
@@ -366,6 +381,7 @@ export async function createOpportunity(input: CreateOpportunityInput) {
         customerContactName: parsed.customerContactName?.trim() || null,
         customerContactPhone: parsed.customerContactPhone?.trim() || null,
         customerContactEmail: parsed.customerContactEmail?.trim() || null,
+        introBackground: parsed.introBackground?.trim() || null,
         companyId: companyId ?? null,
         primaryContactId: parsed.primaryContactId || null,
         ownerId: resolvedOwnerId,
@@ -514,20 +530,20 @@ export async function updateOpportunity(id: string, input: UpdateOpportunityInpu
     updateData.title.toLowerCase() !== existing.title.toLowerCase()
   ) {
     const newTitle = updateData.title as string;
-    // Same $queryRaw pattern as createOpportunity — hits the
-    // LOWER(title) partial unique index instead of falling back
-    // to ILIKE seq-scan.
+    // Per-owner uniqueness (matches the ("ownerId", LOWER(title)) index).
+    // Check against THIS opp's owner.
     const dupeTitle = await db.$queryRaw<{ id: string; code: string }[]>`
       SELECT id, code
       FROM crm_opportunities
       WHERE LOWER(title) = LOWER(${newTitle})
+        AND "ownerId" = ${existing.ownerId}
         AND "deletedAt" IS NULL
         AND id <> ${id}
       LIMIT 1
     `;
     if (dupeTitle.length > 0) {
       throw new Error(
-        `An opportunity named "${newTitle}" already exists (${dupeTitle[0].code}). Pick a different name.`,
+        `You already have an opportunity named "${newTitle}" (${dupeTitle[0].code}). Pick a different name.`,
       );
     }
   }

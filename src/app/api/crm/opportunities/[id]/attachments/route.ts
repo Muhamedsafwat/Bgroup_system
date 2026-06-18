@@ -155,3 +155,61 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
 
   return NextResponse.json({ attachment: created }, { status: 201 });
 }
+
+/**
+ * DELETE /api/crm/opportunities/[id]/attachments?attachmentId=...
+ *
+ * user-feature 2026-06-19: a document can be deleted ONLY by the user who
+ * uploaded it. Managers/admins who can see the opp can't delete someone
+ * else's upload — the uploader owns their own artifacts. Removes the DB
+ * row and best-effort unlinks the file from disk.
+ */
+export async function DELETE(req: Request, { params }: { params: Promise<{ id: string }> }) {
+  const { id } = await params;
+  const session = (await auth()) as Session | null;
+  if (!session?.user?.id) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  if (!(await canAccessOpp(id, session))) {
+    return NextResponse.json({ error: "Not found" }, { status: 404 });
+  }
+
+  const url = new URL(req.url);
+  const attachmentId = url.searchParams.get("attachmentId");
+  if (!attachmentId) {
+    return NextResponse.json({ error: "attachmentId is required" }, { status: 400 });
+  }
+
+  const attachment = await db.crmAttachment.findFirst({
+    where: { id: attachmentId, opportunityId: id },
+    select: { id: true, url: true, uploadedById: true },
+  });
+  if (!attachment) {
+    return NextResponse.json({ error: "Not found" }, { status: 404 });
+  }
+
+  // Uploader-only gate.
+  const me = session.user.crmProfileId ?? session.user.id;
+  if (attachment.uploadedById !== me) {
+    return NextResponse.json(
+      { error: "Only the person who uploaded this document can delete it." },
+      { status: 403 },
+    );
+  }
+
+  await db.crmAttachment.delete({ where: { id: attachment.id } });
+
+  // Best-effort file cleanup — never fail the request if the file is
+  // already gone. Guard against path traversal by confirming the
+  // resolved path stays under public/uploads.
+  try {
+    const rel = attachment.url.replace(/^\//, "");
+    const abs = path.resolve(process.cwd(), "public", rel);
+    const uploadsRoot = path.join(process.cwd(), "public", "uploads");
+    if (abs.startsWith(uploadsRoot + path.sep)) {
+      await fs.unlink(abs).catch(() => {});
+    }
+  } catch {
+    /* file cleanup is best-effort */
+  }
+
+  return NextResponse.json({ ok: true });
+}

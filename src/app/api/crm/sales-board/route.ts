@@ -42,6 +42,36 @@ export async function GET(req: Request) {
     oppScope.products = { some: { productId: productIdFilter } };
   }
 
+  // stages-fix (2026-06-18): the board's stage tiles + rep-table columns
+  // must match the admin's CrmStageConfig (and the pipeline), not the
+  // hardcoded seed. Resolve the active configured stages — per-entity
+  // rows beat the global (entityId=null) fallback — and use them to
+  // pre-zero counters and as the `stages` list returned to the client.
+  const callerEntityId = session.user.crmEntityId ?? null;
+  const stageConfigRows = await db.crmStageConfig.findMany({
+    where: {
+      isActive: true,
+      OR: [{ entityId: null }, ...(callerEntityId ? [{ entityId: callerEntityId }] : [])],
+    },
+    orderBy: [
+      { entityId: { sort: "desc", nulls: "last" } },
+      { displayOrder: "asc" },
+      { stage: "asc" },
+    ],
+    select: { stage: true },
+  });
+  const seenStage = new Set<string>();
+  const configuredStages: string[] = [];
+  for (const r of stageConfigRows) {
+    if (seenStage.has(r.stage)) continue;
+    seenStage.add(r.stage);
+    configuredStages.push(r.stage);
+  }
+  // Fall back to the canonical seed only on a fresh install with no config.
+  const boardStages: string[] = configuredStages.length
+    ? configuredStages
+    : (SPEC_STAGES as string[]);
+
   const startOfMonth = new Date();
   startOfMonth.setDate(1);
   startOfMonth.setHours(0, 0, 0, 0);
@@ -63,7 +93,7 @@ export async function GET(req: Request) {
     _count: { _all: true },
   });
   const stageCounts: Record<string, number> = {};
-  for (const s of SPEC_STAGES) stageCounts[s] = 0;
+  for (const s of boardStages) stageCounts[s] = 0;
   for (const r of stageCountsRaw) {
     stageCounts[r.stage as string] = r._count._all;
   }
@@ -111,7 +141,7 @@ export async function GET(req: Request) {
     repTable = profiles.map((p) => {
       const rows = repOpps.filter((r) => r.ownerId === p.id);
       const perStage: Record<string, number> = {};
-      for (const s of SPEC_STAGES) perStage[s] = 0;
+      for (const s of boardStages) perStage[s] = 0;
       let tot = 0;
       let repWon = 0;
       let repClosed = 0;
@@ -200,6 +230,6 @@ export async function GET(req: Request) {
       done: doneMeetings,
       cancelled: cancelledMeetings,
     },
-    stages: SPEC_STAGES as CrmOpportunityStage[],
+    stages: boardStages as CrmOpportunityStage[],
   });
 }

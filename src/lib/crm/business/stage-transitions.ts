@@ -51,20 +51,6 @@ export function canTransition(
   fromStage: CrmOpportunityStage,
   toStage: CrmOpportunityStage
 ): TransitionResult {
-  // audit v12 HIGH (HIGH-24): guard against unknown stages before
-  // any numeric comparison runs. STAGE_ORDER[unknown] is undefined,
-  // and every `<`/`>` against undefined evaluates false — so an
-  // unknown source/target stage silently fell through to the
-  // unconditional `return { allowed: true }` at the bottom of this
-  // function. Reject explicitly instead.
-  const knownStages = Object.keys(STAGE_ORDER) as CrmOpportunityStage[];
-  if (!knownStages.includes(fromStage)) {
-    return { allowed: false, error: `Unknown source stage: ${fromStage}` };
-  }
-  if (!knownStages.includes(toStage)) {
-    return { allowed: false, error: `Unknown target stage: ${toStage}` };
-  }
-
   if (fromStage === toStage) {
     return { allowed: false, error: "Already in this stage" };
   }
@@ -87,10 +73,24 @@ export function canTransition(
     return { allowed: true };
   }
 
+  // stages-fix (2026-06-18): admins can define CUSTOM stages in
+  // CrmStageConfig (e.g. PILOT, FIELD_TRIAL) that aren't in the seed
+  // STAGE_ORDER. The previous HIGH-24 guard hard-rejected anything not
+  // in STAGE_ORDER, which made every custom stage un-enterable — the
+  // exact "stages in settings don't match the pipeline" complaint.
+  //
+  // New rule: the skip-distance / ordering checks only apply when BOTH
+  // stages are part of the canonical ordered set. If either side is a
+  // custom stage we can't reason about its position, so we allow the
+  // move (the terminal-stage guards above still hold). This keeps the
+  // ordered seed pipeline strict while letting custom stages work.
+  const fromOrder = STAGE_ORDER[fromStage];
+  const toOrder = STAGE_ORDER[toStage];
+  const bothOrdered = fromOrder !== undefined && toOrder !== undefined;
+
   // Moving to WON
   if (toStage === "WON") {
-    const fromOrder = STAGE_ORDER[fromStage];
-    if (fromOrder < STAGE_ORDER.NEGOTIATION) {
+    if (bothOrdered && fromOrder < STAGE_ORDER.NEGOTIATION) {
       return {
         allowed: true,
         warning: "Closing from an early stage — are you sure?",
@@ -99,8 +99,10 @@ export function canTransition(
     return { allowed: true };
   }
 
-  const fromOrder = STAGE_ORDER[fromStage];
-  const toOrder = STAGE_ORDER[toStage];
+  // One or both stages are custom (outside the ordered seed) — allow.
+  if (!bothOrdered) {
+    return { allowed: true };
+  }
 
   // Backward always allowed
   if (toOrder < fromOrder) {

@@ -510,7 +510,7 @@ export function OpportunityComments({ oppId }: { oppId: string }) {
       </div>
       <div className="border-t pt-3 mt-2 relative">
         {pickerOpen && dropdownItems.length > 0 && (
-          <div className="absolute bottom-full left-0 mb-2 w-72 bg-popover text-popover-foreground border rounded-md shadow-lg overflow-hidden z-10">
+          <div className="absolute bottom-full start-0 mb-2 w-72 max-w-[calc(100vw-2rem)] bg-popover text-popover-foreground border rounded-md shadow-lg overflow-hidden z-10">
             <div className="px-3 py-1.5 text-[11px] text-muted-foreground border-b">
               {pickerLoading ? "Searching…" : `Mention ${dropdownItems.length === 1 ? "1 person" : `${dropdownItems.length} people`}`}
             </div>
@@ -520,7 +520,7 @@ export function OpportunityComments({ oppId }: { oppId: string }) {
                   <button
                     type="button"
                     className={cn(
-                      "flex items-center gap-2 w-full px-3 py-2 text-left hover:bg-accent transition-colors",
+                      "flex items-center gap-2 w-full px-3 py-2 text-start hover:bg-accent transition-colors",
                       i === pickerCursorIdx && "bg-accent",
                     )}
                     onClick={() => pickMention(u)}
