@@ -4,8 +4,6 @@ import { useState, useEffect, useCallback } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useLocale } from "@/lib/i18n";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { OpportunityIntelligence } from "./OpportunityIntelligence";
 import { OpportunityComments } from "./OpportunityComments";
 import { TaskList } from "@/components/tasks/TaskList";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -51,6 +49,7 @@ import {
   Workflow,
   Loader2,
   Pencil,
+  Trash2,
 } from "lucide-react";
 import type { Locale } from "@/lib/i18n";
 
@@ -69,6 +68,7 @@ type Attachment = {
   sizeBytes: number;
   mimeType: string;
   kind: string;
+  uploadedById: string;
   createdAt: string;
 };
 
@@ -77,17 +77,27 @@ export function OpportunityDetailClient({
   locale,
   canStartWorkflow = false,
   workflows = [],
+  currentUserId = "",
 }: {
   opportunity: Record<string, unknown>;
   locale: Locale;
   canStartWorkflow?: boolean;
   workflows?: WorkflowSummary[];
+  /// CrmProfile id (or auth user id) of the viewer — used to gate the
+  /// uploader-only document delete control.
+  currentUserId?: string;
 }) {
   const { t } = useLocale();
   const router = useRouter();
   const [stageModalOpen, setStageModalOpen] = useState(false);
   const [noteText, setNoteText] = useState("");
   const [addingNote, setAddingNote] = useState(false);
+  // user-feature 2026-06-18: inline call logging — the standalone Calls
+  // page was removed; reps now log a call right on the opportunity as a
+  // freeform note + an outcome. It lands in the unified Activity feed.
+  const [callNotes, setCallNotes] = useState("");
+  const [callOutcome, setCallOutcome] = useState("");
+  const [loggingCall, setLoggingCall] = useState(false);
 
   // Real attachments (CrmAttachment rows) — fetched on mount, refreshed after
   // an upload. Note: opp.proposalUrl / opp.contractUrl are legacy single-URL
@@ -153,6 +163,22 @@ export function OpportunityDetailClient({
     } finally {
       setUploading(false);
     }
+  }
+
+  async function handleDeleteAttachment(attachmentId: string) {
+    // user-feature 2026-06-19: uploader-only delete. The button is only
+    // shown on the viewer's own uploads, and the API re-checks server-side.
+    const res = await fetch(
+      `/api/crm/opportunities/${opp.id}/attachments?attachmentId=${attachmentId}`,
+      { method: "DELETE" },
+    );
+    if (!res.ok) {
+      const d = await res.json().catch(() => ({}));
+      toast.error(d.error ?? (locale === "ar" ? "تعذّر حذف المستند" : "Couldn't delete document"));
+      return;
+    }
+    toast.success(locale === "ar" ? "تم حذف المستند" : "Document deleted");
+    await refreshAttachments();
   }
 
   async function handleTriggerWorkflow() {
@@ -236,6 +262,116 @@ export function OpportunityDetailClient({
     setAddingNote(false);
   }
 
+  async function handleLogCall() {
+    if (!callOutcome) {
+      toast.error(locale === "ar" ? "اختر نتيجة المكالمة" : "Pick a call outcome");
+      return;
+    }
+    setLoggingCall(true);
+    try {
+      const res = await fetch("/api/crm/calls", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          opportunityId: opp.id,
+          // callType isn't surfaced in this lightweight logger — the rep
+          // just types what happened + picks an outcome. Default to a
+          // neutral follow-up type so the row is valid.
+          callType: "FOLLOW_UP",
+          outcome: callOutcome,
+          notes: callNotes.trim() || undefined,
+        }),
+      });
+      if (!res.ok) {
+        const d = await res.json().catch(() => ({}));
+        toast.error(d.error ?? "Failed to log call");
+        return;
+      }
+      toast.success(locale === "ar" ? "تم تسجيل المكالمة" : "Call logged");
+      setCallNotes("");
+      setCallOutcome("");
+      router.refresh();
+    } finally {
+      setLoggingCall(false);
+    }
+  }
+
+  // user-feature 2026-06-19: clickable stage progress bar. Stages that
+  // need extra fields on entry (WON → deposit, LOST → loss reason,
+  // PROPOSAL_SENT → proposal URL) open the full stage-change modal so
+  // those requirements are gathered; every other move is applied
+  // directly via the same endpoint the kanban drag-drop uses.
+  const STAGES_NEEDING_MODAL = new Set(["WON", "LOST", "PROPOSAL_SENT"]);
+  async function handleStageClick(toStage: string) {
+    if (toStage === opp.stage) return;
+    if (STAGES_NEEDING_MODAL.has(toStage)) {
+      setStageModalOpen(true);
+      return;
+    }
+    try {
+      const res = await fetch(`/api/crm/opportunities/${opp.id}/stage`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ toStage }),
+      });
+      if (!res.ok) {
+        const d = await res.json().catch(() => ({}));
+        toast.error(d.error ?? (locale === "ar" ? "تعذّر تغيير المرحلة" : "Couldn't change stage"));
+        return;
+      }
+      toast.success(locale === "ar" ? "تم تغيير المرحلة" : "Stage changed");
+      router.refresh();
+    } catch {
+      toast.error(locale === "ar" ? "تعذّر تغيير المرحلة" : "Couldn't change stage");
+    }
+  }
+
+  // user-feature 2026-06-19: ONE unified History — stage transitions,
+  // activity-log events, and logged calls in a single chronological feed.
+  //
+  // De-duplication: a stage change writes BOTH a CrmStageHistory row AND a
+  // CrmActivityLog "stage_changed" row, so the old layout listed every
+  // transition twice (the standalone "Stage History" card + the activity
+  // feed). We now render the richer CrmStageHistory rows (they carry the
+  // days-in-stage duration) as "stage" items and DROP the redundant
+  // "stage_changed" activity rows. The separate Stage History card is gone.
+  type FeedItem =
+    | { kind: "activity"; id: string; at: string; actor: string; action: string; metadata: Record<string, unknown> | null }
+    | { kind: "call"; id: string; at: string; actor: string; callType: string; outcome: string; notes: string | null }
+    | { kind: "stage"; id: string; at: string; fromStage: string | null; toStage: string; durationDays: number | null };
+  const feed: FeedItem[] = [
+    ...stageChanges.map((sc) => ({
+      kind: "stage" as const,
+      id: sc.id,
+      at: sc.changedAt,
+      fromStage: sc.fromStage,
+      toStage: sc.toStage,
+      durationDays: sc.durationDays,
+    })),
+    ...activityLogs
+      // De-dup against other sections so nothing is shown twice:
+      //  • "stage_changed" → the richer stage items above already cover it.
+      //  • "note_added"    → the Notes card already lists every note.
+      .filter((l) => l.action !== "stage_changed" && l.action !== "note_added")
+      .map((l) => ({
+        kind: "activity" as const,
+        id: l.id,
+        at: l.createdAt,
+        actor: l.actor.fullName,
+        action: l.action,
+        metadata: l.metadata,
+      })),
+    ...calls.map((c) => ({
+      kind: "call" as const,
+      id: c.id,
+      at: c.callAt,
+      actor: c.caller.fullName,
+      callType: c.callType,
+      outcome: c.outcome,
+      notes: c.notes,
+    })),
+  ].sort((a, b) => new Date(b.at).getTime() - new Date(a.at).getTime());
+
   return (
     <div className="space-y-6">
       {/* Header */}
@@ -246,12 +382,14 @@ export function OpportunityDetailClient({
               <ArrowLeft className="h-4 w-4" />
             </Button>
             <h1 className="text-2xl font-bold">
-              {company.nameEn}
+              {(opp.title as string) || company.nameEn}
             </h1>
             <EntityBadge code={entity.code} color={entity.color} />
           </div>
-          <div className="flex items-center gap-3 text-sm text-muted-foreground ps-12">
+          <div className="flex items-center gap-3 text-sm text-muted-foreground ps-12 flex-wrap">
             <span className="ltr-nums">{opp.code as string}</span>
+            {/* Company name as a subtitle only when set (legacy / curated). */}
+            {company.nameEn !== "—" && <span>· {company.nameEn}</span>}
             <PriorityBadge priority={opp.priority as import("@/types").CrmPriority} />
             <span>{t.dealTypes[opp.dealType as keyof typeof t.dealTypes]}</span>
           </div>
@@ -288,85 +426,18 @@ export function OpportunityDetailClient({
         </div>
       </div>
 
-      {/* Stage Progress */}
-      <StageProgressBar currentStage={opp.stage as string} />
+      {/* Stage Progress — clickable: tap a stage to move the opp there
+          (user-feature 2026-06-19). */}
+      <StageProgressBar currentStage={opp.stage as string} onStageClick={handleStageClick} />
 
-      {/* KPI Cards */}
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-        <Card>
-          <CardContent className="p-4">
-            <p className="text-sm text-muted-foreground">{t.forms.estimatedValue}</p>
-            <p className="text-xl font-bold">
-              <CurrencyDisplay
-                amount={Number(opp.estimatedValue)}
-                currency={opp.currency as import("@/types").CrmCurrency}
-                egpAmount={Number(opp.estimatedValueEGP)}
-              />
-            </p>
-          </CardContent>
-        </Card>
-        <Card>
-          <CardContent className="p-4">
-            <p className="text-sm text-muted-foreground">{t.kpis.weighted}</p>
-            <p className="text-xl font-bold ltr-nums">
-              <CurrencyDisplay amount={Number(opp.weightedValueEGP)} currency="EGP" />
-            </p>
-          </CardContent>
-        </Card>
-        <Card>
-          <CardContent className="p-4">
-            <p className="text-sm text-muted-foreground">{t.kpis.stage}</p>
-            <StageBadge
-              stage={opp.stage as import("@/types").CrmOpportunityStage}
-              probabilityPct={opp.probabilityPct as number}
-              showProbability
-            />
-          </CardContent>
-        </Card>
-        <Card>
-          <CardContent className="p-4">
-            <p className="text-sm text-muted-foreground">{t.forms.expectedCloseDate}</p>
-            {opp.expectedCloseDate ? (
-              <DateDisplay date={opp.expectedCloseDate as string} className="text-lg font-semibold" />
-            ) : (
-              <span className="text-muted-foreground">-</span>
-            )}
-          </CardContent>
-        </Card>
-      </div>
-
-      {/* Tabs */}
-      <Tabs defaultValue="overview">
-        <TabsList>
-          <TabsTrigger value="overview">{t.tabs.overview}</TabsTrigger>
-          <TabsTrigger value="sales-play">Sales play</TabsTrigger>
-          <TabsTrigger value="discussion">Discussion</TabsTrigger>
-          <TabsTrigger value="activity">{t.tabs.activity}</TabsTrigger>
-          <TabsTrigger value="calls">{t.tabs.calls}</TabsTrigger>
-          <TabsTrigger value="documents">{t.tabs.documents}</TabsTrigger>
-          <TabsTrigger value="notes">{t.tabs.notes}</TabsTrigger>
-          <TabsTrigger value="tasks">Tasks</TabsTrigger>
-        </TabsList>
-
-        {/* Tier-1 #11 + #23 + #24 — sales-intelligence sections.
-            MEDDPICC qualification + stage playbook + mutual action plan
-            all live under one tab so reps don't have to context-switch
-            during a deal review. */}
-        <TabsContent value="sales-play" className="space-y-4">
-          <OpportunityIntelligence oppId={opp.id as string} stage={opp.stage as string} />
-        </TabsContent>
-
-        {/* In-opp discussion thread with @-mention notifications. */}
-        <TabsContent value="discussion">
-          <Card>
-            <CardContent className="pt-4">
-              <OpportunityComments oppId={opp.id as string} />
-            </CardContent>
-          </Card>
-        </TabsContent>
-
-        {/* Overview Tab */}
-        <TabsContent value="overview" className="space-y-4">
+      {/* user-feature 2026-06-19: the WHOLE opportunity lives on ONE page
+          now — no tabs. Everything stacks top-to-bottom so the deal can be
+          read at a glance: summary, intro background, description, notes +
+          tasks, activity & discussion (with call logging), documents, and
+          stage history. The redundant KPI cards from the screenshot were
+          removed — estimated/weighted value + close date moved into the
+          Deal info card, and the stage is the clickable bar above. */}
+      <div className="space-y-4">
           <div className="grid md:grid-cols-2 gap-4">
             {/* Contact Info — inline-editable. Click the pencil to switch
                 to edit mode; the three customer-contact fields on the opp
@@ -388,6 +459,32 @@ export function OpportunityDetailClient({
                 <CardTitle className="text-base">{t.nav.opportunities}</CardTitle>
               </CardHeader>
               <CardContent className="space-y-2 text-sm">
+                {/* user-feature 2026-06-19: value + close date moved here
+                    from the removed KPI cards. */}
+                <div className="flex justify-between">
+                  <span className="text-muted-foreground">{t.forms.estimatedValue}</span>
+                  <span className="font-semibold">
+                    <CurrencyDisplay
+                      amount={Number(opp.estimatedValue)}
+                      currency={opp.currency as import("@/types").CrmCurrency}
+                      egpAmount={Number(opp.estimatedValueEGP)}
+                    />
+                  </span>
+                </div>
+                <div className="flex justify-between">
+                  <span className="text-muted-foreground">{t.kpis.weighted}</span>
+                  <span className="ltr-nums">
+                    <CurrencyDisplay amount={Number(opp.weightedValueEGP)} currency="EGP" />
+                  </span>
+                </div>
+                <div className="flex justify-between">
+                  <span className="text-muted-foreground">{t.forms.expectedCloseDate}</span>
+                  <span>
+                    {opp.expectedCloseDate ? (
+                      <DateDisplay date={opp.expectedCloseDate as string} />
+                    ) : "-"}
+                  </span>
+                </div>
                 <div className="flex justify-between">
                   <span className="text-muted-foreground">{t.forms.owner}</span>
                   <span>{locale === "ar" ? owner.fullNameAr || owner.fullName : owner.fullName}</span>
@@ -425,6 +522,24 @@ export function OpportunityDetailClient({
             </Card>
           </div>
 
+          {/* user-feature 2026-06-18: introduction background / referral
+              chain. Read-only here — edited via the Edit button (the
+              opportunity form), per the user's "edit using the edit button
+              inside the opportunity" request. Only shown when present. */}
+          {Boolean(opp.introBackground) && (
+            <Card>
+              <CardHeader>
+                <CardTitle className="text-base flex items-center gap-2">
+                  <User className="h-4 w-4 text-muted-foreground" />
+                  {locale === "ar" ? "خلفية التعريف / من حوّلني لمن" : "Introduction background"}
+                </CardTitle>
+              </CardHeader>
+              <CardContent>
+                <p className="text-sm whitespace-pre-wrap">{opp.introBackground as string}</p>
+              </CardContent>
+            </Card>
+          )}
+
           {/* Description */}
           {Boolean(opp.description) && (
             <Card>
@@ -437,94 +552,201 @@ export function OpportunityDetailClient({
             </Card>
           )}
 
-          {/* Stage History */}
+          {/* user-feature 2026-06-18: Notes + Tasks moved to the front
+              page, side by side and center stage — the rep wanted these
+              prominent, not buried in their own tabs. */}
+          <div className="grid lg:grid-cols-2 gap-4">
+            <Card>
+              <CardHeader>
+                <CardTitle className="text-base flex items-center gap-2">
+                  <FileText className="h-4 w-4 text-muted-foreground" />
+                  {t.tabs.notes}
+                </CardTitle>
+              </CardHeader>
+              <CardContent className="space-y-3">
+                <Textarea
+                  placeholder={locale === "ar" ? "أضف ملاحظة..." : "Add a note..."}
+                  value={noteText}
+                  onChange={(e) => setNoteText(e.target.value)}
+                  rows={3}
+                />
+                <Button
+                  onClick={handleAddNote}
+                  disabled={addingNote || !noteText.trim()}
+                  size="sm"
+                >
+                  {addingNote ? t.common.loading : t.common.save}
+                </Button>
+                <div className="space-y-3 pt-1">
+                  {notes.map((note) => (
+                    <div key={note.id} className="border-t pt-3 first:border-0 first:pt-0">
+                      <div className="flex items-center justify-between mb-1">
+                        <span className="font-medium text-sm">{note.author.fullName}</span>
+                        <DateDisplay date={note.createdAt} showTime className="text-xs text-muted-foreground" />
+                      </div>
+                      <p className="text-sm whitespace-pre-wrap">{note.content}</p>
+                    </div>
+                  ))}
+                  {notes.length === 0 && (
+                    <p className="text-xs text-muted-foreground">
+                      {locale === "ar" ? "لا توجد ملاحظات بعد." : "No notes yet."}
+                    </p>
+                  )}
+                </div>
+              </CardContent>
+            </Card>
+
+            <Card>
+              <CardHeader>
+                <CardTitle className="text-base">{locale === "ar" ? "المهام" : "Tasks"}</CardTitle>
+              </CardHeader>
+              <CardContent>
+                <TaskList
+                  entityType="CRM_OPPORTUNITY"
+                  entityId={opp.id as string}
+                  showBuckets={false}
+                  createDefaults={{
+                    entityType: "CRM_OPPORTUNITY",
+                    entityId: opp.id as string,
+                    module: "crm",
+                  }}
+                />
+              </CardContent>
+            </Card>
+          </div>
+
+          {/* Activity & discussion — log a call (freeform + outcome), the
+              discussion thread, and a unified chronological history of
+              activity events + logged calls. All inline on the one page. */}
+          {/* Log a call — freeform note + outcome. Lands in the feed below. */}
           <Card>
-            <CardHeader>
-              <CardTitle className="text-base">{locale === "ar" ? "سجل المراحل" : "Stage History"}</CardTitle>
+            <CardHeader className="pb-2">
+              <CardTitle className="text-base flex items-center gap-2">
+                <Phone className="h-4 w-4 text-muted-foreground" />
+                {locale === "ar" ? "تسجيل مكالمة" : "Log a call"}
+              </CardTitle>
+            </CardHeader>
+            <CardContent className="space-y-3">
+              <Textarea
+                placeholder={
+                  locale === "ar"
+                    ? "ماذا حدث في المكالمة؟ مثال: اتصلت به، طلب معاودة الاتصال الأسبوع القادم…"
+                    : "What happened on the call? e.g. Called him — asked to call back next week…"
+                }
+                value={callNotes}
+                onChange={(e) => setCallNotes(e.target.value)}
+                rows={2}
+              />
+              <div className="flex flex-wrap items-center gap-2">
+                <Select value={callOutcome || undefined} onValueChange={(v) => setCallOutcome(v ?? "")}>
+                  <SelectTrigger className="w-56">
+                    <SelectValue
+                      placeholder={locale === "ar" ? "نتيجة المكالمة" : "Call outcome"}
+                    />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {Object.entries(t.callOutcomes).map(([code, label]) => (
+                      <SelectItem key={code} value={code}>
+                        {label as string}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+                <Button onClick={handleLogCall} disabled={loggingCall || !callOutcome} size="sm">
+                  {loggingCall ? (
+                    <Loader2 className="h-4 w-4 me-1.5 animate-spin" />
+                  ) : (
+                    <Phone className="h-4 w-4 me-1.5" />
+                  )}
+                  {locale === "ar" ? "تسجيل" : "Log call"}
+                </Button>
+              </div>
+            </CardContent>
+          </Card>
+
+          {/* Discussion thread with @-mention notifications. */}
+          <Card>
+            <CardHeader className="pb-2">
+              <CardTitle className="text-base flex items-center gap-2">
+                <MessageCircle className="h-4 w-4 text-muted-foreground" />
+                {locale === "ar" ? "النقاش" : "Discussion"}
+              </CardTitle>
             </CardHeader>
             <CardContent>
-              <div className="space-y-3">
-                {stageChanges.map((sc) => (
-                  <div key={sc.id} className="flex items-center gap-3 text-sm">
-                    <DateDisplay date={sc.changedAt} showTime className="text-muted-foreground w-36 shrink-0" />
-                    {sc.fromStage && (
-                      <>
-                        <StageBadge stage={sc.fromStage as import("@/types").CrmOpportunityStage} />
-                        <span className="text-muted-foreground">&rarr;</span>
-                      </>
-                    )}
-                    <StageBadge stage={sc.toStage as import("@/types").CrmOpportunityStage} />
-                    {sc.durationDays !== null && sc.durationDays > 0 && (
-                      <span className="text-xs text-muted-foreground ltr-nums">
-                        ({sc.durationDays}d)
-                      </span>
-                    )}
-                  </div>
-                ))}
-              </div>
+              <OpportunityComments oppId={opp.id as string} />
             </CardContent>
           </Card>
-        </TabsContent>
 
-        {/* Activity Tab */}
-        <TabsContent value="activity">
+          {/* Unified history — activity log + logged calls, newest first. */}
           <Card>
-            <CardContent className="p-4">
-              <div className="space-y-4">
-                {activityLogs.map((log) => (
-                  <div key={log.id} className="flex gap-3 text-sm border-b pb-3 last:border-0">
-                    <DateDisplay date={log.createdAt} showTime className="text-muted-foreground w-36 shrink-0" />
-                    <div>
-                      <span className="font-medium">{log.actor.fullName}</span>
-                      <span className="text-muted-foreground mx-1">—</span>
-                      <span>{t.activityLog[log.action as keyof typeof t.activityLog] || log.action}</span>
-                      {Boolean(log.metadata && (log.metadata as Record<string, unknown>).from) && (
-                        <span className="ms-1">
-                          {t.activityLog.from} {t.stages[(log.metadata as Record<string, string>).from as keyof typeof t.stages]} {t.activityLog.to} {t.stages[(log.metadata as Record<string, string>).to as keyof typeof t.stages]}
-                        </span>
-                      )}
-                    </div>
-                  </div>
-                ))}
-                {activityLogs.length === 0 && (
-                  <p className="text-sm text-muted-foreground text-center py-8">{t.common.noResults}</p>
-                )}
-              </div>
-            </CardContent>
-          </Card>
-        </TabsContent>
-
-        {/* Calls Tab */}
-        <TabsContent value="calls">
-          <Card>
-            <CardContent className="p-4">
-              <div className="space-y-4">
-                {calls.map((call) => (
-                  <div key={call.id} className="border-b pb-3 last:border-0 text-sm space-y-1">
-                    <div className="flex items-center justify-between">
-                      <div className="flex items-center gap-2">
-                        <Phone className="h-4 w-4 text-muted-foreground" />
-                        <span className="font-medium">{call.caller.fullName}</span>
-                        <Badge variant="secondary">{t.callTypes[call.callType as keyof typeof t.callTypes]}</Badge>
-                        <Badge variant="outline">{t.callOutcomes[call.outcome as keyof typeof t.callOutcomes]}</Badge>
+            <CardHeader className="pb-2">
+              <CardTitle className="text-base flex items-center gap-2">
+                <Calendar className="h-4 w-4 text-muted-foreground" />
+                {locale === "ar" ? "السجل" : "History"}
+              </CardTitle>
+            </CardHeader>
+            <CardContent>
+              {/* user-feature 2026-06-19: cap the History to ~2 rows then
+                  scroll so a long deal timeline doesn't stretch the page. */}
+              <div className="space-y-4 max-h-44 overflow-y-auto pe-1">
+                {feed.map((item) =>
+                  item.kind === "stage" ? (
+                    <div key={`stage-${item.id}`} className="flex items-center gap-3 text-sm border-b pb-3 last:border-0">
+                      <DateDisplay date={item.at} showTime className="text-muted-foreground w-36 shrink-0" />
+                      <div className="flex items-center gap-2 flex-wrap">
+                        {item.fromStage && (
+                          <>
+                            <StageBadge stage={item.fromStage as import("@/types").CrmOpportunityStage} />
+                            <span className="text-muted-foreground">&rarr;</span>
+                          </>
+                        )}
+                        <StageBadge stage={item.toStage as import("@/types").CrmOpportunityStage} />
+                        {item.durationDays !== null && item.durationDays > 0 && (
+                          <span className="text-xs text-muted-foreground ltr-nums">
+                            ({item.durationDays}d)
+                          </span>
+                        )}
                       </div>
-                      <DateDisplay date={call.callAt} showTime className="text-muted-foreground" />
                     </div>
-                    {call.notes && <p className="text-muted-foreground ps-6">{call.notes}</p>}
-                  </div>
-                ))}
-                {calls.length === 0 && (
+                  ) : item.kind === "call" ? (
+                    <div key={`call-${item.id}`} className="border-b pb-3 last:border-0 text-sm space-y-1">
+                      <div className="flex items-center justify-between gap-2 flex-wrap">
+                        <div className="flex items-center gap-2 flex-wrap">
+                          <Phone className="h-4 w-4 text-muted-foreground shrink-0" />
+                          <span className="font-medium">{item.actor}</span>
+                          <Badge variant="outline">
+                            {t.callOutcomes[item.outcome as keyof typeof t.callOutcomes] ?? item.outcome}
+                          </Badge>
+                        </div>
+                        <DateDisplay date={item.at} showTime className="text-muted-foreground" />
+                      </div>
+                      {item.notes && <p className="text-muted-foreground ps-6 whitespace-pre-wrap">{item.notes}</p>}
+                    </div>
+                  ) : (
+                    <div key={`act-${item.id}`} className="flex gap-3 text-sm border-b pb-3 last:border-0">
+                      <DateDisplay date={item.at} showTime className="text-muted-foreground w-36 shrink-0" />
+                      <div>
+                        <span className="font-medium">{item.actor}</span>
+                        <span className="text-muted-foreground mx-1">—</span>
+                        <span>{t.activityLog[item.action as keyof typeof t.activityLog] || item.action}</span>
+                        {Boolean(item.metadata && (item.metadata as Record<string, unknown>).from) && (
+                          <span className="ms-1">
+                            {t.activityLog.from} {t.stages[(item.metadata as Record<string, string>).from as keyof typeof t.stages]} {t.activityLog.to} {t.stages[(item.metadata as Record<string, string>).to as keyof typeof t.stages]}
+                          </span>
+                        )}
+                      </div>
+                    </div>
+                  )
+                )}
+                {feed.length === 0 && (
                   <p className="text-sm text-muted-foreground text-center py-8">{t.common.noResults}</p>
                 )}
               </div>
             </CardContent>
           </Card>
-        </TabsContent>
 
-        {/* Documents Tab — real CrmAttachment list + uploader. The legacy
-            proposalUrl / contractUrl single-link fields are shown below if
-            they exist, but new docs go through the upload flow. */}
-        <TabsContent value="documents">
+          {/* Documents — real CrmAttachment list + uploader. Legacy
+              proposalUrl / contractUrl single-link fields show below if set. */}
           <Card>
             <CardContent className="p-4 space-y-4">
               <div className="flex items-center justify-between">
@@ -567,14 +789,16 @@ export function OpportunityDetailClient({
               ) : (
                 <div className="space-y-2">
                   {attachments.map((a) => (
-                    <a
+                    <div
                       key={a.id}
-                      href={a.url}
-                      target="_blank"
-                      rel="noopener noreferrer"
                       className="flex items-center justify-between gap-3 rounded-md border border-border px-3 py-2 hover:bg-muted/30 text-sm"
                     >
-                      <div className="flex items-center gap-3 min-w-0 flex-1">
+                      <a
+                        href={a.url}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="flex items-center gap-3 min-w-0 flex-1"
+                      >
                         <FileText className="h-4 w-4 text-muted-foreground shrink-0" />
                         <div className="min-w-0">
                           <p className="font-medium truncate">{a.filename}</p>
@@ -583,11 +807,26 @@ export function OpportunityDetailClient({
                             {new Date(a.createdAt).toLocaleString()}
                           </p>
                         </div>
+                      </a>
+                      <div className="flex items-center gap-2 shrink-0">
+                        <span className="text-[10px] uppercase tracking-wider text-muted-foreground">
+                          {a.kind}
+                        </span>
+                        {/* user-feature 2026-06-19: only the uploader can
+                            delete their own document. */}
+                        {a.uploadedById === currentUserId && (
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            className="h-7 w-7 text-muted-foreground hover:text-destructive"
+                            title={locale === "ar" ? "حذف المستند" : "Delete document"}
+                            onClick={() => handleDeleteAttachment(a.id)}
+                          >
+                            <Trash2 className="h-3.5 w-3.5" />
+                          </Button>
+                        )}
                       </div>
-                      <span className="text-[10px] uppercase tracking-wider text-muted-foreground shrink-0">
-                        {a.kind}
-                      </span>
-                    </a>
+                    </div>
                   ))}
 
                   {/* Legacy single-URL fields, shown at the bottom for continuity */}
@@ -617,55 +856,7 @@ export function OpportunityDetailClient({
               )}
             </CardContent>
           </Card>
-        </TabsContent>
-
-        {/* Notes Tab */}
-        <TabsContent value="notes" className="space-y-4">
-          <Card>
-            <CardContent className="p-4 space-y-3">
-              <Textarea
-                placeholder={locale === "ar" ? "أضف ملاحظة..." : "Add a note..."}
-                value={noteText}
-                onChange={(e) => setNoteText(e.target.value)}
-                rows={3}
-              />
-              <Button
-                onClick={handleAddNote}
-                disabled={addingNote || !noteText.trim()}
-                size="sm"
-              >
-                {addingNote ? t.common.loading : t.common.save}
-              </Button>
-            </CardContent>
-          </Card>
-
-          {notes.map((note) => (
-            <Card key={note.id}>
-              <CardContent className="p-4">
-                <div className="flex items-center justify-between mb-2">
-                  <span className="font-medium text-sm">{note.author.fullName}</span>
-                  <DateDisplay date={note.createdAt} showTime className="text-xs text-muted-foreground" />
-                </div>
-                <p className="text-sm whitespace-pre-wrap">{note.content}</p>
-              </CardContent>
-            </Card>
-          ))}
-        </TabsContent>
-
-        {/* Tasks Tab */}
-        <TabsContent value="tasks">
-          <TaskList
-            entityType="CRM_OPPORTUNITY"
-            entityId={opp.id as string}
-            showBuckets={false}
-            createDefaults={{
-              entityType: "CRM_OPPORTUNITY",
-              entityId: opp.id as string,
-              module: "crm",
-            }}
-          />
-        </TabsContent>
-      </Tabs>
+      </div>
 
       {/* Stage Change Modal */}
       <StageChangeModal

@@ -29,12 +29,19 @@ export default async function OpportunityDetailPage({
       })
     : [];
 
+  // user-feature 2026-06-19: the document delete control is uploader-only.
+  // Pass the same identity the upload path stamps (crmProfileId, falling
+  // back to the auth user id) so the client can show delete only on the
+  // current user's own uploads.
+  const currentUserId = session?.user?.crmProfileId ?? session?.user?.id ?? "";
+
   return (
     <OpportunityDetailClient
       opportunity={JSON.parse(JSON.stringify(opp))}
       locale={locale}
       canStartWorkflow={canStartWorkflow}
       workflows={JSON.parse(JSON.stringify(workflows))}
+      currentUserId={currentUserId}
     />
   );
 }

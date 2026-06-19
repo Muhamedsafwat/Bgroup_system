@@ -2657,6 +2657,11 @@ model CrmOpportunity {
   customerContactName  String?
   customerContactPhone String?
   customerContactEmail String?
+  /// User-feature (2026-06-18): free-text "introduction background" — the
+  /// referral chain in the rep's own words ("Sara the CFO gave me Ahmed's
+  /// number, Ahmed connected me to the procurement lead Mona…"). Editable
+  /// from the opportunity detail page; never overwritten on contact change.
+  introBackground      String?        @db.Text
   companyId            String?
   company              CrmCompany?    @relation(fields: [companyId], references: [id])
   primaryContactId     String?

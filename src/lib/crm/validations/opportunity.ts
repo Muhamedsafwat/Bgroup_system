@@ -47,20 +47,26 @@ export const opportunityContactSchema = z.object({
 });
 
 export const createOpportunitySchema = z.object({
-  /// Customer company name as free text. Reps type the prospect's company
-  /// name here — there's no curated directory of customer companies. The
-  /// `companyId` FK is kept for backwards-compat with admin-curated /
-  /// principal records but isn't required on create.
-  customerCompanyName: z.string().trim().min(1, "Customer company name is required").max(200),
+  /// user-feature 2026-06-18: the "company step" was removed from the form.
+  /// The opportunity is now identified by its `title` (required below).
+  /// `customerCompanyName` stays in the schema — optional — so old rows
+  /// and admin/cold-lead-conversion tooling that still pass it keep working.
+  customerCompanyName: z.string().trim().max(200).optional(),
   /// Contact info captured directly on the opp. All optional — reps often
   /// log an opp before they've talked to a named person.
   customerContactName: z.string().trim().max(200).optional(),
   customerContactPhone: z.string().trim().max(40).optional(),
   customerContactEmail: z.string().trim().max(200).optional(),
+  /// Free-text "introduction background" — the referral chain in the rep's
+  /// own words ("Sara the CFO gave me Ahmed's number…"). Never overwritten.
+  introBackground: z.string().trim().max(10_000).optional(),
   companyId: z.string().optional(),
   primaryContactId: z.string().optional(),
   entityId: z.string().min(1, "Select the company we're selling for"),
-  title: z.string().trim().max(200).optional(),
+  /// Opportunity name — the identifier the rep sees everywhere. Required
+  /// now that the company-name field is gone. Globally unique (enforced by
+  /// a case-insensitive partial unique index + a pre-check in the action).
+  title: z.string().trim().min(1, "Opportunity name is required").max(200),
   priority: z.enum(["HOT", "WARM", "COLD"]).optional(),
   leadSource: z.string().trim().max(120).optional(),
   dealType: z
@@ -108,11 +114,12 @@ export const createOpportunitySchema = z.object({
 });
 
 export const updateOpportunitySchema = z.object({
-  title: z.string().trim().max(200).optional(),
-  customerCompanyName: z.string().trim().min(1).max(200).optional(),
+  title: z.string().trim().min(1).max(200).optional(),
+  customerCompanyName: z.string().trim().max(200).optional(),
   customerContactName: z.string().trim().max(200).optional(),
   customerContactPhone: z.string().trim().max(40).optional(),
   customerContactEmail: z.string().trim().max(200).optional(),
+  introBackground: z.string().trim().max(10_000).optional(),
   priority: z.enum(["HOT", "WARM", "COLD"]).optional(),
   leadSource: z.string().trim().max(120).optional(),
   dealType: z

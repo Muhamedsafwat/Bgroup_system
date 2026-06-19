@@ -110,8 +110,7 @@ function personaFor(args: {
       pillTone: "sky",
       actions: [
         { href: "/crm/opportunities/new", label: isAr ? "فرصة جديدة" : "New opportunity", description: isAr ? "سجّل عميلًا" : "Log a lead", icon: "Plus", tone: "sky" },
-        { href: "/crm/companies", label: isAr ? "إضافة شركة" : "Add company", description: isAr ? "احفظ حسابًا جديدًا" : "Save a new account", icon: "Building2", tone: "emerald" },
-        { href: "/crm/calls", label: isAr ? "تسجيل مكالمة" : "Log a call", description: isAr ? "أضفها لتقرير اليوم" : "Add to today's report", icon: "Phone", tone: "amber" },
+        { href: "/crm/cold-leads", label: isAr ? "العملاء المحتملون" : "Cold leads", description: isAr ? "قائمة الاتصال" : "Your call queue", icon: "Phone", tone: "amber" },
         { href: "/crm/meetings", label: isAr ? "حجز اجتماع" : "Book a meeting", description: isAr ? "اطلب الاعتماد" : "Request approval", icon: "Calendar", tone: "rose" },
         { href: "/crm/my", label: isAr ? "بايبلايني" : "My pipeline", description: isAr ? "مكالمات وفرص اليوم" : "Today's calls + opps", icon: "LayoutDashboard", tone: "indigo" },
         { href: "/crm/opportunities", label: isAr ? "الفرص" : "Opportunities", description: isAr ? "كل ما تملك" : "Everything you own", icon: "Briefcase", tone: "violet" },

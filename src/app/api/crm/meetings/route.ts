@@ -6,6 +6,7 @@ import { db } from "@/lib/db";
 import { CrmMeetingStatus, CrmMeetingType, type Prisma } from "@/generated/prisma";
 import { describeZodError } from "@/lib/zod-errors";
 import { isPlatformAdmin } from "@/lib/crm/admin-gates";
+import { scopeOpportunityByRole } from "@/lib/crm/rbac";
 // audit v12 HIGH (HIGH-48): import transactional code generator so that
 // MTG codes are assigned inside the advisory-locked transaction, preventing
 // duplicate codes under concurrent POST requests.
@@ -155,23 +156,39 @@ export async function POST(req: Request) {
     scheduledById = data.scheduledById;
   }
 
-  // Verify the opportunity is real and belongs to scheduledById.
-  // audit v12 HIGH (HIGH-50): ownerId is now enforced unconditionally —
-  // previously managers spread an empty object, removing ownership validation
-  // entirely and allowing a manager to bind any rep's meeting to any opp.
-  // scheduledById is already resolved to the target rep's ID (line 138) or the
-  // caller (line 123), so this constraint is correct in both cases.
+  // Verify the opportunity is real and the CALLER can access it.
+  //
+  // bugfix 2026-06-19: the previous check required the opportunity's
+  // ownerId to equal `scheduledById`. That broke the on-behalf workflow:
+  // a manager scheduling a meeting and picking a rep who isn't the
+  // selected opportunity's owner got "not yours to schedule" — the
+  // "errors with some reps" the user reported. It also blocked ASSISTANTs
+  // (who don't own opps) from booking at all.
+  //
+  // Correct gate: the opportunity must be within the CALLER's own
+  // role-scope. Managers/admins see every opp, so they can book for any
+  // rep on any opp they oversee; a REP is still limited to their own opps;
+  // an ASSISTANT to opps they coordinate. This matches exactly what the
+  // opportunity picker shows the caller, so anything pickable is bookable.
+  const callerScope = scopeOpportunityByRole({
+    id: callerCrmProfileId,
+    role: session.user.crmRole!,
+    email: session.user.email ?? "",
+    fullName: session.user.name ?? "",
+    entityId: session.user.crmEntityId ?? null,
+    isSuperAdmin: isPlatformAdmin(session),
+  });
   const oppOwnerCheck = await db.crmOpportunity.findFirst({
     where: {
       id: data.opportunityId,
       deletedAt: null,
-      ownerId: scheduledById,
+      ...(callerScope as Prisma.CrmOpportunityWhereInput),
     },
     select: { id: true, companyId: true },
   });
   if (!oppOwnerCheck) {
     return NextResponse.json(
-      { error: "Opportunity not found or not yours to schedule" },
+      { error: "Opportunity not found or you don't have access to it" },
       { status: 400 }
     );
   }

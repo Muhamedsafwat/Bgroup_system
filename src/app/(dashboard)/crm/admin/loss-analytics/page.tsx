@@ -15,7 +15,8 @@ export default async function LossAnalyticsPage() {
   const platformAdmin =
     !!session.user.hrRoles?.includes("super_admin") ||
     (!!session.user.modules?.includes("partners") && !session.user.partnerId);
-  if (!platformAdmin && role !== "ADMIN" && role !== "MANAGER") {
+  // user-feature 2026-06-18: ADMIN-only — MANAGER (team lead) removed.
+  if (!platformAdmin && role !== "ADMIN") {
     redirect("/crm/my");
   }
   return <LossAnalyticsClient />;

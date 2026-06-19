@@ -170,14 +170,15 @@ function getCrmNav(crmRole: string | undefined, t: SidebarT, isAr: boolean): Nav
     return sections;
   }
 
+  // user-feature 2026-06-19: the Companies directory was removed from
+  // navigation entirely (the user doesn't use it). Contacts remain the
+  // people surface; the CrmCompany model stays for legacy linkage but is
+  // no longer a destination in the sidebar.
   const workItems = [
     { href: "/crm/sales-board", label: t.salesDashboard, icon: BarChart3 },
     { href: "/crm/pipeline", label: t.pipeline, icon: TrendingUp },
     { href: "/crm/opportunities", label: t.opportunities, icon: TrendingUp },
     { href: "/crm/cold-leads", label: t.coldLeads, icon: Phone },
-    ...(isManager
-      ? [{ href: "/crm/companies", label: t.companies, icon: Building2 }]
-      : []),
     { href: "/crm/contacts", label: t.contacts, icon: Contact },
     { href: "/crm/meetings", label: t.meetingsCalendar, icon: CalendarCheck },
     { href: "/crm/reports", label: t.dailyReports, icon: ClipboardList },
@@ -189,38 +190,16 @@ function getCrmNav(crmRole: string | undefined, t: SidebarT, isAr: boolean): Nav
   // but the lookup tables (stage config, FX rates, entities, etc.) stay
   // ADMIN-only because they change how the whole system behaves.
   if (isManager) {
-    // Tier-0 additions: audit log, loss analytics, territory reassign
-    // are all manager+admin tools (the four new admin pages on top of
-    // the existing Users entry). Settings stays ADMIN-only.
+    // user-feature 2026-06-18: a team lead (MANAGER) keeps only the
+    // people tools — the manage-users entry and their own custom
+    // dashboards. The audit log, loss analytics, sales report, and
+    // territory reassignment moved to the ADMIN-only block below
+    // (the user wants those reserved for admins).
     const adminItems: NavItem[] = [
       { href: "/crm/admin/users", label: t.allUsers, icon: UserCog },
-      {
-        href: "/crm/admin/audit-log",
-        label: isAr ? "سجل التدقيق" : "Audit log",
-        icon: ClipboardList,
-      },
-      {
-        href: "/crm/admin/loss-analytics",
-        label: isAr ? "تحليل الخسائر" : "Loss analytics",
-        icon: FileBarChart,
-      },
-      {
-        href: "/crm/admin/sales-report",
-        label: isAr ? "تقرير المبيعات" : "Sales report",
-        icon: FileBarChart,
-      },
-      {
-        href: "/crm/admin/reassign-territory",
-        label: isAr ? "إعادة توزيع الإقليم" : "Reassign territory",
-        icon: UserCog,
-      },
       // Custom dashboards are owner-scoped at the data layer (every
       // user manages their own + sees shared ones), but the page
-      // lives under /crm/admin/* for sidebar grouping. The proxy's
-      // catch-all `/crm/admin` rule lets MANAGER + ADMIN reach it, so
-      // we expose the sidebar entry to both — previously only ADMIN
-      // saw it, which broke discovery for MANAGERs even though they
-      // could navigate by URL.
+      // lives under /crm/admin/* for sidebar grouping.
       {
         href: "/crm/admin/dashboards",
         label: isAr ? "لوحات مخصصة" : "Custom dashboards",
@@ -228,6 +207,30 @@ function getCrmNav(crmRole: string | undefined, t: SidebarT, isAr: boolean): Nav
       },
     ];
     if (crmRole === "ADMIN") {
+      // user-feature 2026-06-18: analytics / logs / reports / territory
+      // are ADMIN-only now (moved out of the MANAGER list above).
+      adminItems.push(
+        {
+          href: "/crm/admin/audit-log",
+          label: isAr ? "سجل التدقيق" : "Audit log",
+          icon: ClipboardList,
+        },
+        {
+          href: "/crm/admin/loss-analytics",
+          label: isAr ? "تحليل الخسائر" : "Loss analytics",
+          icon: FileBarChart,
+        },
+        {
+          href: "/crm/admin/sales-report",
+          label: isAr ? "تقرير المبيعات" : "Sales report",
+          icon: FileBarChart,
+        },
+        {
+          href: "/crm/admin/reassign-territory",
+          label: isAr ? "إعادة توزيع الإقليم" : "Reassign territory",
+          icon: UserCog,
+        },
+      );
       // Tier-2 platform-config features — admin only (settings-class).
       adminItems.push(
         {

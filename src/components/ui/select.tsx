@@ -6,7 +6,71 @@ import { Select as SelectPrimitive } from "@base-ui/react/select"
 import { cn } from "@/lib/utils"
 import { ChevronDownIcon, CheckIcon, ChevronUpIcon } from "lucide-react"
 
-const Select = SelectPrimitive.Root
+// user-feature 2026-06-19: system-wide fix for "click a dropdown and see a
+// raw database id (cuid)". Base UI's <Select.Value> renders the raw selected
+// VALUE unless the Root is given an `items` value→label map. Almost every
+// select in the app sets `value={x.id}` with `<SelectItem value={x.id}>{name}`
+// but no items map, so the trigger showed the id once a row was selected (or
+// when a value was pre-set from URL/state before the popup ever opened).
+//
+// Instead of patching ~50 call sites, we derive the items map here: walk the
+// declared <SelectItem> children, collect {value, label:<their text>}, and
+// pass it to Base UI's Root. This reads the JSX element tree (not the DOM),
+// so labels resolve even while the popup is closed. Call sites are unchanged.
+type DerivedItem = { value: unknown; label: React.ReactNode };
+
+// value→label map derived from the declared <SelectItem> children, shared
+// with <SelectValue> so the trigger renders the label — never a raw id —
+// even when the selected value matches no rendered item.
+const SelectLabelContext = React.createContext<Map<string, React.ReactNode> | null>(null);
+
+function collectSelectItems(children: React.ReactNode, out: DerivedItem[]): void {
+  React.Children.forEach(children, (child) => {
+    if (!React.isValidElement(child)) return;
+    const props = child.props as { value?: unknown; children?: React.ReactNode };
+    // Any descendant carrying a `value` prop is a SelectItem — the
+    // structural parts (Trigger/Value/Content/Group) don't take `value`,
+    // so this is robust without depending on component-reference equality
+    // (which can break across bundler/module boundaries).
+    if (props.value !== undefined && typeof props.value !== "object") {
+      out.push({ value: props.value, label: props.children });
+    }
+    // Recurse through wrappers (SelectContent, SelectGroup, fragments, arrays).
+    if (props.children) collectSelectItems(props.children, out);
+  });
+}
+
+// A selected value that matches no rendered item AND looks like a database
+// id (long alphanumeric, e.g. a cuid) must never reach the UI — show the
+// placeholder instead. Readable values (enum codes) still render as-is.
+function looksLikeRawId(s: string): boolean {
+  return /^[a-z0-9]{16,}$/.test(s) && !s.includes(" ");
+}
+
+function Select({
+  children,
+  items,
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  ...props
+}: React.ComponentProps<typeof SelectPrimitive.Root<any, any>>) {
+  // Derive the items map from the declared SelectItem children (or honour an
+  // explicit `items` prop). Used both by Base UI's Root and by our
+  // SelectValue (via context) so the label always resolves.
+  const { derived, labelMap } = React.useMemo(() => {
+    const out: DerivedItem[] = [];
+    if (items) out.push(...(items as DerivedItem[]));
+    else collectSelectItems(children, out);
+    const map = new Map<string, React.ReactNode>();
+    for (const it of out) map.set(String(it.value), it.label);
+    return { derived: out.length ? out : undefined, labelMap: map };
+  }, [children, items]);
+  return (
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    <SelectPrimitive.Root items={derived as any} {...(props as any)}>
+      <SelectLabelContext.Provider value={labelMap}>{children}</SelectLabelContext.Provider>
+    </SelectPrimitive.Root>
+  );
+}
 
 function SelectGroup({ className, ...props }: SelectPrimitive.Group.Props) {
   return (
@@ -18,13 +82,50 @@ function SelectGroup({ className, ...props }: SelectPrimitive.Group.Props) {
   )
 }
 
-function SelectValue({ className, ...props }: SelectPrimitive.Value.Props) {
+function SelectValue({
+  className,
+  placeholder,
+  children,
+  ...props
+}: SelectPrimitive.Value.Props) {
+  const labelMap = React.useContext(SelectLabelContext);
+
+  // If a caller passed their own children (node or render fn), respect it.
+  // Otherwise resolve the label from the derived item map. Critically, a
+  // value that matches no item and looks like a raw id renders as the
+  // placeholder — so a database cuid never leaks into the trigger.
+  const resolve = React.useCallback(
+    (value: unknown): React.ReactNode => {
+      if (value == null || value === "") return placeholder ?? null;
+      if (Array.isArray(value)) {
+        const parts = value
+          .map((v) => labelMap?.get(String(v)))
+          .filter((l): l is React.ReactNode => l != null);
+        if (parts.length === 0) return placeholder ?? null;
+        return parts.map((l, i) => (
+          <React.Fragment key={i}>
+            {i > 0 ? ", " : null}
+            {l}
+          </React.Fragment>
+        ));
+      }
+      const key = String(value);
+      if (labelMap?.has(key)) return labelMap.get(key);
+      if (looksLikeRawId(key)) return placeholder ?? null;
+      return key;
+    },
+    [labelMap, placeholder],
+  );
+
   return (
     <SelectPrimitive.Value
       data-slot="select-value"
       className={cn("flex flex-1 text-left", className)}
+      placeholder={placeholder}
       {...props}
-    />
+    >
+      {children ?? resolve}
+    </SelectPrimitive.Value>
   )
 }
 
