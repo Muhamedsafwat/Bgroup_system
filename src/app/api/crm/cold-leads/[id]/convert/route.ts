@@ -115,6 +115,15 @@ export async function POST(
   }
 
   const opp = await createOpportunity({
+    // title is required now (the company step was removed from the form).
+    // Derive it from the prospect company + the lead's name when they
+    // differ, which keeps it unique across multiple contacts at the same
+    // company. Mirrors the prior behaviour where title fell back to the
+    // company name.
+    title:
+      lead.name && lead.name !== companyName
+        ? `${companyName} — ${lead.name}`
+        : companyName,
     customerCompanyName: companyName,
     companyId: company.id,
     primaryContactId: contactId ?? undefined,

@@ -6,7 +6,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Button } from "@/components/ui/button";
 import { Loader2, TrendingUp, Flame, Calendar, Users, X, ArrowUpRight } from "lucide-react";
-import { STAGE_LABEL_EN, STAGE_LABEL_AR, SPEC_STAGES } from "@/lib/crm/stage-labels";
+import { STAGE_LABEL_EN, STAGE_LABEL_AR } from "@/lib/crm/stage-labels";
 import { useLocale } from "@/lib/i18n";
 
 type Board = {
@@ -96,6 +96,16 @@ export function SalesBoardClient() {
   }
   const hasFilter = filterCompany !== "ALL" || filterRep !== "ALL" || filterProduct !== "ALL";
 
+  // stages-fix (2026-06-18): render the admin-configured stages the API
+  // returns (data.stages), not the hardcoded seed, so the board matches
+  // /crm/admin/stage-config. Labels fall back to a humanized code for
+  // custom stages the seed label maps don't know.
+  const boardStages = data.stages ?? [];
+  const stageLabelEn = (s: string) =>
+    (STAGE_LABEL_EN as Record<string, string>)[s] ?? s.replace(/_/g, " ");
+  const stageLabelAr = (s: string) =>
+    (STAGE_LABEL_AR as Record<string, string>)[s] ?? s.replace(/_/g, " ");
+
   return (
     <div className="space-y-4">
       {/* Filter bar — drives every widget below */}
@@ -151,12 +161,12 @@ export function SalesBoardClient() {
 
       {/* 8 stage tiles — each click drills into the pipeline */}
       <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-8 gap-3">
-        {SPEC_STAGES.map((s) => (
+        {boardStages.map((s) => (
           <Link key={s} href={pipelineLink(s)}>
             <Card className="hover:-translate-y-0.5 transition-transform cursor-pointer h-full">
               <CardContent className="p-4">
-                <p className="text-[10px] uppercase tracking-wide text-muted-foreground">{STAGE_LABEL_EN[s]}</p>
-                <p className="text-[10px] text-muted-foreground/70 mt-0.5">{STAGE_LABEL_AR[s]}</p>
+                <p className="text-[10px] uppercase tracking-wide text-muted-foreground">{stageLabelEn(s)}</p>
+                <p className="text-[10px] text-muted-foreground/70 mt-0.5">{stageLabelAr(s)}</p>
                 <p className="text-2xl font-bold text-foreground mt-1.5 ltr-nums">
                   {data.kpi.stageCounts[s] ?? 0}
                 </p>
@@ -194,9 +204,9 @@ export function SalesBoardClient() {
                     <tr className="border-b">
                       <th className="px-2 py-2 text-start font-medium">Rep</th>
                       <th className="px-2 py-2 text-end font-medium">Total</th>
-                      {SPEC_STAGES.filter((s) => s !== "NEW").map((s) => (
-                        <th key={s} className="px-1.5 py-2 text-end font-medium whitespace-nowrap" title={STAGE_LABEL_EN[s]}>
-                          {STAGE_LABEL_EN[s].split(" ").slice(-2).join(" ")}
+                      {boardStages.filter((s) => s !== "NEW").map((s) => (
+                        <th key={s} className="px-1.5 py-2 text-end font-medium whitespace-nowrap" title={stageLabelEn(s)}>
+                          {stageLabelEn(s).split(" ").slice(-2).join(" ")}
                         </th>
                       ))}
                       <th className="px-2 py-2 text-end font-medium">Active</th>
@@ -210,7 +220,7 @@ export function SalesBoardClient() {
                           <Link href={`/crm/pipeline?repId=${r.repId}`} className="hover:underline">{r.name}</Link>
                         </td>
                         <td className="px-2 py-2 text-end font-semibold">{r.total}</td>
-                        {SPEC_STAGES.filter((s) => s !== "NEW").map((s) => (
+                        {boardStages.filter((s) => s !== "NEW").map((s) => (
                           <td key={s} className="px-1.5 py-2 text-end ltr-nums">{r.perStage[s] || ""}</td>
                         ))}
                         <td className="px-2 py-2 text-end font-semibold text-primary">{r.active}</td>

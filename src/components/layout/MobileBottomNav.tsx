@@ -49,11 +49,15 @@ function navForModule(
     ];
   }
   if (module === "crm") {
+    // user-feature 2026-06-18: standalone Calls page removed — calls are
+    // logged inside an opportunity now.
+    // user-feature 2026-06-19: Companies removed from navigation; use the
+    // Contacts surface as the fourth slot instead.
     return [
       { href: "/crm/my", label: t.home, icon: LayoutDashboard },
       { href: "/crm/opportunities", label: t.pipeline, icon: TrendingUp },
-      { href: "/crm/calls", label: t.calls, icon: Phone },
-      { href: "/crm/companies", label: t.companies, icon: Briefcase },
+      { href: "/crm/cold-leads", label: t.leads, icon: Phone },
+      { href: "/crm/contacts", label: t.people, icon: Users },
     ];
   }
   if (module === "partners") {

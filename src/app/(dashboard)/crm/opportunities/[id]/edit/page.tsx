@@ -70,6 +70,7 @@ export default async function EditOpportunityPage({
     customerContactName: opp.customerContactName,
     customerContactPhone: opp.customerContactPhone,
     customerContactEmail: opp.customerContactEmail,
+    introBackground: opp.introBackground,
     companyId: opp.companyId,
     primaryContactId: opp.primaryContactId,
     entityId: opp.entityId,

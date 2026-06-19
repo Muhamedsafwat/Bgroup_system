@@ -4,7 +4,7 @@ import { z } from "zod";
 import { auth } from "@/lib/auth";
 import { db } from "@/lib/db";
 import { describeZodError } from "@/lib/zod-errors";
-import { isManagerOrAdmin } from "@/lib/crm/admin-gates";
+import { isAdminOnly } from "@/lib/crm/admin-gates";
 
 /**
  * POST /api/crm/admin/reassign-territory
@@ -51,7 +51,7 @@ export async function POST(req: Request) {
   if (!session?.user?.id) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
-  if (!isManagerOrAdmin(session)) {
+  if (!isAdminOnly(session)) {
     return NextResponse.json({ error: "Forbidden" }, { status: 403 });
   }
   const actorId = session.user.crmProfileId;

@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 import type { Session } from "next-auth";
 import { auth } from "@/lib/auth";
 import { db } from "@/lib/db";
-import { isManagerOrAdmin } from "@/lib/crm/admin-gates";
+import { isAdminOnly } from "@/lib/crm/admin-gates";
 
 /**
  * GET /api/crm/reports/loss-analytics
@@ -33,7 +33,7 @@ export async function GET(req: Request) {
   if (!session?.user?.id) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
-  if (!isManagerOrAdmin(session)) {
+  if (!isAdminOnly(session)) {
     return NextResponse.json({ error: "Forbidden" }, { status: 403 });
   }
 

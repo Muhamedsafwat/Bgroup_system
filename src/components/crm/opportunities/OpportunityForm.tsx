@@ -15,7 +15,6 @@ import {
   createOpportunity,
   updateOpportunity,
 } from "@/app/(dashboard)/crm/opportunities/actions";
-import { createCompanyAction } from "@/app/(dashboard)/crm/companies/form-actions";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
@@ -63,6 +62,8 @@ type OpportunityFormInitial = {
   customerContactName?: string | null;
   customerContactPhone?: string | null;
   customerContactEmail?: string | null;
+  /// Free-text referral chain / introduction background.
+  introBackground?: string | null;
   /// Repeatable extra contacts beyond the primary trio above. Hydrated
   /// from CrmOpportunityContact rows by the edit page loader.
   contacts?: ContactRow[];
@@ -133,10 +134,11 @@ export function OpportunityForm({
           customerContactName: initial.customerContactName ?? "",
           customerContactPhone: initial.customerContactPhone ?? "",
           customerContactEmail: initial.customerContactEmail ?? "",
+          introBackground: initial.introBackground ?? "",
           companyId: initial.companyId ?? undefined,
           primaryContactId: initial.primaryContactId ?? undefined,
           entityId: initial.entityId,
-          title: initial.title ?? undefined,
+          title: initial.title ?? "",
           priority: initial.priority ?? "COLD",
           leadSource: initial.leadSource ?? undefined,
           dealType: initial.dealType ?? "ONE_TIME",
@@ -154,10 +156,11 @@ export function OpportunityForm({
           ownerId: currentOwnerId ?? undefined,
         }
       : {
-          customerCompanyName: "",
+          title: "",
           customerContactName: "",
           customerContactPhone: "",
           customerContactEmail: "",
+          introBackground: "",
           entityId: userEntityId || "",
           currency: "EGP",
           priority: "COLD",
@@ -252,13 +255,12 @@ export function OpportunityForm({
           : typeof err === "string"
             ? err
             : "Save failed — try again or contact support";
-      // Specifically bind the duplicate-title error to the
-      // customerCompanyName input — that's the field the user
-      // actually controls that drives the title fallback chain.
-      // Without this binding the user sees only a transient toast
-      // and no inline cue which field to change.
+      // Bind the duplicate-name error to the title input — that's the
+      // field the user controls now that the company step is gone.
+      // Without this binding the user sees only a transient toast and
+      // no inline cue which field to change.
       if (/already exists/i.test(msg)) {
-        setError("customerCompanyName", { type: "server", message: msg });
+        setError("title", { type: "server", message: msg });
       }
       toast.error(msg, { duration: 8000 });
       // Don't propagate. Without this, Next.js will catch the re-thrown
@@ -285,39 +287,40 @@ export function OpportunityForm({
 
   return (
     <form onSubmit={handleSubmit(onSubmit, onValidationError)} className="space-y-6">
-      {/* Company & Contact */}
+      {/* Opportunity name + Contact */}
       <Card>
         <CardHeader>
-          <CardTitle className="text-lg">{t.nav.companies}</CardTitle>
+          <CardTitle className="text-lg">
+            {locale === "ar" ? "الفرصة وجهة الاتصال" : "Opportunity & contact"}
+          </CardTitle>
         </CardHeader>
         <CardContent className="space-y-4">
-          {/* Customer company name is free text. There's no curated directory
-              of customer companies — the rep types whatever the prospect
-              calls themselves. Managers + admin can group/filter by this
-              column on the pipeline page, but no one navigates to a
-              "company page" for a prospect. */}
+          {/* user-feature 2026-06-18: the "company step" was removed. The
+              opportunity is identified by its NAME (title). The rep types a
+              short, unique label — there's no separate company record to
+              create. */}
           <div className="space-y-2">
-            <Label htmlFor="customerCompanyName">
-              {locale === "ar" ? "اسم شركة العميل" : "Customer company name"} *
+            <Label htmlFor="title">
+              {locale === "ar" ? "اسم الفرصة" : "Opportunity name"} *
             </Label>
             <Input
-              id="customerCompanyName"
-              {...register("customerCompanyName")}
+              id="title"
+              {...register("title")}
               placeholder={
                 locale === "ar"
-                  ? "مثال: شركة الأمل للتجارة"
-                  : "e.g. Acme Industries"
+                  ? "مثال: تطوير موقع شركة الأمل"
+                  : "e.g. Website revamp — Acme Industries"
               }
               autoFocus={!isEdit}
             />
             <p className="text-xs text-muted-foreground">
               {locale === "ar"
-                ? "اكتب اسم الشركة كما يسمونها أنفسهم. لا حاجة لإنشائها في النظام."
-                : "Type the company name as the prospect calls themselves. No directory record needed."}
+                ? "اسم مختصر ومميّز للفرصة. لا يمكن تكراره."
+                : "A short, unique label for this deal. Must not duplicate another opportunity."}
             </p>
-            {errors.customerCompanyName && (
+            {errors.title && (
               <p className="text-sm text-destructive">
-                {errors.customerCompanyName.message}
+                {errors.title.message}
               </p>
             )}
           </div>
@@ -370,6 +373,32 @@ export function OpportunityForm({
               {locale === "ar"
                 ? "كل الحقول اختيارية — يمكنك إضافتها لاحقًا بعد المكالمة الأولى."
                 : "All optional — fill in what you have, add the rest after the first call."}
+            </p>
+          </div>
+
+          {/* user-feature 2026-06-18: introduction background / referral
+              chain — free text in the rep's own words. "Sara the CFO gave
+              me Ahmed's number, Ahmed connected me to procurement…". Never
+              overwritten when the contact changes; editable later from the
+              opportunity page too. */}
+          <div className="space-y-2 pt-3 border-t border-border">
+            <Label htmlFor="introBackground" className="text-sm font-semibold">
+              {locale === "ar" ? "خلفية التعريف / من حوّلني لمن" : "Introduction background"}
+            </Label>
+            <Textarea
+              id="introBackground"
+              rows={3}
+              {...register("introBackground")}
+              placeholder={
+                locale === "ar"
+                  ? "مثال: سارة (المدير المالي) أعطتني رقم أحمد، وأحمد عرّفني على منى من المشتريات…"
+                  : "e.g. Sara (CFO) gave me Ahmed's number; Ahmed connected me to Mona in procurement…"
+              }
+            />
+            <p className="text-[11px] text-muted-foreground">
+              {locale === "ar"
+                ? "كيف وصلت إلى هذا العميل ومن عرّفك بمن. اختياري."
+                : "How you got to this customer and who introduced you to whom. Optional."}
             </p>
           </div>
 

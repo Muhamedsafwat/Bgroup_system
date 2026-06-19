@@ -39,7 +39,11 @@ import { EmptyState } from "@/components/crm/shared/EmptyState";
 import { Plus, Search, Kanban as KanbanIcon, List, ArrowRightLeft, Loader2 } from "lucide-react";
 import { toast } from "sonner";
 import { OpportunityKanban } from "@/components/crm/opportunities/OpportunityKanban";
+import { Pagination } from "@/components/shared/Pagination";
 import type { Locale } from "@/lib/i18n";
+
+// Must match getOpportunities' default pageSize so totalPages is correct.
+const PAGE_SIZE = 50;
 
 type Rep = { id: string; fullName: string; role: string };
 
@@ -534,7 +538,7 @@ export function OpportunityListClient({
       ) : view === "kanban" ? (
         <OpportunityKanban opportunities={opportunities} locale={locale} />
       ) : (
-        <div className="border rounded-lg overflow-hidden">
+        <div className="border rounded-lg overflow-x-auto">
           <Table>
             <TableHeader>
               <TableRow>
@@ -627,9 +631,18 @@ export function OpportunityListClient({
         </div>
       )}
 
-      {/* Pagination info */}
-      <div className="text-sm text-muted-foreground">
-        {t.common.total}: {total}
+      {/* user-feature 2026-06-18: real pagination so the whole book of
+          opportunities is browsable, not just the first page. The data
+          layer already pages at PAGE_SIZE and returns the grand total. */}
+      <div className="flex items-center justify-between gap-3 flex-wrap">
+        <div className="text-sm text-muted-foreground">
+          {t.common.total}: {total}
+        </div>
+        <Pagination
+          page={Number(searchParams.get("page")) || 1}
+          totalPages={Math.max(1, Math.ceil(total / PAGE_SIZE))}
+          onPageChange={(p) => setFilter("page", p <= 1 ? "all" : String(p))}
+        />
       </div>
 
       {/* Transfer dialog — reassign N selected opps to another rep. Writes
